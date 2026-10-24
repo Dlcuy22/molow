@@ -1,0 +1,122 @@
+MoLow third-party notices
+=========================
+
+MoLow itself is licensed under the BSD 3-Clause License. See LICENSE.
+
+This file lists the third-party components that are compiled into or shipped
+with a MoLow build, the license each one carries, and what that license asks of
+anyone redistributing a build. Version numbers match go.mod and
+frontend/package.json at the time of writing; run `go list -m all` and read
+frontend/bun.lock for the exact resolved set.
+
+The MIT and BSD-3-Clause components only require that their copyright notice and
+license text travel with the source, and that the license text travels with a
+binary. Every one of them is vendored under the module cache and mirrored in the
+Go module proxy, so the notice obligation is met by not stripping the licenses
+from the source tree.
+
+The two sections below are the ones that need action beyond that.
+
+
+Copyleft components
+-------------------
+
+### github.com/tphakala/go-aac v0.7.0 — LGPL-2.1-or-later
+
+Reached through the engine's `decode` package, so it is linked into every build
+that can play AAC, M4A or MP4.
+
+go-aac is a derivative work of FFmpeg's LGPL-licensed AAC codec and cannot be
+relicensed permissively. It is used unmodified, as a library, with no changes to
+its source.
+
+If you redistribute a MoLow binary, you must:
+
+1. Ship the LGPL-2.1 text. It is at
+   https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt and is also included in
+   the go-aac distribution.
+2. State that go-aac is used, under LGPL-2.1-or-later, and name the version.
+3. Make the corresponding source available. Pointing at the upstream module at
+   the pinned version satisfies this:
+   https://github.com/tphakala/go-aac/tree/v0.7.0
+4. Not impose terms that forbid reverse engineering for the purpose of debugging
+   modifications to the LGPL component. The BSD 3-Clause License places no such
+   restriction, so a stock MoLow build already complies.
+
+Go links statically, so there is no separate shared object to swap. If you need
+to replace go-aac with your own build, rebuild MoLow with a `replace` directive
+pointing at your copy; no source change is required.
+
+### github.com/dlcuy22/ytm-go v1.3.0 — MIT
+
+Listed here only because earlier versions (up to and including v1.2.1) were
+GPL-3.0. v1.3.0 relicensed the library to MIT, which is what MoLow requires, so
+the whole distributed work can carry BSD 3-Clause. Do not downgrade below
+v1.3.0: a GPL-3.0 dependency would make the combined binary GPL-3.0.
+
+
+Apache-2.0 component
+--------------------
+
+### github.com/ebitengine/oto/v3 v3.5.0 — Apache-2.0
+
+Reached through the engine's audio backend. Apache-2.0 is compatible with BSD
+3-Clause. Redistributing a binary requires shipping the Apache-2.0 license text
+and preserving any NOTICE file oto ships.
+
+oto is also what carries the platform audio bindings: WASAPI on Windows,
+PulseAudio on Linux, CoreAudio on macOS.
+
+
+Permissive components
+---------------------
+
+MIT:
+
+- github.com/dlcuy22/molo v1.2.0 — the audio engine
+- github.com/tphakala/go-flac v1.1.0
+- github.com/tphakala/go-mp3 v0.1.0
+- github.com/tphakala/go-m4a v0.5.0
+- github.com/tphakala/go-wav v1.1.0
+- github.com/tphakala/go-opus v1.1.0 — the Go port; see below for the reference
+- github.com/tphakala/simd v1.9.0
+- github.com/wailsapp/wails/v3 v3.0.0-beta.25
+- github.com/go-ole/go-ole v1.3.0
+- github.com/yuin/gopher-lua v1.1.2
+- github.com/dhowden/tag
+- github.com/jfreymuth/pulse
+- github.com/adrg/xdg
+- github.com/coder/websocket
+- github.com/mattn/go-colorable, github.com/mattn/go-isatty
+- Svelte 5, Tailwind CSS 4, Vite 8, Vitest 5, phosphor-svelte,
+  @sveltejs/vite-plugin-svelte, @wailsio/runtime (frontend)
+
+BSD-3-Clause:
+
+- github.com/godbus/dbus/v5 v5.2.2 — MPRIS on Linux
+- libopus, the reference go-opus is transliterated from. The upstream copyright
+  notice names Xiph.Org, Skype Limited, Octasic, Jean-Marc Valin, Timothy B.
+  Terriberry, CSIRO, Gregory Maxwell, Mark Borgerding, Erik de Castro Lopo,
+  Mozilla and Amazon. That notice is reproduced in
+  github.com/tphakala/go-opus/LICENSE and must be kept.
+
+BSD-2-Clause / ISC:
+
+- golang.org/x/image, golang.org/x/sys, golang.org/x/crypto, golang.org/x/net,
+  golang.org/x/text
+- gopkg.in/natefinch/npipe.v2
+
+
+Notes
+-----
+
+- No component here is GPL-3.0 in the resolved set. That is deliberate and worth
+  re-checking whenever a dependency is bumped: a single GPL library linked in
+  would relicense the whole binary.
+- MoLow's own source is BSD 3-Clause. Clause 3 means neither the copyright
+  holder's name nor the names of contributors may be used to endorse or promote
+  a product derived from it without written permission. Forks that ship under
+  the MoLow name need that permission.
+- This file is a good-faith inventory, not legal advice. If you ship to a store
+  or through a corporate distributor, have the LGPL static-linking position
+  confirmed for that channel.

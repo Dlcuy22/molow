@@ -14,10 +14,6 @@ require (
 	gopkg.in/natefinch/npipe.v2 v2.0.0-20160621034901-c1b8fa8bdcce
 )
 
-// The engine is unreleased: v1.2.0 is the first tag whose public priority
-// package this build imports. Drop this replace once that tag is pushed.
-replace github.com/dlcuy22/molo => ../molo-win
-
 require (
 	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/coder/websocket v1.8.14 // indirect

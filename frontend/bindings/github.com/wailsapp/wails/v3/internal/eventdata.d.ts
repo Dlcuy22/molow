@@ -7,13 +7,13 @@ import type { Events } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import type * as main$0 from "../../../../dlcuy22/molow/models.js";
+import type * as backend$0 from "../../../../dlcuy22/molow/backend/models.js";
 
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
-            "molo:effect-meters": main$0.EffectMetersInfo[] | null;
-            "molo:snapshot": main$0.Snapshot;
+            "molo:effect-meters": backend$0.EffectMetersInfo[] | null;
+            "molo:snapshot": backend$0.Snapshot;
             "molo:spectrum": number[] | null;
         }
     }

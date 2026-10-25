@@ -12,7 +12,7 @@
   import { commands } from "../store";
   import { muted, toggleMute, volumeBy, volumeOverride } from "../volume";
   import { formatTime, isActive, percent, fillFrac } from "../format";
-  import type { Snapshot } from "../../../bindings/github.com/dlcuy22/molow/models";
+  import type { Snapshot } from "../../../bindings/github.com/dlcuy22/molow/backend/models";
 
   let { snap }: { snap: Snapshot } = $props();
 

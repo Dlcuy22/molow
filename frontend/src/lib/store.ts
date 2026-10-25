@@ -7,7 +7,7 @@
 
 import { get, writable } from "svelte/store";
 import { Events } from "@wailsio/runtime";
-import { PlayerService } from "../../bindings/github.com/dlcuy22/molow";
+import { PlayerService } from "../../bindings/github.com/dlcuy22/molow/backend";
 import type {
   EffectChainInfo,
   EffectKindInfo,
@@ -21,7 +21,7 @@ import type {
   YTMResult,
   DiscordStatus,
   AppSettings,
-} from "../../bindings/github.com/dlcuy22/molow/models";
+} from "../../bindings/github.com/dlcuy22/molow/backend/models";
 import type { Param } from "../../bindings/github.com/dlcuy22/molow/internal/spectrum/models";
 import type { EffectKind, EffectStage } from "./effect-types";
 import { toEffectKind, toEffectStage } from "./effect-adapter";

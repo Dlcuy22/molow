@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hasTags, isPlaylistKind, matchQueue, playlistIDFromQuery, searchText, tokenize, ytmKindLabel, ytmPlaylistResult, ytmResultRow, ytmSubtitle } from "./search";
-import type { QueueRow } from "../../bindings/github.com/dlcuy22/molow/models";
-import type { YTMResult } from "../../bindings/github.com/dlcuy22/molow/models";
+import type { QueueRow } from "../../bindings/github.com/dlcuy22/molow/backend/models";
+import type { YTMResult } from "../../bindings/github.com/dlcuy22/molow/backend/models";
 
 // row builds a QueueRow with only the fields the search reads.
 function row(partial: Partial<QueueRow> & { index: number; path: string }): QueueRow {

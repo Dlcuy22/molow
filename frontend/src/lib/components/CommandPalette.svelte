@@ -9,7 +9,7 @@
     PreviewState,
     QueueRow,
     YTMResult,
-  } from "../../../bindings/github.com/dlcuy22/molow/models";
+  } from "../../../bindings/github.com/dlcuy22/molow/backend/models";
 
   // A palette row is a queued track, or a YouTube Music search hit projected
   // onto the same shape. The extra field carries the hit's own data, which the

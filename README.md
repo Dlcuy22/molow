@@ -18,8 +18,8 @@ the UI is built with [Wails](https://v3.wails.io), which makes building for
 other platforms straightforward (an Android version is coming soon).
 
 MoLow is extensible: you can write your own effects in Lua through its Effects
-API. Some of the effects bundled in `effects/` are written in Lua, and it also
-ships built-in effects written in Go, EQ among them.
+API. Some of the effects bundled in `backend/effects/` are written in Lua, and
+it also ships built-in effects written in Go, EQ among them.
 
 ## Project state
 
@@ -63,6 +63,10 @@ tutorial to understand the basics: https://v3.wails.io/tutorials/03-notes-vanill
 
 After that, you can use `wails3 dev` and `wails3 build` to
 work in this repository.
+
+The Go side lives in `backend/`; the root `main.go` only embeds the built
+frontend and hands it to `backend.Run`, because `//go:embed` cannot reach a
+parent directory.
 
 ## Stack
 

@@ -2,7 +2,7 @@
   import { MusicNotes } from "phosphor-svelte";
   import { cover } from "../store";
   import { displayTitle, isRemoteRef, subtitle } from "../format";
-  import type { Snapshot } from "../../../bindings/github.com/dlcuy22/molow/models";
+  import type { Snapshot } from "../../../bindings/github.com/dlcuy22/molow/backend/models";
 
   let { snap }: { snap: Snapshot } = $props();
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { MagnifyingGlass, Plus } from "phosphor-svelte";
   import type { EffectKind } from "../../effect-types";
-  import type { PresetImportResult } from "../../../../bindings/github.com/dlcuy22/molow/models";
+  import type { PresetImportResult } from "../../../../bindings/github.com/dlcuy22/molow/backend/models";
 
   // The catalogue of effects that can be added. It is not the chain: adding one
   // emits the kind and impl and lets the caller place it.

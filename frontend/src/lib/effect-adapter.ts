@@ -9,7 +9,7 @@ import type {
   EffectKindInfo as WireKind,
   EffectParamInfo as WireParam,
   EffectStageInfo as WireStage,
-} from "../../bindings/github.com/dlcuy22/molow/models";
+} from "../../bindings/github.com/dlcuy22/molow/backend/models";
 import type {
   EffectKind,
   EffectParam,

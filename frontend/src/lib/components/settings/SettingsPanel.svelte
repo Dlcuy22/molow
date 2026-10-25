@@ -1,6 +1,6 @@
 <script lang="ts">
   import { appSettings, commands, discordStatus, spectrumConfig, spectrumSchema } from "../../store";
-  import type { CrossfadeSettings, SpectrumConfig } from "../../../../bindings/github.com/dlcuy22/molow/models";
+  import type { CrossfadeSettings, SpectrumConfig } from "../../../../bindings/github.com/dlcuy22/molow/backend/models";
   import type { Param } from "../../../../bindings/github.com/dlcuy22/molow/internal/spectrum/models";
   import { fftLabel } from "../../spectrum-fft";
   import DiscordCard from "../DiscordCard.svelte";

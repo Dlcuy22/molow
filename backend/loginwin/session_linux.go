@@ -368,7 +368,16 @@ func (s *Session) create() error {
 //
 // It polls the jar rather than watching load events: a page can finish loading on
 // accounts.google.com and still hold no session.
+//
+// The caller's context owns the deadline. When it has none, Options.Timeout is
+// applied instead, so a caller that forgets one still cannot wait forever.
 func (s *Session) Wait(ctx context.Context) (Result, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.opts.Timeout)
+		defer cancel()
+	}
+
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -524,11 +533,12 @@ func (s *Session) Restore(cookies []Cookie) error {
 		return nil
 	}
 
-	done := make(chan error, 1)
-	postToMain(func() {
-		call := &restoreCall{ch: done}
-		call.handle = retain(call)
+	// The call is created here rather than inside the closure so the timeout path
+	// can reach it and undo what the closure registered.
+	call := &restoreCall{ch: make(chan error, 1)}
+	call.handle = retain(call)
 
+	postToMain(func() {
 		var list uintptr
 		var built []uintptr
 		for _, c := range cookies {
@@ -541,7 +551,7 @@ func (s *Session) Restore(cookies []Cookie) error {
 		}
 		if list == 0 {
 			release(call.handle)
-			done <- nil
+			call.ch <- nil
 			return
 		}
 
@@ -551,7 +561,22 @@ func (s *Session) Restore(cookies []Cookie) error {
 		fn.webkitCookieManagerReplaceCookies(manager, list, 0, restoreCallback, call.handle)
 	})
 
-	return <-done
+	// Without the loop running there is no reply, so the wait is bounded rather
+	// than depending on the caller having a live GTK thread.
+	select {
+	case err := <-call.ch:
+		return err
+	case <-time.After(30 * time.Second):
+		// The callback will never run, so the cookies it was meant to free are
+		// released here instead, and the handle is dropped.
+		if built, loaded := restorePending.LoadAndDelete(call.handle); loaded {
+			for _, ptr := range built.([]uintptr) {
+				fn.soupCookieFree(ptr)
+			}
+		}
+		release(call.handle)
+		return fmt.Errorf("loginwin: the GTK main loop did not answer the cookie restore")
+	}
 }
 
 // restorePending keeps the SoupCookie pointers alive across the async reply.

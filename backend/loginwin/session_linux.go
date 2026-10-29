@@ -364,15 +364,16 @@ func (s *Session) create() error {
 	return nil
 }
 
-// Wait blocks until the jar holds a usable session, then returns it.
+// Wait blocks until the jar holds a session the YouTube Music origin can use,
+// then returns it.
 //
 // It polls the jar rather than watching load events: a page can finish loading on
 // accounts.google.com and still hold no session.
 //
-// The caller's context owns the deadline. When it has none, Options.Timeout is
-// applied instead, so a caller that forgets one still cannot wait forever.
+// Options.Timeout bounds the wait when ctx carries no deadline of its own, so a
+// caller that forgets one cannot wait forever.
 func (s *Session) Wait(ctx context.Context) (Result, error) {
-	if _, ok := ctx.Deadline(); !ok {
+	if _, ok := ctx.Deadline(); !ok && s.opts.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, s.opts.Timeout)
 		defer cancel()
@@ -386,23 +387,43 @@ func (s *Session) Wait(ctx context.Context) (Result, error) {
 		if err != nil {
 			return Result{}, err
 		}
-		if header := cookieHeader(cookies); HasSessionCookies(header) {
+		// The domain matters, not just the names: a Google session harvested before
+		// the flow reaches YouTube looks complete and authenticates nothing.
+		if hasYouTubeSession(cookies) {
 			return Result{
 				URL:          s.currentURL(),
 				SAPISID:      sapiSID(cookies),
-				CookieHeader: header,
+				CookieHeader: cookieHeader(cookies),
 				Cookies:      cookies,
 			}, nil
 		}
 
 		select {
 		case <-ctx.Done():
-			return Result{}, ErrTimeout
+			return Result{}, fmt.Errorf("%w (%s)", ErrTimeout, describeJar(cookies))
 		case <-s.closing:
 			return Result{}, ErrClosed
 		case <-ticker.C:
 		}
 	}
+}
+
+// describeJar summarises what the jar held, so a timeout can say whether the
+// sign-in never started or stopped at the Google account stage.
+func describeJar(cookies []Cookie) string {
+	if len(cookies) == 0 {
+		return "the cookie jar is empty"
+	}
+
+	var youtube, google int
+	for _, c := range cookies {
+		if isYouTubeDomain(c.Domain) {
+			youtube++
+		} else {
+			google++
+		}
+	}
+	return fmt.Sprintf("%d cookies, %d scoped to YouTube, %d elsewhere", len(cookies), youtube, google)
 }
 
 // currentURL reports the page the window is showing, for diagnostics.

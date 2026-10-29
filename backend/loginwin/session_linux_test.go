@@ -78,6 +78,11 @@ func cookieServer(t *testing.T, sapisid, sid string) *httptest.Server {
 }
 
 // waitForCookie polls the jar until the named cookie shows up.
+//
+// The smoke tests drive harvest directly rather than Wait, because Wait requires
+// a YouTube-scoped session by design: it is the gate that stops a capture at the
+// Google stage. A local test server can never satisfy that, so these tests check
+// the transport, not the gate. The gate has its own tests in cookie_test.go.
 func waitForCookie(ctx context.Context, s *Session, name string) (Cookie, error) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()

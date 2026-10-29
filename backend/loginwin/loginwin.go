@@ -91,3 +91,12 @@ type Result struct {
 	DataSyncID  string
 	AuthUser    string
 }
+
+// CurrentURL reports the page the window is showing.
+//
+// It exists for diagnostics: a capture that never completes looks identical to a
+// hang, and knowing the page is the only way to tell a stalled Google flow from a
+// window that never loaded at all.
+func (s *Session) CurrentURL() string {
+	return s.currentURL()
+}

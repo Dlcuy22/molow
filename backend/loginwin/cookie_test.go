@@ -171,3 +171,103 @@ func TestDomainPriority(t *testing.T) {
 		}
 	}
 }
+
+func TestHasYouTubeSessionRejectsTheGoogleStage(t *testing.T) {
+	// The exact set the real window harvested at gds.google.com/web/landing,
+	// before the flow reached YouTube. Every name check passes and nothing works,
+	// so the domain has to be part of the gate.
+	googleOnly := []Cookie{
+		{Name: "SID", Value: "a", Domain: ".google.com", Path: "/"},
+		{Name: "SAPISID", Value: "b", Domain: ".google.com", Path: "/"},
+		{Name: "__Secure-3PSID", Value: "c", Domain: ".google.com", Path: "/"},
+		{Name: "__Secure-3PAPISID", Value: "d", Domain: ".google.com", Path: "/"},
+		{Name: "LSID", Value: "e", Domain: "accounts.google.com", Path: "/"},
+		{Name: "__Host-GAPS", Value: "f", Domain: "accounts.google.com", Path: "/"},
+	}
+	if hasYouTubeSession(googleOnly) {
+		t.Error("a Google-only jar was accepted as a YouTube session")
+	}
+	// The name check alone would have accepted it, which is the bug being guarded.
+	if !HasSessionCookies(cookieHeader(googleOnly)) {
+		t.Fatal("the fixture should pass the name-only check, or it does not test the domain gate")
+	}
+
+	// Adding the YouTube-scoped pair is what makes it a real session.
+	withYouTube := append(append([]Cookie{}, googleOnly...),
+		Cookie{Name: "SAPISID", Value: "y", Domain: ".youtube.com", Path: "/"},
+		Cookie{Name: "SID", Value: "z", Domain: ".youtube.com", Path: "/"},
+	)
+	if !hasYouTubeSession(withYouTube) {
+		t.Error("a jar with a YouTube-scoped session was rejected")
+	}
+}
+
+func TestHasYouTubeSessionRequiresBothParts(t *testing.T) {
+	cases := []struct {
+		name    string
+		cookies []Cookie
+		want    bool
+	}{
+		{
+			name: "seed only",
+			cookies: []Cookie{
+				{Name: "SAPISID", Value: "a", Domain: ".youtube.com", Path: "/"},
+			},
+			want: false,
+		},
+		{
+			name: "identity only",
+			cookies: []Cookie{
+				{Name: "SID", Value: "a", Domain: ".youtube.com", Path: "/"},
+			},
+			want: false,
+		},
+		{
+			name: "seed on youtube, identity on google",
+			cookies: []Cookie{
+				{Name: "SAPISID", Value: "a", Domain: ".youtube.com", Path: "/"},
+				{Name: "SID", Value: "b", Domain: ".google.com", Path: "/"},
+			},
+			want: false,
+		},
+		{
+			name: "exact host counts",
+			cookies: []Cookie{
+				{Name: "SAPISID", Value: "a", Domain: "music.youtube.com", Path: "/"},
+				{Name: "__Secure-3PSID", Value: "b", Domain: "music.youtube.com", Path: "/"},
+			},
+			want: true,
+		},
+		{
+			name:    "empty",
+			cookies: nil,
+			want:    false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasYouTubeSession(tc.cookies); got != tc.want {
+				t.Errorf("hasYouTubeSession = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDescribeJar(t *testing.T) {
+	if got := describeJar(nil); got != "the cookie jar is empty" {
+		t.Errorf("describeJar(nil) = %q", got)
+	}
+
+	got := describeJar([]Cookie{
+		{Name: "SID", Domain: ".google.com"},
+		{Name: "SAPISID", Domain: ".youtube.com"},
+	})
+	if !strings.Contains(got, "2 cookies") || !strings.Contains(got, "1 scoped to YouTube") {
+		t.Errorf("describeJar = %q, want the split", got)
+	}
+	// The message must never leak a value.
+	if strings.Contains(got, "=") {
+		t.Errorf("describeJar leaked a value: %q", got)
+	}
+}

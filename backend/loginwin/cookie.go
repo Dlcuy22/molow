@@ -82,6 +82,10 @@ func cookieHeader(cookies []Cookie) string {
 // A SAPISID alone cannot: it only seeds the Authorization hash, while the session
 // identity comes from the primary cookies. Measured against the live endpoint, a
 // header with SAPISID but no SID or __Secure-3PSID returns the signed-out page.
+//
+// This is a shape check only. It cannot see domains, so it accepts a header built
+// from Google-scoped cookies, which YouTube refuses. Use hasYouTubeSession while
+// the cookie set is still available.
 func HasSessionCookies(header string) bool {
 	var hasSeed, hasIdentity bool
 	for _, part := range strings.Split(header, ";") {
@@ -97,6 +101,43 @@ func HasSessionCookies(header string) bool {
 		}
 	}
 	return hasSeed && hasIdentity
+}
+
+// hasYouTubeSession reports whether the jar holds a session the YouTube Music
+// origin can use.
+//
+// The domain is the whole point. The sign-in flow mints a complete Google session
+// on .google.com and accounts.google.com well before it reaches YouTube, and those
+// cookies match every name check. Harvesting at that moment yields a header that
+// looks like a session and authenticates nothing, which is what the first run
+// against the real flow did: it captured at gds.google.com/web/landing and every
+// request came back signed out.
+//
+// So the seed and the identity cookie both have to be scoped to YouTube.
+func hasYouTubeSession(cookies []Cookie) bool {
+	var seed, identity bool
+	for _, c := range cookies {
+		if !isYouTubeDomain(c.Domain) {
+			continue
+		}
+		switch c.Name {
+		case "SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID":
+			seed = true
+		case "SID", "__Secure-3PSID", "__Secure-1PSID":
+			identity = true
+		}
+	}
+	return seed && identity
+}
+
+// isYouTubeDomain reports whether a cookie belongs to YouTube rather than to the
+// Google account that fronts it.
+func isYouTubeDomain(domain string) bool {
+	switch domainPriority(domain) {
+	case priorityExactHost, priorityYouTube:
+		return true
+	}
+	return false
 }
 
 // sapiSID returns the SAPISID value from a cookie set, preferring the exact-host

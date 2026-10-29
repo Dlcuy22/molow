@@ -8,9 +8,9 @@ require (
 	github.com/go-ole/go-ole v1.3.0
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/tphakala/simd v1.9.0
-	github.com/wailsapp/wails/v3 v3.0.0-beta.25
-	golang.org/x/image v0.41.0
-	golang.org/x/sys v0.47.0
+	github.com/wailsapp/wails/v3 v3.0.0
+	golang.org/x/image v0.45.0
+	golang.org/x/sys v0.48.0
 	gopkg.in/natefinch/npipe.v2 v2.0.0-20160621034901-c1b8fa8bdcce
 )
 

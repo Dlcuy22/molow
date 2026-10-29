@@ -29,14 +29,11 @@ var ErrNoCredentials = errors.New("auth: not signed in")
 
 // Credentials is one captured session.
 //
-// CookieHeader is the ytm-go contract and is replayed verbatim. Cookies carries
-// the same set with domain and path intact, which the header throws away and
-// Restore needs.
+// CookieHeader is the ytm-go contract, replayed verbatim. Cookies carries the same
+// set with domain and path intact, which the header throws away and Restore needs.
 //
-// DataSyncID is bookkeeping only. It identifies the active channel for
-// SwitchChannel and must never be sent as user.onBehalfOfUser: measured against
-// the live endpoint, that answers HTTP 500 INTERNAL for a plain channel-scoped
-// session.
+// DataSyncID is bookkeeping only, for matching a channel in SwitchChannel. It must
+// never be sent as user.onBehalfOfUser: measured live, that answers HTTP 500.
 type Credentials struct {
 	Version      int       `json:"version"`
 	CookieHeader string    `json:"cookie_header"`
@@ -104,9 +101,8 @@ func loadCredentials() (*Credentials, error) {
 
 // saveCredentials writes the session atomically with 0600 permissions.
 //
-// The temporary file is created in the same directory so the rename stays on one
-// filesystem, and it is chmod'd before any content is written, so the secrets
-// are never readable by another user even for an instant.
+// The temporary file is chmod'd before any content is written, so the secrets are
+// never readable by another user even for an instant.
 func saveCredentials(creds *Credentials) error {
 	path, err := credentialsPath()
 	if err != nil {

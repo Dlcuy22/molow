@@ -366,10 +366,8 @@ func (s *Session) create() error {
 
 // Wait blocks until the jar holds a usable session, then returns it.
 //
-// The window is polled rather than watched, because the cookie jar is the only
-// signal that matters: a page can finish loading on accounts.google.com and
-// still hold no session. The poll stops when the ctx deadline passes, so the
-// caller owns the timeout.
+// It polls the jar rather than watching load events: a page can finish loading on
+// accounts.google.com and still hold no session.
 func (s *Session) Wait(ctx context.Context) (Result, error) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -422,9 +420,8 @@ type harvestResult struct {
 
 // harvest asks the cookie manager for the jar and waits for the async reply.
 //
-// The request is posted to the GTK thread and the finish call happens inside the
-// callback, because the loop that delivers the reply is the thread that would
-// otherwise be blocked waiting for it.
+// The finish call runs inside the callback: the loop that delivers the reply is
+// the same thread that would otherwise be blocked waiting for it.
 func (s *Session) harvest(ctx context.Context) ([]Cookie, error) {
 	s.mu.Lock()
 	manager := s.manager

@@ -31,14 +31,11 @@ func domainPriority(domain string) int {
 
 // cookieHeader builds the single Cookie: header value ytm-go replays verbatim.
 //
-// The jar cannot be used as it comes out of WebKit. The sign-in flow passes
-// through accounts.google.com, so the same cookie name exists in several scopes
-// and get_all_cookies promises no ordering. Concatenating everything would emit
-// two SAPISID entries, and the parser keeps whichever it meets last, so auth
-// would depend on libsoup's internal order.
-//
-// Only cookies the YouTube Music origin can see survive, and the first entry per
-// name wins after sorting, so the result does not depend on harvest order.
+// The jar cannot be used as it comes out of WebKit: the sign-in flow passes
+// through accounts.google.com, so the same name exists in several scopes and
+// get_all_cookies promises no ordering. Two SAPISID entries would leave the
+// parser keeping whichever it met last, so auth would depend on libsoup's
+// internal order.
 func cookieHeader(cookies []Cookie) string {
 	kept := make([]Cookie, 0, len(cookies))
 	for _, c := range cookies {
@@ -84,8 +81,7 @@ func cookieHeader(cookies []Cookie) string {
 //
 // A SAPISID alone cannot: it only seeds the Authorization hash, while the session
 // identity comes from the primary cookies. Measured against the live endpoint, a
-// header carrying SAPISID without SID or __Secure-3PSID returns the signed-out
-// page for every request.
+// header with SAPISID but no SID or __Secure-3PSID returns the signed-out page.
 func HasSessionCookies(header string) bool {
 	var hasSeed, hasIdentity bool
 	for _, part := range strings.Split(header, ";") {

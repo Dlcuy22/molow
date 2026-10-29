@@ -303,7 +303,9 @@ type ytmProvider struct {
 	// resolve, search, loadArtist, loadPlaylist and loadSong are the network
 	// calls, indirected so a test can drive the provider and the service without
 	// touching YouTube. In production they are the client's own methods; the
-	// client itself is not kept, because nothing else on it is used.
+	// client is also kept so the account methods stay reachable, and so a stored
+	// session can be attached after startup without rebuilding the provider.
+	client       *ytm.Client
 	resolve      func(context.Context, string) (*ytm.Streams, error)
 	search       func(context.Context, string, string, bool) (*ytm.SearchResults, error)
 	loadArtist   func(context.Context, string) (*ytm.Artist, error)
@@ -316,6 +318,9 @@ func newYTMProvider(index *ytmIndex, seamless bool, log *slog.Logger) *ytmProvid
 		log = slog.Default()
 	}
 	client := ytm.NewClient()
+	// The library logs recovered parse panics instead of returning an empty list
+	// in silence, but only when it has a logger; without one it stays quiet.
+	client.SetLogger(log)
 
 	return &ytmProvider{
 		index:      index,
@@ -324,6 +329,7 @@ func newYTMProvider(index *ytmIndex, seamless bool, log *slog.Logger) *ytmProvid
 		log:        log,
 		http:       &http.Client{Timeout: ytmHTTPTimeout},
 		seamless:   seamless,
+		client:     client,
 		resolve:    client.GetStream,
 		search:     client.Search,
 		loadArtist: client.LoadArtist,

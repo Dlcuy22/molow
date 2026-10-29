@@ -223,6 +223,12 @@ func (s *PlayerService) ServiceStartup(_ context.Context, _ application.ServiceO
 	// the catalogue are up and a track can be described.
 	s.initDiscord()
 
+	// Load a stored YouTube Music session before the first request, so a restart
+	// keeps the account without reopening the login window. Validation is a
+	// separate, later step: a startup that waits on the network delays the main
+	// window, and a dead session answers HTTP 200 rather than failing fast.
+	s.restoreYTM()
+
 	// Publish to the OS media controls. It is unconditional: a host with no
 	// transport logs once and stays inert.
 	s.initSystemMedia()

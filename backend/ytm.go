@@ -305,12 +305,42 @@ type ytmProvider struct {
 	// touching YouTube. In production they are the client's own methods; the
 	// client is also kept so the account methods stay reachable, and so a stored
 	// session can be attached after startup without rebuilding the provider.
+	//
+	// apiMu guards the whole set: a sign-in swaps every call at once while a
+	// track may be opening or a search running, so readers take a snapshot
+	// through calls rather than touch the fields directly.
+	apiMu        sync.RWMutex
 	client       *ytm.Client
 	resolve      func(context.Context, string) (*ytm.Streams, error)
 	search       func(context.Context, string, string, bool) (*ytm.SearchResults, error)
 	loadArtist   func(context.Context, string) (*ytm.Artist, error)
 	loadPlaylist func(context.Context, string, *ytm.BuiltInContinuation) (*ytm.Playlist, error)
 	loadSong     func(context.Context, string) (*ytm.Song, error)
+}
+
+// ytmCalls is one consistent snapshot of the provider's network surface. A
+// sign-in replaces the client, and a reader that mixed an old resolve with a
+// new search would be talking to two sessions at once.
+type ytmCalls struct {
+	resolve      func(context.Context, string) (*ytm.Streams, error)
+	search       func(context.Context, string, string, bool) (*ytm.SearchResults, error)
+	loadArtist   func(context.Context, string) (*ytm.Artist, error)
+	loadPlaylist func(context.Context, string, *ytm.BuiltInContinuation) (*ytm.Playlist, error)
+	loadSong     func(context.Context, string) (*ytm.Song, error)
+}
+
+// calls reads the current network surface under the lock.
+func (p *ytmProvider) calls() ytmCalls {
+	p.apiMu.RLock()
+	defer p.apiMu.RUnlock()
+
+	return ytmCalls{
+		resolve:      p.resolve,
+		search:       p.search,
+		loadArtist:   p.loadArtist,
+		loadPlaylist: p.loadPlaylist,
+		loadSong:     p.loadSong,
+	}
 }
 
 func newYTMProvider(index *ytmIndex, seamless bool, log *slog.Logger) *ytmProvider {
@@ -357,7 +387,8 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 		return provider.Source{}, fmt.Errorf("ytm: %q carries no track id", ref)
 	}
 
-	streams, err := p.resolve(ctx, id)
+	calls := p.calls()
+	streams, err := calls.resolve(ctx, id)
 	if err != nil {
 		return provider.Source{}, err
 	}
@@ -409,7 +440,7 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 		if expires.IsZero() || !time.Now().After(expires) {
 			return nil
 		}
-		fresh, err := p.resolve(ctx, id)
+		fresh, err := p.calls().resolve(ctx, id)
 		if err != nil {
 			return err
 		}
@@ -489,9 +520,10 @@ func (p *ytmProvider) playlist(ctx context.Context, id string) ([]YTMResult, err
 	var out []YTMResult
 	seen := make(map[string]struct{})
 	var cont *ytm.BuiltInContinuation
+	loadPlaylist := p.calls().loadPlaylist
 
 	for page := 0; page < ytmPlaylistMaxPages; page++ {
-		pl, err := p.loadPlaylist(ctx, id, cont)
+		pl, err := loadPlaylist(ctx, id, cont)
 		if err != nil {
 			return nil, err
 		}
@@ -567,11 +599,12 @@ func (p *ytmProvider) albumFor(ctx context.Context, ref string) string {
 	if t.Album != "" {
 		return t.Album
 	}
-	if p.loadSong == nil {
+	loadSong := p.calls().loadSong
+	if loadSong == nil {
 		return ""
 	}
 
-	song, err := p.loadSong(ctx, t.ID)
+	song, err := loadSong(ctx, t.ID)
 	if err != nil || song == nil {
 		// Do not mark a transient failure as "no album": leave it unresolved so
 		// a later play can try again.

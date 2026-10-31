@@ -136,6 +136,12 @@ func (s *PlayerService) completeSignIn(creds *Credentials) error {
 		return err
 	}
 
+	// The running provider was built with the client from startup, so a fresh
+	// sign-in has to hand it the new session now. Without this, every catalogue
+	// call keeps using the old cookies until the next start, which makes a
+	// re-login look ineffective.
+	s.ytmProv.setClient(client)
+
 	// The identity is a nicety. If the account endpoints fail the session is
 	// still good, so the failure is swallowed rather than rejecting a valid login.
 	accounts, accountsErr := client.GetAccounts(ctx)

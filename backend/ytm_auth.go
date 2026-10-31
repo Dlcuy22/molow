@@ -59,8 +59,10 @@ func (p *ytmProvider) setClient(client *ytm.Client) {
 		return
 	}
 
-	p.client = client
 	client.SetLogger(p.log)
+	p.apiMu.Lock()
+	defer p.apiMu.Unlock()
+	p.client = client
 	p.resolve = client.GetStream
 	p.search = client.Search
 	p.loadArtist = client.LoadArtist

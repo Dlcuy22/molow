@@ -105,7 +105,8 @@ func (p *ytmProvider) logger() *slog.Logger {
 // It never returns an error: an avatar is decorative, so a failure is "no
 // avatar" rather than a reason to disturb the track.
 func (p *ytmProvider) artistArt(ctx context.Context, artistID string) string {
-	if artistID == "" || p.loadArtist == nil {
+	loadArtist := p.calls().loadArtist
+	if artistID == "" || loadArtist == nil {
 		return ""
 	}
 	if url, ok := p.artists.lookup(artistID); ok {
@@ -121,7 +122,7 @@ func (p *ytmProvider) artistArt(ctx context.Context, artistID string) string {
 		return url
 	}
 
-	artist, err := p.loadArtist(ctx, artistID)
+	artist, err := loadArtist(ctx, artistID)
 	if err != nil || artist == nil {
 		p.artists.put(artistID, "")
 

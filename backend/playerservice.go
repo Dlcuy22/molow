@@ -766,7 +766,7 @@ func (s *PlayerService) SearchYTMSongs(query string) ([]YTMResult, error) {
 	}
 	s.searchMu.Unlock()
 
-	res, err := s.ytmProv.search(s.ctx, query, "", false)
+	res, err := s.ytmProv.calls().search(s.ctx, query, "", false)
 	if err != nil {
 		return nil, err
 	}

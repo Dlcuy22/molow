@@ -4,16 +4,21 @@ import { ParamKind, type EffectParam, type EffectStage } from "../../effect-type
 
 // The preset menu reads the store on mount. svelte/server does not run the
 // mount hook, but importing the store still touches window at module load, so
-// the module is stubbed with the commands the panel can call.
-vi.mock("../../store", () => ({
-  commands: {
-    effectPresets: async () => [],
-    saveEffectPreset: async () => null,
-    applyEffectPreset: async () => false,
-    deleteEffectPreset: async () => false,
-    openEffectPresetFolder: async () => {},
-  },
-}));
+// the module is stubbed with the state and commands the panel reads.
+vi.mock("../../store", async () => {
+  const { writable } = await import("svelte/store");
+
+  return {
+    appliedPresets: writable({}),
+    commands: {
+      effectPresets: async () => [],
+      saveEffectPreset: async () => null,
+      applyEffectPreset: async () => false,
+      deleteEffectPreset: async () => false,
+      openEffectPresetFolder: async () => {},
+    },
+  };
+});
 
 import EqualizerPanel from "./EqualizerPanel.svelte";
 import ScrubField from "./ScrubField.svelte";
@@ -40,11 +45,18 @@ function param(over: Partial<EffectParam>): EffectParam {
   };
 }
 
-function schema(): EffectParam[] {
+function schema(count = 10): EffectParam[] {
   return [
-    param({ key: "num-bands", kind: ParamKind.Int, min: 1, max: 10, step: 1, default: 10 }),
-    ...Array.from({ length: 10 }, (_, i) => [
-      param({ key: `band${i}-frequency`, min: 20, max: 20000, step: 1, unit: "Hz" }),
+    param({ key: "num-bands", kind: ParamKind.Int, min: 1, max: 32, step: 1, default: 10 }),
+    ...Array.from({ length: count }, (_, i) => [
+      param({
+        key: `band${i}-frequency`,
+        min: 20,
+        max: 20000,
+        step: 1,
+        unit: "Hz",
+        default: i < 10 ? 32 * Math.pow(2, i) : 100,
+      }),
       param({ key: `band${i}-gain`, min: -20, max: 20, step: 0.1, unit: "dB" }),
       param({ key: `band${i}-q`, min: 0.1, max: 10, step: 0.01 }),
     ]).flat(),
@@ -106,13 +118,22 @@ describe("EqualizerPanel", () => {
     expect(body).toContain("--lo: 0.4375; --hi: 0.5;");
   });
 
-  it("disables the bands past the active count", () => {
+  it("renders only the active bands, plus an append cell", () => {
     const body = renderPanel(stage({ values: { "num-bands": 1, "band0-gain": 0 } }));
-    const active = body.match(/<input[^>]*aria-label="Band 1 gain"[^>]*>/)?.[0] ?? "";
-    const inactive = body.match(/<input[^>]*aria-label="Band 2 gain"[^>]*>/)?.[0] ?? "";
-    expect(active).not.toContain("disabled");
-    expect(inactive).toContain("disabled");
-    expect(body).toContain("Band 2");
+    expect(body).toContain("Band 1");
+    expect(body).not.toContain("Band 2");
+    expect(body).toContain('aria-label="Add a band at 100 Hz"');
+  });
+
+  it("renders a band past ten once the stage activates it", () => {
+    const s = stage({
+      schema: schema(12),
+      values: { "num-bands": 12, "band11-frequency": 100 },
+    });
+    const body = renderPanel(s);
+    expect(body).toContain("Band 12");
+    expect(body).toContain("100");
+    expect(body).toContain('aria-label="Band 12 frequency"');
   });
 
   it("renders a preset chooser beside the band count", () => {

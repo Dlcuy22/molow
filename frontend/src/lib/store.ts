@@ -130,11 +130,38 @@ export const effectChain = writable<EffectStage[]>([]);
  *  loaded, so it is fetched once on connect. */
 export const effectKinds = writable<EffectKind[]>([]);
 
+/** appliedPresets remembers which preset each stage was last given, keyed by
+ *  stage ID. It is UI state, not engine state: the curve lives in the stage and
+ *  the name is only the menu label. Keeping it outside the panel is what lets
+ *  the label survive switching to another effect and back, or remounting the
+ *  panel for any other reason. A stage that leaves the chain is pruned. */
+export const appliedPresets = writable<Record<string, EffectPreset>>({});
+
+/** pruneAppliedPresets drops labels for stages that are no longer in the chain. */
+function pruneAppliedPresets(stageIDs: string[]) {
+  const keep = new Set(stageIDs);
+  appliedPresets.update((m) => {
+    let changed = false;
+    const next: Record<string, EffectPreset> = {};
+    for (const [id, preset] of Object.entries(m)) {
+      if (keep.has(id)) {
+        next[id] = preset;
+      } else {
+        changed = true;
+      }
+    }
+
+    return changed ? next : m;
+  });
+}
+
 /** syncEffectChain reads the chain once and maps it into the frozen shape. */
 async function syncEffectChain(): Promise<void> {
   try {
     const chain = await PlayerService.EffectChain();
-    effectChain.set((chain.stages ?? []).map(toEffectStage));
+    const stages = (chain.stages ?? []).map(toEffectStage);
+    effectChain.set(stages);
+    pruneAppliedPresets(stages.map((s) => s.id));
   } catch {
     // A read failure is not worth the error line; the next tick retries.
   }
@@ -505,17 +532,25 @@ export const commands = {
   saveEffectPreset: async (id: string, name: string): Promise<EffectPreset | null> => {
     try {
       const p = await PlayerService.SaveEffectPreset(id, name);
+      if (!p) {
+        return null;
+      }
+      const saved = toEffectPreset(p);
+      // Saving captures the curve that is live now, so the saved preset is
+      // also the one in force on this stage.
+      appliedPresets.update((m) => ({ ...m, [id]: saved }));
 
-      return p ? toEffectPreset(p) : null;
+      return saved;
     } catch (err) {
       player.update((s) => ({ ...s, error: errorText(err) }));
 
       return null;
     }
   },
-  applyEffectPreset: async (id: string, source: string, name: string): Promise<boolean> => {
+  applyEffectPreset: async (id: string, preset: EffectPreset): Promise<boolean> => {
     try {
-      await PlayerService.ApplyEffectPreset(id, source, name);
+      await PlayerService.ApplyEffectPreset(id, preset.source, preset.name);
+      appliedPresets.update((m) => ({ ...m, [id]: preset }));
       await syncEffectChain();
 
       return true;
@@ -525,9 +560,18 @@ export const commands = {
       return false;
     }
   },
-  deleteEffectPreset: async (name: string): Promise<boolean> => {
+  deleteEffectPreset: async (id: string, name: string): Promise<boolean> => {
     try {
       await PlayerService.DeleteEffectPreset(name);
+      appliedPresets.update((m) => {
+        if (!(id in m)) {
+          return m;
+        }
+        const next = { ...m };
+        delete next[id];
+
+        return next;
+      });
 
       return true;
     } catch (err) {

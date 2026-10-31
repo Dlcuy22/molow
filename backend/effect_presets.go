@@ -41,8 +41,7 @@ const (
 	presetSourceBuiltin = "builtin"
 	presetSourceUser    = "user"
 
-	presetBandCount = 10
-	presetNameMax   = 64
+	presetNameMax = 64
 
 	presetMinFreq = 20.0
 	presetMaxFreq = 20000.0
@@ -262,8 +261,15 @@ func presetFileFromStage(name string, st molo.EffectStage) (effectPresetFile, er
 	if !ok {
 		return effectPresetFile{}, fmt.Errorf("stage %s has no band count", st.ID)
 	}
-	bands := make([]presetBandFile, 0, presetBandCount)
-	for i := 0; i < presetBandCount; i++ {
+	count := int(math.Round(active))
+	if count < 1 {
+		count = 1
+	}
+	if count > dsp.EqualizerBandCount {
+		count = dsp.EqualizerBandCount
+	}
+	bands := make([]presetBandFile, 0, count)
+	for i := 0; i < count; i++ {
 		freq, ok := presetNumber(st.Values[dsp.EqualizerBandFreqKey(i)])
 		if !ok {
 			return effectPresetFile{}, fmt.Errorf("stage %s has no frequency for band %d", st.ID, i+1)
@@ -283,7 +289,7 @@ func presetFileFromStage(name string, st molo.EffectStage) (effectPresetFile, er
 		Version:     presetVersion,
 		Impl:        presetImplEqualizer,
 		Name:        name,
-		ActiveBands: int(math.Round(active)),
+		ActiveBands: count,
 		Bands:       bands,
 	}
 
@@ -325,14 +331,14 @@ func (f *effectPresetFile) validate() error {
 	if len([]rune(f.Name)) > presetNameMax {
 		return fmt.Errorf("preset name is longer than %d characters", presetNameMax)
 	}
-	if len(f.Bands) != presetBandCount {
-		return fmt.Errorf("preset has %d bands, want %d", len(f.Bands), presetBandCount)
+	if len(f.Bands) < 1 || len(f.Bands) > dsp.EqualizerBandCount {
+		return fmt.Errorf("preset has %d bands, want 1 to %d", len(f.Bands), dsp.EqualizerBandCount)
 	}
 	if f.ActiveBands < 1 {
 		f.ActiveBands = 1
 	}
-	if f.ActiveBands > presetBandCount {
-		f.ActiveBands = presetBandCount
+	if f.ActiveBands > len(f.Bands) {
+		f.ActiveBands = len(f.Bands)
 	}
 	for i := range f.Bands {
 		b := &f.Bands[i]

@@ -12,7 +12,7 @@ import (
 
 func eqValues() dsp.Values {
 	v := dsp.Values{dsp.EqualizerNumBands: 10}
-	for i := 0; i < presetBandCount; i++ {
+	for i := 0; i < dsp.EqualizerBandCount; i++ {
 		v[dsp.EqualizerBandFreqKey(i)] = 32.0 * float64(i+1)
 		v[dsp.EqualizerBandGainKey(i)] = float64(i) - 5
 		v[dsp.EqualizerBandQKey(i)] = 1.5
@@ -64,7 +64,7 @@ func TestPresetFileFromStage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("presetFileFromStage: %v", err)
 	}
-	if f.Name != "My curve" || f.ActiveBands != 10 || len(f.Bands) != presetBandCount {
+	if f.Name != "My curve" || f.ActiveBands != 10 || len(f.Bands) != 10 {
 		t.Fatalf("file = %+v", f)
 	}
 	if f.Bands[0].Frequency != 32 || f.Bands[0].Gain != -5 || f.Bands[0].Q != 1.5 {
@@ -109,7 +109,10 @@ func TestPresetValidate(t *testing.T) {
 		{"version", func(f *effectPresetFile) { f.Version = 99 }, true},
 		{"impl", func(f *effectPresetFile) { f.Impl = "other" }, true},
 		{"name", func(f *effectPresetFile) { f.Name = "   " }, true},
-		{"band count", func(f *effectPresetFile) { f.Bands = f.Bands[:9] }, true},
+		{"band count", func(f *effectPresetFile) { f.Bands = nil }, true},
+		{"too many bands", func(f *effectPresetFile) {
+			f.Bands = make([]presetBandFile, dsp.EqualizerBandCount+1)
+		}, true},
 		{"clamps", func(f *effectPresetFile) {
 			f.Bands[0].Gain = 99
 			f.Bands[1].Frequency = 1
@@ -134,10 +137,22 @@ func TestPresetValidate(t *testing.T) {
 			if f.Bands[2].Q != presetMinQ {
 				t.Errorf("Q not clamped: %v", f.Bands[2].Q)
 			}
-			if f.ActiveBands != presetBandCount {
+			if f.ActiveBands != len(f.Bands) {
 				t.Errorf("active bands not clamped: %d", f.ActiveBands)
 			}
 		}
+	}
+}
+
+func TestPresetFileFromStageSavesOnlyActiveBands(t *testing.T) {
+	values := eqValues()
+	values[dsp.EqualizerNumBands] = 12
+	f, err := presetFileFromStage("Twelve", eqStage(values))
+	if err != nil {
+		t.Fatalf("presetFileFromStage: %v", err)
+	}
+	if f.ActiveBands != 12 || len(f.Bands) != 12 {
+		t.Fatalf("active = %d, bands = %d, want 12 and 12", f.ActiveBands, len(f.Bands))
 	}
 }
 
@@ -249,10 +264,10 @@ func TestBundledPresets(t *testing.T) {
 			t.Errorf("duplicate built-in name %q", f.Name)
 		}
 		seen[f.Name] = true
-		if len(f.Bands) != presetBandCount {
+		if len(f.Bands) < 1 || len(f.Bands) > dsp.EqualizerBandCount {
 			t.Errorf("%s has %d bands", f.Name, len(f.Bands))
 		}
-		if f.ActiveBands < 1 || f.ActiveBands > presetBandCount {
+		if f.ActiveBands < 1 || f.ActiveBands > dsp.EqualizerBandCount {
 			t.Errorf("%s has active bands %d", f.Name, f.ActiveBands)
 		}
 	}

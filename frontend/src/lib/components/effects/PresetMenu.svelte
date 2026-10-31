@@ -16,14 +16,12 @@
     presets,
     applied,
     dirty,
-    onapplied,
     onrefresh,
   }: {
     stage: EffectStage;
     presets: EffectPreset[];
     applied: EffectPreset | null;
     dirty: boolean;
-    onapplied: (preset: EffectPreset | null) => void;
     onrefresh: () => Promise<void>;
   } = $props();
 
@@ -94,14 +92,13 @@
       return;
     }
     busy = true;
-    const ok = await commands.applyEffectPreset(stage.id, p.source, p.name);
+    const ok = await commands.applyEffectPreset(stage.id, p);
     busy = false;
     if (!ok) {
       error = "Could not apply the preset.";
 
       return;
     }
-    onapplied(p);
     close();
   }
 
@@ -135,7 +132,6 @@
 
       return;
     }
-    onapplied(saved);
     await onrefresh();
     close();
   }
@@ -145,7 +141,7 @@
       return;
     }
     busy = true;
-    const ok = await commands.deleteEffectPreset(applied.name);
+    const ok = await commands.deleteEffectPreset(stage.id, applied.name);
     busy = false;
     if (!ok) {
       error = "Could not delete the preset.";
@@ -153,7 +149,6 @@
 
       return;
     }
-    onapplied(null);
     await onrefresh();
     close();
   }

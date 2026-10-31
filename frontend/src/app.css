@@ -157,3 +157,51 @@ body {
 .range:disabled {
   cursor: default;
 }
+
+/* The transport's seek bar keeps the native range underneath for pointer
+ * travel, keyboard steps and assistive technology, but paints it transparent
+ * and draws the bar itself. The thumb stays out of the way until the pointer or
+ * keyboard reaches the bar, and the 4 Hz position snapshots are stretched with a
+ * linear transition so the fill glides instead of stepping. */
+.seek-fill {
+  transition: width 300ms linear;
+}
+.seek-thumb {
+  opacity: 0;
+  scale: 0.5;
+  transition:
+    left 300ms linear,
+    opacity 140ms ease,
+    scale 140ms ease;
+}
+.seek:hover .seek-thumb,
+.seek:has(.seek-input:focus-visible) .seek-thumb,
+.seek:active .seek-thumb {
+  opacity: 1;
+  scale: 1;
+}
+.seek:has(.seek-input:focus-visible) .seek-thumb {
+  box-shadow: 0 0 0 2px var(--color-focus);
+}
+/* A drag must track the pointer exactly, not ease behind it. */
+.seek-instant .seek-fill {
+  transition: none;
+}
+.seek-instant .seek-thumb {
+  transition:
+    opacity 140ms ease,
+    scale 140ms ease;
+}
+/* There is no hover to reveal the thumb on a touch screen. */
+@media (hover: none) {
+  .seek-thumb {
+    opacity: 1;
+    scale: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .seek-fill,
+  .seek-thumb {
+    transition: none;
+  }
+}

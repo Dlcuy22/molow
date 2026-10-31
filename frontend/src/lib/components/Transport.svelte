@@ -19,18 +19,37 @@
   // The seek bar is optimistic: dragging updates the local value immediately so
   // the thumb tracks the pointer, and the engine confirmation overwrites it on
   // the next snapshot. While dragging, the pushed position is ignored, or the
-  // thumb would fight the pointer.
+  // thumb would fight the pointer. A committed seek is held the same way until
+  // the snapshot agrees, so the bar does not snap back for one tick.
   let scrubbing = $state(false);
   let scrubValue = $state(0);
+  let pendingSeek = $state<number | null>(null);
 
   // The queue is nullable in the binding; the store never publishes null, but
   // narrowing once keeps the enabled checks plain.
   const queue = $derived(snap.queue ?? []);
   const live = $derived(isActive(snap.state));
   const canPrev = $derived(queue.length > 0);
-  const position = $derived(scrubbing ? scrubValue : snap.position);
+  const position = $derived(scrubbing ? scrubValue : (pendingSeek ?? snap.position));
   const duration = $derived(snap.duration > 0 ? snap.duration : 0);
   const seekFill = $derived(fillFrac(position, 0, duration));
+
+  // A seek the engine clamped to a different spot (or rejected) would leave the
+  // pending value stuck forever, so it also expires on its own.
+  $effect(() => {
+    if (pendingSeek !== null && Math.abs(snap.position - pendingSeek) < 750) {
+      pendingSeek = null;
+    }
+  });
+
+  $effect(() => {
+    if (pendingSeek === null) {
+      return;
+    }
+    const timer = setTimeout(() => (pendingSeek = null), 1500);
+
+    return () => clearTimeout(timer);
+  });
 
   // Volume comes from the shared store, so the slider and the keyboard cannot
   // disagree. The override leads the engine and is dropped when the server value
@@ -39,13 +58,57 @@
 
   function onSeekInput(e: Event) {
     scrubbing = true;
+    pendingSeek = null;
     scrubValue = Number((e.currentTarget as HTMLInputElement).value);
   }
 
+  // seekTo is the single path for a discrete jump (commit, arrow key), so the
+  // bar moves at once and the engine confirmation only clears the pending value.
+  function seekTo(ms: number) {
+    const target = Math.min(Math.max(ms, 0), duration);
+    pendingSeek = target;
+    commands.seek(target);
+  }
+
   function onSeekCommit(e: Event) {
-    const value = Number((e.currentTarget as HTMLInputElement).value);
     scrubbing = false;
-    commands.seek(value);
+    seekTo(Number((e.currentTarget as HTMLInputElement).value));
+  }
+
+  // The native range steps by its own 1s `step`; these are the seek amounts a
+  // listener expects. Home and End jump to the ends, as the native element does.
+  function onSeekKey(e: KeyboardEvent) {
+    let delta = 0;
+    switch (e.key) {
+      case "ArrowLeft":
+      case "ArrowDown":
+        delta = -5000;
+        break;
+      case "ArrowRight":
+      case "ArrowUp":
+        delta = 5000;
+        break;
+      case "PageDown":
+        delta = -15000;
+        break;
+      case "PageUp":
+        delta = 15000;
+        break;
+      case "Home":
+        e.preventDefault();
+        seekTo(0);
+
+        return;
+      case "End":
+        e.preventDefault();
+        seekTo(duration);
+
+        return;
+      default:
+        return;
+    }
+    e.preventDefault();
+    seekTo(position + delta);
   }
 
   function onVolume(e: Event) {
@@ -67,20 +130,46 @@
       {formatTime(position)}
     </span>
 
-    <input
-      class="range flex-1 disabled:opacity-40"
-      type="range"
-      min="0"
-      max={duration || 1}
-      step="1000"
-      value={position}
-      style="--fill-frac: {seekFill}"
-      disabled={duration === 0}
-      aria-label="Seek"
-      aria-valuetext="{formatTime(position)} of {formatTime(duration)}"
-      oninput={onSeekInput}
-      onchange={onSeekCommit}
-    />
+    <div
+      class="seek relative flex h-5 flex-1 items-center"
+      class:seek-instant={scrubbing || pendingSeek !== null}
+      class:opacity-40={duration === 0}
+    >
+      <div
+        class="pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-track"
+      ></div>
+      <!-- The fill starts at the track's left edge and its width includes the
+           half-thumb inset at both ends, so the right edge stays under the
+           thumb's centre at every value. -->
+      <div
+        class="pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full"
+      >
+        <div
+          class="seek-fill h-full rounded-full bg-accent"
+          style="width: calc(7px + (100% - 14px) * {seekFill})"
+        ></div>
+      </div>
+      <div class="pointer-events-none absolute inset-x-[7px] top-1/2 h-0">
+        <div
+          class="seek-thumb absolute top-0 size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-fg"
+          style="left: {seekFill * 100}%"
+        ></div>
+      </div>
+      <input
+        class="seek-input absolute inset-0 m-0 h-full w-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-default"
+        type="range"
+        min="0"
+        max={duration || 1}
+        step="1000"
+        value={position}
+        disabled={duration === 0}
+        aria-label="Seek"
+        aria-valuetext="{formatTime(position)} of {formatTime(duration)}"
+        oninput={onSeekInput}
+        onchange={onSeekCommit}
+        onkeydown={onSeekKey}
+      />
+    </div>
 
     <span class="w-12 shrink-0 text-xs tabular-nums text-muted">
       {formatTime(duration)}

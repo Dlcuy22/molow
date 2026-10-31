@@ -1,6 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render } from "svelte/server";
 import { ParamKind, type EffectParam, type EffectStage } from "../../effect-types";
+
+// The preset menu reads the store on mount. svelte/server does not run the
+// mount hook, but importing the store still touches window at module load, so
+// the module is stubbed with the commands the panel can call.
+vi.mock("../../store", () => ({
+  commands: {
+    effectPresets: async () => [],
+    saveEffectPreset: async () => null,
+    applyEffectPreset: async () => false,
+    deleteEffectPreset: async () => false,
+    openEffectPresetFolder: async () => {},
+  },
+}));
+
 import EqualizerPanel from "./EqualizerPanel.svelte";
 import ScrubField from "./ScrubField.svelte";
 
@@ -99,6 +113,13 @@ describe("EqualizerPanel", () => {
     expect(active).not.toContain("disabled");
     expect(inactive).toContain("disabled");
     expect(body).toContain("Band 2");
+  });
+
+  it("renders a preset chooser beside the band count", () => {
+    const body = renderPanel(stage());
+    expect(body).toContain("Preset");
+    expect(body).toContain("Choose");
+    expect(body).toContain('aria-haspopup="true"');
   });
 
   it("renders a partial schema without throwing", () => {

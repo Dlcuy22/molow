@@ -2,9 +2,16 @@ import { describe, expect, it } from "vitest";
 import type {
   EffectKindInfo as WireKind,
   EffectParamInfo as WireParam,
+  EffectPresetInfo as WirePreset,
   EffectStageInfo as WireStage,
 } from "../../bindings/github.com/dlcuy22/molow/backend/models";
-import { toEffectKind, toEffectParam, toEffectStage, toWidget } from "./effect-adapter";
+import {
+  toEffectKind,
+  toEffectParam,
+  toEffectPreset,
+  toEffectStage,
+  toWidget,
+} from "./effect-adapter";
 
 function wireParam(over: Partial<WireParam>): WireParam {
   return {
@@ -209,5 +216,26 @@ describe("toEffectKind", () => {
     } satisfies WireKind);
     expect(k.scripted).toBe(true);
     expect(k.impl).toBe("Tremolo");
+  });
+});
+
+describe("toEffectPreset", () => {
+  function wire(over: Partial<WirePreset>): WirePreset {
+    return { name: "Flat", source: "builtin", values: {}, ...over };
+  }
+
+  it("keeps the name and values", () => {
+    const p = toEffectPreset(wire({ name: "Bass boost", values: { "num-bands": 10 } }));
+    expect(p.name).toBe("Bass boost");
+    expect(p.values["num-bands"]).toBe(10);
+  });
+
+  it("maps the user source and normalizes anything else to built-in", () => {
+    expect(toEffectPreset(wire({ source: "user" })).source).toBe("user");
+    expect(toEffectPreset(wire({ source: "disk" })).source).toBe("builtin");
+  });
+
+  it("turns a null values map into an empty one", () => {
+    expect(toEffectPreset(wire({ values: null })).values).toEqual({});
   });
 });

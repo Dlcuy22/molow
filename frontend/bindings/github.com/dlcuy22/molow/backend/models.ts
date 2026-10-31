@@ -119,6 +119,17 @@ export interface EffectParamInfo {
 }
 
 /**
+ * EffectPresetInfo is one selectable preset on the wire. Values is keyed by
+ * the effect's own parameter names, so the frontend can compare it with the
+ * live stage without knowing how the file is shaped.
+ */
+export interface EffectPresetInfo {
+    "name": string;
+    "source": string;
+    "values": { [_ in string]?: any } | null;
+}
+
+/**
  * EffectReadingInfo describes one key that Meters reports, so a reading can be
  * drawn without the frontend knowing which effect produced it.
  */

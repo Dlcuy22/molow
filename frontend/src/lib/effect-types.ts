@@ -107,6 +107,20 @@ export interface EffectChain {
   stages: EffectStage[];
 }
 
+/** PresetSource says where a preset came from: the binary or the user's
+ *  presets folder. The two are shown in separate sections and only a user
+ *  preset can be deleted. */
+export type PresetSource = "builtin" | "user";
+
+/** EffectPreset is one saved curve. Values is keyed by the effect's own
+ *  parameter names, so it can be compared with a live stage without knowing
+ *  the file shape. */
+export interface EffectPreset {
+  name: string;
+  source: PresetSource;
+  values: Record<string, unknown>;
+}
+
 /** The three standard parameters every effect carries. A UI pins these as its
  *  fixed base controls; an effect cannot hide or re-declare them. Mirrors
  *  dsp.CommonParam. */

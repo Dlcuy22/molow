@@ -1,16 +1,20 @@
 <script lang="ts">
-  import type { EffectStage } from "../../effect-types";
+  import { onMount } from "svelte";
+  import { commands } from "../../store";
+  import type { EffectPreset, EffectStage } from "../../effect-types";
   import { numericValue, paramValue } from "./effects-helpers";
   import {
     eqActiveBands,
     eqBands,
     eqNumBandsParam,
+    eqPresetMatches,
     faderFill,
     formatGainDB,
     formatQ,
     gainParts,
     hzParts,
   } from "./eq-helpers";
+  import PresetMenu from "./PresetMenu.svelte";
   import ScrubField from "./ScrubField.svelte";
 
   // The RBJ equalizer's dedicated control surface. The generic panel renders a
@@ -30,6 +34,36 @@
   const numBandsParam = $derived(eqNumBandsParam(stage));
   const active = $derived(eqActiveBands(stage, bands));
 
+  // Presets belong to the panel, not the popover: the applied name is what the
+  // trigger shows and what the edited marker compares against after the menu
+  // closes.
+  let presets = $state<EffectPreset[]>([]);
+  let applied = $state<EffectPreset | null>(null);
+  const dirty = $derived(applied !== null && !eqPresetMatches(stage, applied.values));
+
+  let appliedStage = "";
+
+  async function loadPresets() {
+    try {
+      presets = await commands.effectPresets(stage.impl);
+    } catch {
+      presets = [];
+    }
+  }
+
+  onMount(() => {
+    void loadPresets();
+  });
+
+  // A different stage is a different curve, so the name that was applied to the
+  // previous one no longer describes it.
+  $effect(() => {
+    if (appliedStage !== stage.id) {
+      appliedStage = stage.id;
+      applied = null;
+    }
+  });
+
   function valueOf(key: string, fallback = 0): number {
     const param = stage.schema.find((p) => p.key === key);
 
@@ -38,22 +72,33 @@
 </script>
 
 <div class="flex flex-col gap-3">
-  {#if numBandsParam}
-    <div class="flex items-center gap-2">
-      <span class="text-[11px] text-muted">Bands</span>
-      <div class="w-14">
-        <ScrubField
-          value={active}
-          min={numBandsParam.min}
-          max={numBandsParam.max}
-          step={1}
-          label="Bands in use"
-          text={String(active)}
-          onchange={(v) => onparam(numBandsParam.key, v)}
-        />
+  <div class="flex flex-wrap items-center justify-between gap-2">
+    {#if numBandsParam}
+      <div class="flex items-center gap-2">
+        <span class="text-[11px] text-muted">Bands</span>
+        <div class="w-14">
+          <ScrubField
+            value={active}
+            min={numBandsParam.min}
+            max={numBandsParam.max}
+            step={1}
+            label="Bands in use"
+            text={String(active)}
+            onchange={(v) => onparam(numBandsParam.key, v)}
+          />
+        </div>
       </div>
-    </div>
-  {/if}
+    {/if}
+
+    <PresetMenu
+      {stage}
+      {presets}
+      {applied}
+      {dirty}
+      onapplied={(p) => (applied = p)}
+      onrefresh={loadPresets}
+    />
+  </div>
 
   <div class="scroll-thin overflow-x-auto pb-1">
     <!-- Columns keep a minimum width so ten bands stay legible side by side;

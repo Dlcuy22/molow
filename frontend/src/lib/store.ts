@@ -23,8 +23,8 @@ import type {
   AppSettings,
 } from "../../bindings/github.com/dlcuy22/molow/backend/models";
 import type { Param } from "../../bindings/github.com/dlcuy22/molow/internal/spectrum/models";
-import type { EffectKind, EffectStage } from "./effect-types";
-import { toEffectKind, toEffectStage } from "./effect-adapter";
+import type { EffectKind, EffectPreset, EffectStage } from "./effect-types";
+import { toEffectKind, toEffectPreset, toEffectStage } from "./effect-adapter";
 import { initVolume, syncVolumeFromServer } from "./volume";
 
 // The event names mirror the Go constants. They are repeated here rather than
@@ -496,6 +496,47 @@ export const commands = {
   addEffect: (kind: string, impl: string) => editEffect(() => PlayerService.AddEffect(kind, impl)),
   removeEffect: (id: string) => editEffect(() => PlayerService.RemoveEffect(id)),
   moveEffect: (id: string, to: number) => editEffect(() => PlayerService.MoveEffect(id, to)),
+
+  // Presets are a per-effect file store on the Go side. The list is a read;
+  // save and delete write files; apply edits the live stage in one engine call
+  // and then re-reads the chain, so the panel does not wait for the next tick.
+  effectPresets: (impl: string): Promise<EffectPreset[]> =>
+    PlayerService.EffectPresets(impl).then((list) => (list ?? []).map(toEffectPreset)),
+  saveEffectPreset: async (id: string, name: string): Promise<EffectPreset | null> => {
+    try {
+      const p = await PlayerService.SaveEffectPreset(id, name);
+
+      return p ? toEffectPreset(p) : null;
+    } catch (err) {
+      player.update((s) => ({ ...s, error: errorText(err) }));
+
+      return null;
+    }
+  },
+  applyEffectPreset: async (id: string, source: string, name: string): Promise<boolean> => {
+    try {
+      await PlayerService.ApplyEffectPreset(id, source, name);
+      await syncEffectChain();
+
+      return true;
+    } catch (err) {
+      player.update((s) => ({ ...s, error: errorText(err) }));
+
+      return false;
+    }
+  },
+  deleteEffectPreset: async (name: string): Promise<boolean> => {
+    try {
+      await PlayerService.DeleteEffectPreset(name);
+
+      return true;
+    } catch (err) {
+      player.update((s) => ({ ...s, error: errorText(err) }));
+
+      return false;
+    }
+  },
+  openEffectPresetFolder: () => invoke(PlayerService.OpenEffectPresetFolder()),
   // importPreset opens the native picker and installs the chosen EasyEffects
   // preset, replacing the chain. It resolves with the stage count and the
   // warnings the importer skipped, or null when the dialog was cancelled, so

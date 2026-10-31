@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "impl": "equalizer-rbj",
+  "name": "Bass boost",
+  "activeBands": 10,
+  "bands": [
+    { "frequency": 32, "gain": 6, "q": 1.5 },
+    { "frequency": 64, "gain": 5, "q": 1.5 },
+    { "frequency": 125, "gain": 3, "q": 1.5 },
+    { "frequency": 250, "gain": 1, "q": 1.5 },
+    { "frequency": 500, "gain": 0, "q": 1.5 },
+    { "frequency": 1000, "gain": 0, "q": 1.5 },
+    { "frequency": 2000, "gain": 0, "q": 1.5 },
+    { "frequency": 4000, "gain": 0, "q": 1.5 },
+    { "frequency": 8000, "gain": 0, "q": 1.5 },
+    { "frequency": 16000, "gain": 0, "q": 1.5 }
+  ]
+}

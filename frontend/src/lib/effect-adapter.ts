@@ -8,11 +8,13 @@
 import type {
   EffectKindInfo as WireKind,
   EffectParamInfo as WireParam,
+  EffectPresetInfo as WirePreset,
   EffectStageInfo as WireStage,
 } from "../../bindings/github.com/dlcuy22/molow/backend/models";
 import type {
   EffectKind,
   EffectParam,
+  EffectPreset,
   EffectStage,
   Reading,
   ReadingKind,
@@ -145,5 +147,16 @@ export function toEffectKind(k: WireKind): EffectKind {
     label: k.label,
     weight: k.weight,
     scripted: k.scripted,
+  };
+}
+
+/** toEffectPreset maps one wire preset to the frozen shape. The wire source is
+ *  a plain string; anything that is not "user" is a built-in, because the Go
+ *  side only ever emits the two. */
+export function toEffectPreset(p: WirePreset): EffectPreset {
+  return {
+    name: p.name,
+    source: p.source === "user" ? "user" : "builtin",
+    values: p.values ?? {},
   };
 }

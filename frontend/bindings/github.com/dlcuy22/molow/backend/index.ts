@@ -17,6 +17,7 @@ export type {
     EffectKindInfo,
     EffectMetersInfo,
     EffectParamInfo,
+    EffectPresetInfo,
     EffectReadingInfo,
     EffectStageInfo,
     EffectVisualInfo,

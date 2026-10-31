@@ -4,6 +4,7 @@ import {
   EQ_IMPL,
   eqActiveBands,
   eqBands,
+  eqPresetMatches,
   faderFill,
   formatGainDB,
   formatHz,
@@ -241,5 +242,41 @@ describe("faderFill", () => {
 
   it("uses the whole track when the range does not cross zero", () => {
     expect(faderFill(5, 0, 10)).toEqual({ lo: 0, hi: 0.5, zero: 0 });
+  });
+});
+
+describe("eqPresetMatches", () => {
+  const values = {
+    "num-bands": 10,
+    "band0-frequency": 32,
+    "band0-gain": 4,
+    "band0-q": 1.5,
+  };
+
+  it("matches when every key the preset carries is held", () => {
+    expect(eqPresetMatches(stage({ values: { ...values } }), values)).toBe(true);
+  });
+
+  it("is false when one value differs", () => {
+    expect(
+      eqPresetMatches(stage({ values: { ...values, "band0-gain": 5 } }), values),
+    ).toBe(false);
+  });
+
+  it("ignores stage utilities the preset does not carry", () => {
+    const s = stage({
+      values: { ...values, bypass: true, "input-gain": -6, "output-gain": 3 },
+    });
+    expect(eqPresetMatches(s, values)).toBe(true);
+  });
+
+  it("is false when the stage is missing a key", () => {
+    const partial: Record<string, unknown> = { ...values };
+    delete partial["band0-q"];
+    expect(eqPresetMatches(stage({ values: partial }), values)).toBe(false);
+  });
+
+  it("is false for an empty preset", () => {
+    expect(eqPresetMatches(stage({ values }), {})).toBe(false);
   });
 });

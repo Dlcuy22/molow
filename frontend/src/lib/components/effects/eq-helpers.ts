@@ -231,3 +231,32 @@ export function faderFill(value: number, min: number, max: number): FaderFill {
 
   return { lo: Math.min(at, zero), hi: Math.max(at, zero), zero };
 }
+
+/**
+ * eqPresetMatches reports whether a stage still holds the values a preset was
+ * applied with, so the menu can mark it as edited. Only the keys the preset
+ * carries are compared: bypass and the input/output gains are stage utilities,
+ * not part of a preset, and a change to them must not mark the curve dirty.
+ */
+export function eqPresetMatches(
+  stage: EffectStage,
+  values: Record<string, unknown>,
+): boolean {
+  const keys = Object.keys(values);
+  if (keys.length === 0) {
+    return false;
+  }
+  for (const key of keys) {
+    const want = values[key];
+    const have = stage.values[key];
+    if (typeof want === "number" && typeof have === "number") {
+      if (Math.abs(want - have) > 1e-6) {
+        return false;
+      }
+    } else if (want !== have) {
+      return false;
+    }
+  }
+
+  return true;
+}

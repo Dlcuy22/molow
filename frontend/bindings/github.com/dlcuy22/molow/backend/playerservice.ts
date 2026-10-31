@@ -71,6 +71,16 @@ export function AppendYTM(videoID: string): $CancellablePromise<void> {
 }
 
 /**
+ * ApplyEffectPreset installs a preset on one stage. The bands are set before
+ * the band count so the curve is already in place when the extra bands become
+ * active, and the whole loop runs inside one command, which emits one snapshot
+ * instead of one per parameter.
+ */
+export function ApplyEffectPreset(stageID: string, source: string, name: string): $CancellablePromise<void> {
+    return $Call.ByID(3647678369, stageID, source, name);
+}
+
+/**
  * ArtistAvatar returns a YouTube Music artist's avatar as an inline data URL,
  * or "" when there is none. It is the settings preview's source: the presence
  * itself only needs the URL, but the webview may not load the remote image, so
@@ -114,6 +124,14 @@ export function Cover(id: string): $CancellablePromise<string> {
 }
 
 /**
+ * DeleteEffectPreset removes a user preset. Built-ins are never in the store
+ * directory, so they cannot be reached here.
+ */
+export function DeleteEffectPreset(name: string): $CancellablePromise<void> {
+    return $Call.ByID(3573285332, name);
+}
+
+/**
  * DiscordStatus reports the integration's state for the settings UI.
  */
 export function DiscordStatus(): $CancellablePromise<$models.DiscordStatus> {
@@ -144,6 +162,15 @@ export function EffectKinds(): $CancellablePromise<$models.EffectKindInfo[] | nu
  */
 export function EffectMeters(): $CancellablePromise<$models.EffectMetersInfo[] | null> {
     return $Call.ByID(2669408054);
+}
+
+/**
+ * EffectPresets lists the built-ins followed by the user's presets. An effect
+ * with no preset support returns an empty list rather than an error, so a
+ * caller can render the menu either way.
+ */
+export function EffectPresets(impl: string): $CancellablePromise<$models.EffectPresetInfo[] | null> {
+    return $Call.ByID(3722639492, impl);
 }
 
 /**
@@ -205,6 +232,14 @@ export function MoveEffect(id: string, to: number): $CancellablePromise<void> {
 
 export function Next(): $CancellablePromise<void> {
     return $Call.ByID(2449464548);
+}
+
+/**
+ * OpenEffectPresetFolder creates the preset directory if it does not exist and
+ * opens it in the platform file manager.
+ */
+export function OpenEffectPresetFolder(): $CancellablePromise<void> {
+    return $Call.ByID(3546812895);
 }
 
 /**
@@ -305,6 +340,15 @@ export function RefreshAuth(): $CancellablePromise<$models.AuthStatus> {
  */
 export function RemoveEffect(id: string): $CancellablePromise<void> {
     return $Call.ByID(903599168, id);
+}
+
+/**
+ * SaveEffectPreset writes the live stage's curve as a user preset. The file is
+ * replaced when the name already maps to the same slug; the UI asks before it
+ * gets here.
+ */
+export function SaveEffectPreset(stageID: string, name: string): $CancellablePromise<$models.EffectPresetInfo> {
+    return $Call.ByID(638863182, stageID, name);
 }
 
 /**

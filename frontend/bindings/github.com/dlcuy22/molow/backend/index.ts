@@ -7,7 +7,9 @@ export {
 };
 
 export type {
+    AccountInfo,
     AppSettings,
+    AuthStatus,
     CodecOption,
     CrossfadeSettings,
     DiscordStatus,

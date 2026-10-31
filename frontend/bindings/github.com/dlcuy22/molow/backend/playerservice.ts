@@ -23,6 +23,13 @@ import * as spectrum$0 from "../internal/spectrum/models.js";
 import * as $models from "./models.js";
 
 /**
+ * Accounts lists the channels the signed-in account owns.
+ */
+export function Accounts(): $CancellablePromise<$models.AccountInfo[] | null> {
+    return $Call.ByID(204075585);
+}
+
+/**
  * AddEffect appends a stage and returns its ID. The stage is live when this
  * returns, so the caller can set a parameter on it immediately.
  */
@@ -72,6 +79,17 @@ export function AppendYTM(videoID: string): $CancellablePromise<void> {
  */
 export function ArtistAvatar(artistID: string): $CancellablePromise<string> {
     return $Call.ByID(1506369619, artistID);
+}
+
+/**
+ * AuthStatus reports the stored session without touching the network, so the UI
+ * can render the account row on startup without waiting on a request.
+ * 
+ * It never claims SignedIn for credentials it has not validated; use RefreshAuth
+ * for that.
+ */
+export function AuthStatus(): $CancellablePromise<$models.AuthStatus> {
+    return $Call.ByID(3646971845);
 }
 
 /**
@@ -274,6 +292,15 @@ export function QueueCover(path: string): $CancellablePromise<string> {
 }
 
 /**
+ * RefreshAuth re-validates the stored session against the server and updates the
+ * status. It is the call that notices a revoked session, because a dead one
+ * answers HTTP 200 rather than an error status.
+ */
+export function RefreshAuth(): $CancellablePromise<$models.AuthStatus> {
+    return $Call.ByID(3747990598);
+}
+
+/**
  * RemoveEffect drops the stage with id.
  */
 export function RemoveEffect(id: string): $CancellablePromise<void> {
@@ -387,6 +414,39 @@ export function SetVolume(v: number): $CancellablePromise<void> {
 }
 
 /**
+ * SignIn opens the login window and waits for a session.
+ * 
+ * The window is a separate GTK toplevel on its own cookie jar, because a Wails
+ * webview exposes no cookie API and the cookies that matter are HttpOnly. It is
+ * closed as soon as the session is captured, and its profile directory is
+ * removed, so nothing is left behind.
+ */
+export function SignIn(): $CancellablePromise<void> {
+    return $Call.ByID(3669223431);
+}
+
+/**
+ * SignInWithCookieHeader signs in from a pasted Cookie: header.
+ * 
+ * The whole header is required, not one field. Measured against the live
+ * endpoint: a SAPISID on its own authenticates nothing, because it only seeds the
+ * Authorization hash while the session identity lives in the primary cookies.
+ * That single-value mistake is the one a user is most likely to make, so the
+ * input is checked before any network call.
+ */
+export function SignInWithCookieHeader(header: string): $CancellablePromise<void> {
+    return $Call.ByID(2147805764, header);
+}
+
+/**
+ * SignOut forgets the stored session. It reports no error when nothing was
+ * stored, so a second sign-out is harmless.
+ */
+export function SignOut(): $CancellablePromise<void> {
+    return $Call.ByID(1134654828);
+}
+
+/**
  * Snapshot is the bound read the UI calls once on mount and then treats as
  * push-updated. It is cheap by the facade's contract, so a stray poll is fine.
  */
@@ -412,6 +472,18 @@ export function SpectrumSchema(): $CancellablePromise<spectrum$0.Param[] | null>
  */
 export function Stop(): $CancellablePromise<void> {
     return $Call.ByID(2922428713);
+}
+
+/**
+ * SwitchChannel points the stored session at another channel.
+ * 
+ * One set of cookies serves every channel of an account, so this rewrites three
+ * fields and reopens nothing. It depends on the client sending the session's
+ * AuthUser rather than a hardcoded "0"; without that, every brand channel would
+ * behave like the first one.
+ */
+export function SwitchChannel(channelID: string): $CancellablePromise<void> {
+    return $Call.ByID(1175181924, channelID);
 }
 
 /**

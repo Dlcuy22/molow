@@ -17,3 +17,6 @@ build/android/gen/
 /tools/
 /*stats*.json
 __pycache__/
+.env
+# Scratch space: throwaway experiments, not part of the build.
+/experiments/

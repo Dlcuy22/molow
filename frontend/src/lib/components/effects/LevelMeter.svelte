@@ -31,7 +31,7 @@
   <span class="min-w-7 shrink-0 text-[11px] text-muted">{label}</span>
   <div class="relative h-2 min-w-0 flex-1 overflow-hidden rounded-[2px] bg-track" aria-hidden="true">
     {#if meters}
-      <div class="h-full rounded-[2px] bg-accent transition-[width] duration-100 ease-linear" style="width: {fillPct}%">
+      <div class="h-full rounded-[2px] bg-accent transition-[width]" style="width: {fillPct}%">
       </div>
     {/if}
   </div>

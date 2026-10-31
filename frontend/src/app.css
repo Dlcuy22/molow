@@ -225,3 +225,94 @@ body {
     transition: none;
   }
 }
+
+/*
+ * A vertical gain fader for the equalizer. A range input rotated a quarter turn
+ * is the whole control: the native element keeps Tab, the arrow keys and the
+ * focus ring, while the track and thumb are restyled. The fill is bipolar, so
+ * --lo and --hi are the painted span from 0 dB to the value rather than one
+ * fraction from the bottom.
+ *
+ * --fader-length is shared by the row, the wrap and the input so the rotated
+ * track, the pointer travel and the 0 dB gridline all measure the same span.
+ */
+.fader-row {
+  --fader-length: 8rem;
+  position: relative;
+  height: var(--fader-length);
+}
+.fader-wrap {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 1.5rem;
+  height: var(--fader-length);
+  transform: translateX(-50%);
+}
+.fader {
+  -webkit-appearance: none;
+  appearance: none;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--fader-length);
+  height: 1.5rem;
+  margin: 0;
+  background: transparent;
+  cursor: grab;
+  transform: translate(-50%, -50%) rotate(-90deg);
+}
+.fader:active {
+  cursor: grabbing;
+}
+.fader::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--color-track) 0,
+    var(--color-track) calc(8px + (100% - 16px) * var(--lo, 0)),
+    var(--color-accent) calc(8px + (100% - 16px) * var(--lo, 0)),
+    var(--color-accent) calc(8px + (100% - 16px) * var(--hi, 1)),
+    var(--color-track) calc(8px + (100% - 16px) * var(--hi, 1)),
+    var(--color-track) 100%
+  );
+}
+.fader::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--color-track) 0,
+    var(--color-track) calc(8px + (100% - 16px) * var(--lo, 0)),
+    var(--color-accent) calc(8px + (100% - 16px) * var(--lo, 0)),
+    var(--color-accent) calc(8px + (100% - 16px) * var(--hi, 1)),
+    var(--color-track) calc(8px + (100% - 16px) * var(--hi, 1)),
+    var(--color-track) 100%
+  );
+}
+.fader::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: var(--color-fg);
+}
+.fader::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-fg);
+}
+.fader:disabled {
+  cursor: default;
+}
+.fader:disabled::-webkit-slider-thumb {
+  background: var(--color-disabled);
+}
+.fader:disabled::-moz-range-thumb {
+  background: var(--color-disabled);
+}

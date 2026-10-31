@@ -2,6 +2,7 @@
   import { effectiveReadings, type EffectStage } from "../../effect-types";
   import { commonParam, effectGroups, isKnobBank, numericValue, paramValue } from "./effects-helpers";
   import DynamicsGraph from "./DynamicsGraph.svelte";
+  import EqualizerPanel from "./EqualizerPanel.svelte";
   import ParamControl from "./ParamControl.svelte";
   import Readings from "./Readings.svelte";
   import TransferCurve from "./TransferCurve.svelte";
@@ -28,6 +29,11 @@
   const outGain = $derived(commonParam(stage, "output-gain"));
   const gains = $derived([inGain, outGain].filter((g) => g !== null));
   const groups = $derived(effectGroups(stage.schema));
+
+  // The RBJ equalizer gets its own surface: ten bands read as ten faders, and
+  // the generic knob bank is the wrong shape for that. Every other effect keeps
+  // the schema-driven layout.
+  const eqPanel = $derived(stage.impl === "equalizer-rbj");
 
   // How many knobs fit one grid row. The panel tracks the window's columns, so a
   // bank spreads to the available width instead of stacking. It is a viewport
@@ -148,32 +154,36 @@
       <TransferCurve visual={visual} values={stage.values} meters={stage.meters} />
     {/each}
 
-    {#each groups as group (group.name)}
-      <div class="flex flex-col gap-2">
-        {#if group.name !== ""}
-          <h3 class="text-[11px] font-medium uppercase tracking-wide text-muted">{group.name}</h3>
-        {/if}
-        <!--
-          A bank of knobs spreads across the row and wraps; every other group
-          stays a column, so a panel that mixes a slider into a knob group does
-          not put either one in a cell it does not fit.
-        -->
-        {#if isKnobBank(group.params)}
-          <div class="knob-grid" style={bankStyle}>
+    {#if eqPanel}
+      <EqualizerPanel {stage} {onparam} />
+    {:else}
+      {#each groups as group (group.name)}
+        <div class="flex flex-col gap-2">
+          {#if group.name !== ""}
+            <h3 class="text-[11px] font-medium uppercase tracking-wide text-muted">{group.name}</h3>
+          {/if}
+          <!--
+            A bank of knobs spreads across the row and wraps; every other group
+            stays a column, so a panel that mixes a slider into a knob group does
+            not put either one in a cell it does not fit.
+          -->
+          {#if isKnobBank(group.params)}
+            <div class="knob-grid" style={bankStyle}>
+              {#each group.params as p (p.key)}
+                <ParamControl param={p} value={paramValue(stage, p)} onchange={(v) => onparam(p.key, v)} />
+              {/each}
+            </div>
+          {:else}
             {#each group.params as p (p.key)}
               <ParamControl param={p} value={paramValue(stage, p)} onchange={(v) => onparam(p.key, v)} />
             {/each}
-          </div>
-        {:else}
-          {#each group.params as p (p.key)}
-            <ParamControl param={p} value={paramValue(stage, p)} onchange={(v) => onparam(p.key, v)} />
-          {/each}
-        {/if}
-      </div>
-    {/each}
+          {/if}
+        </div>
+      {/each}
 
-    {#if groups.length === 0}
-      <p class="text-[11px] text-muted">This effect has no settings beyond the base controls.</p>
+      {#if groups.length === 0}
+        <p class="text-[11px] text-muted">This effect has no settings beyond the base controls.</p>
+      {/if}
     {/if}
   </div>
 </section>

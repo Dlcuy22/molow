@@ -285,17 +285,7 @@ func (s *PlayerService) pumpEvents() {
 			if !ok {
 				return
 			}
-			if failed, isFail := ev.(molo.Failed); isFail {
-				// The snapshot carries the error, so the failure needs no event
-				// of its own; recording it here keeps it until a command clears
-				// it.
-				s.setError(failed.Err.Error())
-			}
-			if seeked, isSeek := ev.(molo.Seeked); isSeek {
-				// A seek is not a PropertiesChanged property, so the desktop
-				// needs the Seeked signal to move its progress bar at once.
-				s.systemMediaSeeked(seeked.Position)
-			}
+			s.noteEvent(ev)
 			snap := s.Snapshot()
 			s.emit(eventSnapshot, snap)
 			s.syncPresence(snap)
@@ -308,6 +298,22 @@ func (s *PlayerService) pumpEvents() {
 			s.syncPresence(snap)
 			s.syncSystemMedia(snap)
 		}
+	}
+}
+
+// noteEvent folds one engine event into state that outlives it. A failure is
+// recorded; a track that starts clears the failure, because the message belongs
+// to the track that died rather than to the session; a seek is forwarded to the
+// desktop. The snapshot carries all of it, so the pump only publishes after
+// this.
+func (s *PlayerService) noteEvent(ev molo.Event) {
+	switch e := ev.(type) {
+	case molo.Failed:
+		s.setError(e.Err.Error())
+	case molo.TrackChanged:
+		s.clearError()
+	case molo.Seeked:
+		s.systemMediaSeeked(e.Position)
 	}
 }
 

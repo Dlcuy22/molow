@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -334,5 +335,29 @@ func TestSuppressSpectrumSkipsRepeats(t *testing.T) {
 	}
 	if !svc.suppressSpectrum([]float64{0, 0, 0}) {
 		t.Fatal("steady silence emitted, the bridge would push empty frames forever")
+	}
+}
+
+// TestTrackStartClearsTheFailedTrackMessage pins the error lifetime: a failure
+// describes the track that died, so a later track that starts must clear the
+// line instead of leaving the previous track's 403 in the session.
+func TestTrackStartClearsTheFailedTrackMessage(t *testing.T) {
+	svc := &PlayerService{}
+	svc.noteEvent(molo.Failed{Err: errors.New("ytm: media request returned 403 Forbidden")})
+
+	svc.mu.Lock()
+	got := svc.lastError
+	svc.mu.Unlock()
+	if got == "" {
+		t.Fatal("failed event did not record an error")
+	}
+
+	svc.noteEvent(molo.TrackChanged{})
+
+	svc.mu.Lock()
+	got = svc.lastError
+	svc.mu.Unlock()
+	if got != "" {
+		t.Fatalf("track start left the previous failure in place: %q", got)
 	}
 }

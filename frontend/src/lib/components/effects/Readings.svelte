@@ -6,7 +6,12 @@
   let {
     readings,
     meters,
-  }: { readings: Reading[]; meters: Record<string, number> | null } = $props();
+    live = true,
+  }: {
+    readings: Reading[];
+    meters: Record<string, number> | null;
+    live?: boolean;
+  } = $props();
 
   // A level or scalar draws its own value; a gain reduction draws its inverted
   // fraction, so 0 reduction reads full and the bar shrinks as gain is removed.
@@ -29,7 +34,15 @@
   <ul class="flex flex-col gap-2" aria-label="Readings">
     {#each readings as r (r.key)}
       <li>
-        <LevelMeter db={barValue(r)} label={r.label} min={r.min} max={r.max} unit={r.unit} />
+        <LevelMeter
+          db={barValue(r)}
+          label={r.label}
+          min={r.min}
+          max={r.max}
+          unit={r.unit}
+          kind={r.kind}
+          {live}
+        />
       </li>
     {/each}
   </ul>

@@ -20,6 +20,9 @@
   --color-danger: #c44536;
   --color-track: #454548;
   --color-disabled: #6e6e72;
+  --color-meter-green: #62c554;
+  --color-meter-yellow: #e6c34a;
+  --color-meter-red: #d94b4b;
 
   /* Panels 6px, rows 4px, play button round. A flat scale on purpose: radius
    * separates a panel from a row, it does not decorate. */
@@ -28,6 +31,23 @@
 
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
     Arial, sans-serif;
+}
+
+/* Audio level meters use a fixed green-yellow-red scale so the color carries
+ * the same meaning at every effect: safe, high, and clipping. The gradient spans
+ * the whole track and the component clips it to the current value, so a quiet
+ * signal stays green instead of compressing the whole scale into its bar. */
+.meter-level {
+  background: linear-gradient(
+    to right,
+    var(--color-meter-green) 0%,
+    var(--color-meter-yellow) 80%,
+    var(--color-meter-red) 100%
+  );
+}
+
+.meter-level.meter-clipping {
+  background: var(--color-meter-red);
 }
 
 /* The window is an app frame, not a document: the text is not selectable, and

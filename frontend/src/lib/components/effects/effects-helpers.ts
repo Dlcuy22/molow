@@ -210,6 +210,49 @@ export function meterFraction(
   return clamp((db - min) / (max - min), 0, 1);
 }
 
+/**
+ * levelMeterFraction maps a level reading onto an IEC-style dB scale. Audio
+ * meters give the upper part of the range more visual room than a plain linear
+ * dB mapping, so useful changes near 0 dBFS remain easy to see. The breakpoints
+ * follow Audacity's meter scale: 50% of the width covers the loudest third of
+ * the range, then the remaining sections become progressively tighter.
+ */
+export function levelMeterFraction(
+  db: number | null,
+  min: number,
+  max: number,
+): number {
+  if (db === null || !Number.isFinite(db) || max <= min) {
+    return 0;
+  }
+
+  const range = min - max;
+  const value = clamp(db - max, range, 0);
+  if (value >= 0) {
+    return 1;
+  }
+
+  const sections = [
+    { db: 0, fraction: 1 },
+    { db: range / 3, fraction: 0.5 },
+    { db: range / 2, fraction: 0.3 },
+    { db: (range * 2) / 3, fraction: 0.15 },
+    { db: (range * 5) / 6, fraction: 0.075 },
+    { db: range, fraction: 0 },
+  ];
+
+  for (let i = 0; i < sections.length - 1; i += 1) {
+    const left = sections[i];
+    const right = sections[i + 1];
+    if (value <= left.db && value > right.db) {
+      const t = (value - right.db) / (left.db - right.db);
+      return right.fraction + t * (left.fraction - right.fraction);
+    }
+  }
+
+  return 0;
+}
+
 /** meterText renders a reading with its unit, or "--" when the effect does not
  *  meter at all. The unit defaults to dB for the legacy level meters, and a
  *  reading that carries its own unit passes it so a gain reduction, a percent

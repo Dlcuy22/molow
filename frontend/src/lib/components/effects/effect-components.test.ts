@@ -15,6 +15,7 @@ import {
   isFiniteNumber,
   isKnobBank,
   meterFraction,
+  levelMeterFraction,
   meterText,
   paramValue,
   roundToStep,
@@ -315,6 +316,24 @@ describe("meterFraction", () => {
 
   it("is an empty track when the effect does not meter", () => {
     expect(meterFraction(null, -60, 0)).toBe(0);
+  });
+});
+
+describe("levelMeterFraction", () => {
+  it("gives the loudest third half of the scale", () => {
+    expect(levelMeterFraction(-20, -60, 0)).toBeCloseTo(0.5, 10);
+    expect(levelMeterFraction(0, -60, 0)).toBe(1);
+    expect(levelMeterFraction(-60, -60, 0)).toBe(0);
+  });
+
+  it("keeps clipping at the end of the scale", () => {
+    expect(levelMeterFraction(3, -60, 0)).toBe(1);
+  });
+
+  it("treats missing or invalid readings as empty", () => {
+    expect(levelMeterFraction(null, -60, 0)).toBe(0);
+    expect(levelMeterFraction(Number.NaN, -60, 0)).toBe(0);
+    expect(levelMeterFraction(-6, 0, 0)).toBe(0);
   });
 });
 

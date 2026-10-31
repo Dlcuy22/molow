@@ -13,10 +13,12 @@
     stage,
     onparam,
     onbypass,
+    live = true,
   }: {
     stage: EffectStage;
     onparam: (key: string, value: unknown) => void;
     onbypass: (bypassed: boolean) => void;
+    live?: boolean;
   } = $props();
 
   const title = $derived(stage.label.trim() || stage.impl.trim() || stage.kind);
@@ -94,7 +96,7 @@
     </div>
 
     <div class="flex flex-col gap-2 rounded-[4px] bg-bg/40 p-2">
-      <Readings {readings} meters={stage.meters} />
+      <Readings {readings} meters={stage.meters} {live} />
     </div>
 
     <div class="grid grid-cols-2 gap-x-3 gap-y-2">

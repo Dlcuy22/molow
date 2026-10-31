@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { DotsSixVertical, Plus } from "phosphor-svelte";
-  import { commands, connect, effectChain, effectKinds } from "../store";
+  import { commands, connect, effectChain, effectKinds, player } from "../store";
   import EffectPanel from "./effects/EffectPanel.svelte";
   import EffectSidebar from "./effects/EffectSidebar.svelte";
   import EffectRegistry from "./effects/EffectRegistry.svelte";
@@ -17,6 +17,9 @@
   let selectedId = $state("");
 
   const stages = $derived($effectChain);
+  // A paused or bypassed stage gets no audio, so its meters must fall to
+  // silence instead of freezing at the last processed block.
+  const live = $derived($player.state === "playing");
   const kinds = $derived($effectKinds);
   // The scripted effects are the registry entries whose kind is the script
   // slot. They are listed separately because a script is a file on disk, not a
@@ -206,6 +209,7 @@
       {:else if selected}
         <EffectPanel
           stage={selected}
+          live={live && !selected.bypassed}
           onparam={(key, value) => commands.setEffectParam(selected.id, key, value)}
           onbypass={(bypassed) => commands.setEffectBypass(selected.id, bypassed)}
         />

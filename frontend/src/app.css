@@ -237,7 +237,7 @@ body {
  * track, the pointer travel and the 0 dB gridline all measure the same span.
  */
 .fader-row {
-  --fader-length: 8rem;
+  --fader-length: 14rem;
   position: relative;
   height: var(--fader-length);
 }

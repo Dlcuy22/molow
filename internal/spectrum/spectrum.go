@@ -233,16 +233,17 @@ func withDefaults(cfg Config) Config {
 }
 
 // holdEmptyTicks is how many consecutive empty frames the display holds
-// before it starts draining. At the ~60 Hz pump this is about half a second:
-// far above any scheduling gap between the device pulls and the ticker, so
-// live playback never trips it, but short enough that a real stop still reads
-// as immediate.
-const holdEmptyTicks = 30
+// before it starts falling. "Empty" already means the tap has gone dry past
+// the jitter cushion, so the hold only covers the pump landing between device
+// pulls: at the ~60 Hz pump six ticks is about one pull. It has to stay short,
+// because every held tick is a tick the bars are frozen after the music has
+// stopped; half a second reads as a stalled display, not a pause.
+const holdEmptyTicks = 6
 
-// drainFactor is the per-tick multiplier toward zero once a sustained drought
-// has proven playback really stopped. It clears the display in a handful of
-// frames instead of snapping it off.
-const drainFactor = 0.5
+// drainFactor is the per-tick retention once a sustained drought has proven
+// playback really stopped. At the ~60 Hz pump it carries the bars to the floor
+// over about half a second, so a pause settles instead of snapping off.
+const drainFactor = 0.92
 
 // peakRise is how far the scale follower moves toward a new maximum in one
 // frame. It answers the two failure modes at once: near 1.0 a single transient
@@ -310,14 +311,14 @@ func (r *Runner) Frame() []float64 {
 
 	// Nothing to fold in: the backlog is at or below the cushion, so there is
 	// no audio to slide into (paused, stopped, or the very first call). Hold
-	// the display bit for bit through the cushion, then drain, so a real stop
-	// clears the bars instead of leaving the last frame frozen.
+	// the display bit for bit through the hold window, then fall, so a real
+	// stop clears the bars instead of leaving the last frame frozen.
 	r.emptyTicks++
 	if r.emptyTicks <= holdEmptyTicks {
 		return r.out
 	}
 	for b := range r.out {
-		r.out[b] += (0 - r.out[b]) * drainFactor
+		r.out[b] *= drainFactor
 	}
 
 	return r.out

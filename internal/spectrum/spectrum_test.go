@@ -472,6 +472,42 @@ func TestEmptyFramesHoldBeforeDrain(t *testing.T) {
 	}
 }
 
+// TestSustainedDroughtFallsSmoothly pins the pause behaviour: once the hold
+// has passed, the bars must start falling gently. A hard cut reads as the
+// display freezing and then resetting to zero.
+func TestSustainedDroughtFallsSmoothly(t *testing.T) {
+	tap := &sliceTap{samples: tone(1000, 2048), chunk: 1024}
+	r := tap.runner(t, Config{Bars: 64, FFT: 2048})
+	tap.feed(r, 2048*12, 1024)
+
+	peak := func() float64 {
+		out := 0.0
+		for _, v := range r.Bands() {
+			if v > out {
+				out = v
+			}
+		}
+
+		return out
+	}
+
+	settled := peak()
+	if settled == 0 {
+		t.Fatal("settled display reads empty, nothing to fall")
+	}
+	for range holdEmptyTicks {
+		r.Frame()
+	}
+	r.Frame()
+	first := peak()
+	if first >= settled {
+		t.Fatalf("first fall did not move: %.3f -> %.3f", settled, first)
+	}
+	if first < settled*0.85 {
+		t.Fatalf("first fall dropped to %.3f of %.3f, want a gentle decay", first, settled)
+	}
+}
+
 // TestPartialFrameIsSilent guards the first moments of a track: before a whole
 // FFT frame is buffered the display must read empty, not a scaled-up fragment.
 func TestPartialFrameIsSilent(t *testing.T) {

@@ -39,8 +39,15 @@
 
   const selected = $derived(stages.find((s) => s.id === selectedId) ?? null);
 
-  function add(kind: string, impl: string) {
-    void commands.addEffect(kind, impl);
+  // Adding is asynchronous: the engine appends the stage and the chain is
+  // re-read before the call resolves. Selecting here, rather than leaving it to
+  // the validity effect above, is what opens the new stage instead of keeping
+  // the previous one on screen.
+  async function add(kind: string, impl: string) {
+    const id = await commands.addEffect(kind, impl);
+    if (id) {
+      selectedId = id;
+    }
     tab = "controls";
   }
 

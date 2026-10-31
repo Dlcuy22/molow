@@ -558,15 +558,19 @@ async function invoke(p: Promise<unknown>): Promise<void> {
  * editEffect runs an editor command and then re-reads the chain. The engine
  * rebuilds the chain for add, remove and move, so the store's copy is stale
  * until the read lands; awaiting it keeps the sidebar in step with what the
- * engine actually installed.
+ * engine actually installed. It returns the command's own result, so a caller
+ * that needs the new stage's id (add) gets it after the chain is in sync.
  */
-async function editEffect(fn: () => Promise<unknown>): Promise<void> {
+async function editEffect<T>(fn: () => Promise<T>): Promise<T | null> {
+  let result: T | null = null;
   try {
-    await fn();
+    result = await fn();
   } catch (err) {
     player.update((s) => ({ ...s, error: errorText(err) }));
   }
   await syncEffectChain();
+
+  return result;
 }
 
 /** run is invoke plus the busy flag, for the commands that can take a while. */

@@ -26,6 +26,20 @@
   let dragID = $state<string | null>(null);
   let dragOver = $state<number | null>(null);
 
+  // reveal scrolls the selected row into view when the selection changes, so a
+  // stage appended at the bottom (or one picked from the catalogue) is visible
+  // in the chain beside the panel that now shows it.
+  function reveal(node: HTMLElement, active: boolean) {
+    const run = (on: boolean) => {
+      if (on) {
+        node.scrollIntoView({ block: "nearest" });
+      }
+    };
+    run(active);
+
+    return { update: run };
+  }
+
   function labelOf(s: EffectStage): string {
     return s.label.trim() || s.impl.trim() || s.kind;
   }
@@ -95,7 +109,7 @@
 <div class="flex h-full flex-col">
   {#if stages.length === 0}
     <p class="px-3 py-6 text-sm text-muted">
-      The chain is empty. Add an effect from the catalogue to start processing.
+      The chain is empty.
     </p>
   {:else}
     <ul class="flex flex-col gap-px py-1" ondrop={onDrop} ondragover={(e) => e.preventDefault()}>
@@ -125,6 +139,7 @@
             </span>
             <button
               type="button"
+              use:reveal={s.id === selectedId}
               class="min-w-0 flex-1 truncate text-left text-sm"
               class:text-fg={s.id === selectedId}
               class:text-muted={s.id !== selectedId}
@@ -155,8 +170,5 @@
         <li class="h-[3px] rounded-full bg-accent" aria-hidden="true"></li>
       {/if}
     </ul>
-    <p class="px-3 py-2 text-[11px] text-muted">
-      Top of the list is first in the signal path.
-    </p>
   {/if}
 </div>

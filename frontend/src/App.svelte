@@ -166,6 +166,14 @@
   // this stays behaviour.
   function action(a: ShortcutAction) {
     switch (a) {
+      case "play-pause":
+        // A queue is what makes the transport meaningful; without one the
+        // round button is disabled, and the shortcut agrees with it.
+        if (hasQueue) {
+          commands.togglePause();
+        }
+
+        return;
       case "volume-up":
         volumeBy(VOLUME_STEP);
         showVolumeToast();

@@ -76,6 +76,13 @@ describe("matchShortcut", () => {
     expect(matchShortcut(key({ key: "m" }))).toBe("mute");
   });
 
+  it("maps space through both its key and its code", () => {
+    // The space character is the same on every layout; the code fallback keeps
+    // the binding working when a layout spells the key differently.
+    expect(matchShortcut(key({ key: " ", code: "Space" }))).toBe("play-pause");
+    expect(matchShortcut(key({ code: "Space" }))).toBe("play-pause");
+  });
+
   it("splits repeat by case: l is all, L is one", () => {
     expect(matchShortcut(key({ key: "l" }))).toBe("repeat-all");
     expect(matchShortcut(key({ key: "L", shiftKey: true }))).toBe("repeat-one");
@@ -173,6 +180,11 @@ describe("shortcutFor gating", () => {
     expect(shortcutFor(key({ key: "l" }), ctx, focused)).toBeNull();
   });
 
+  it("leaves space to a focused text field", () => {
+    const ctx = context({ isEditableFocused: () => true });
+    expect(shortcutFor(key({ key: " ", code: "Space" }), ctx, focused)).toBeNull();
+  });
+
   it("ignores a key when the window is unfocused or hidden", () => {
     expect(shortcutFor(key({ key: "n" }), context(), { hasFocus: false, visible: true })).toBeNull();
     expect(shortcutFor(key({ key: "n" }), context(), { hasFocus: true, visible: false })).toBeNull();
@@ -247,6 +259,28 @@ describe("handleKeydown dispatch", () => {
 
     expect(handleKeydown(e, calls.ctx, focused)).toBe(true);
     expect(calls.actions).toEqual(["next"]);
+    expect(prevented()).toBe(true);
+  });
+
+  it("toggles the transport on space and blocks the focused control", () => {
+    // The default is what a focused button or checkbox would act on, so a
+    // matched space must consume it as well as dispatch.
+    const calls = recording();
+    const { e, prevented } = press({ key: " ", code: "Space" });
+
+    expect(handleKeydown(e, calls.ctx, focused)).toBe(true);
+    expect(calls.actions).toEqual(["play-pause"]);
+    expect(prevented()).toBe(true);
+  });
+
+  it("swallows the auto-repeat of a held space", () => {
+    // A held space is still consumed, so the focused control stays inert, but
+    // it must not flip the transport once per OS repeat.
+    const calls = recording();
+    const { e, prevented } = press({ key: " ", code: "Space", repeat: true });
+
+    expect(handleKeydown(e, calls.ctx, focused)).toBe(true);
+    expect(calls.actions).toEqual([]);
     expect(prevented()).toBe(true);
   });
 

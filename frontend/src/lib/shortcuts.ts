@@ -8,6 +8,7 @@
 // a browser.
 
 export type ShortcutAction =
+  | "play-pause"
   | "volume-up"
   | "volume-down"
   | "next"
@@ -18,12 +19,14 @@ export type ShortcutAction =
   | "repeat-all"
   | "repeat-one";
 
-/** ShortcutKeyEvent is the slice of KeyboardEvent the matcher reads. A plain
- *  object works, so a test drives the keymap without constructing an event. */
+/** ShortcutKeyEvent is the slice of KeyboardEvent the shortcut layer reads. A
+ *  plain object works, so a test drives the keymap without constructing an
+ *  event. repeat is true while the OS auto-repeats a held key. */
 export interface ShortcutKeyEvent {
   key: string;
   code: string;
   shiftKey: boolean;
+  repeat?: boolean;
 }
 
 /** ShortcutGateEvent adds the modifiers the gate reads. It is separate from the
@@ -51,6 +54,8 @@ export interface ShortcutGateEvent extends ShortcutKeyEvent {
  */
 export function matchShortcut(e: ShortcutKeyEvent): ShortcutAction | null {
   switch (e.key) {
+    case " ":
+      return "play-pause";
     case "*":
     case "0":
       return "volume-up";
@@ -70,6 +75,10 @@ export function matchShortcut(e: ShortcutKeyEvent): ShortcutAction | null {
   }
 
   switch (e.code) {
+    case "Space":
+      // e.key is the space character on every layout, but the code fallback
+      // keeps the binding independent of what the layout puts on the key.
+      return "play-pause";
     case "NumpadMultiply":
       return "volume-up";
     case "NumpadDivide":
@@ -230,7 +239,13 @@ export function handleKeydown(
   if (action === null) {
     return false;
   }
+  // Space is a latch, not a repeater: holding it must not flip the transport
+  // on every OS repeat. The default is still suppressed on the repeats, so a
+  // focused button never receives the activation its own keyup would fire.
   e.preventDefault();
+  if (action === "play-pause" && e.repeat) {
+    return true;
+  }
   ctx.action(action);
 
   return true;

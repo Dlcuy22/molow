@@ -20,6 +20,7 @@
   import { showToast } from "./lib/toast";
   import { muted, toggleMute, volume, volumeBy, VOLUME_STEP } from "./lib/volume";
   import { nextShuffleTarget } from "./lib/shuffle";
+  import { nextRepeatTarget, type RepeatMode } from "./lib/repeat";
   import Transport from "./lib/components/Transport.svelte";
   import TrackInfo from "./lib/components/TrackInfo.svelte";
   import Queue from "./lib/components/Queue.svelte";
@@ -48,6 +49,15 @@
   $effect(() => {
     if (shuffleIntent !== null && snap.shuffled === shuffleIntent) {
       shuffleIntent = null;
+    }
+  });
+
+  // Repeat needs the same intent. The key names a mode, and pressing it again
+  // before the snapshot catches up must turn that mode off, not resend it.
+  let repeatIntent = $state<RepeatMode | null>(null);
+  $effect(() => {
+    if (repeatIntent !== null && snap.repeat === repeatIntent) {
+      repeatIntent = null;
     }
   });
 
@@ -140,13 +150,28 @@
     showToast({ key: "track", kind: "art", label: "Track" });
   }
 
-  function persistRepeat(mode: "off" | "all" | "one") {
+  function persistRepeat(mode: RepeatMode) {
     commands.setRepeat(mode);
     // The file is written through the settings document, since repeat outlives
     // a restart and the engine has no store of its own.
     commands.setAppSettings({
       ...$appSettings,
       playback: { ...$appSettings.playback, repeat: mode },
+    });
+  }
+
+  // toggleRepeat treats the key as a latch: the mode it names goes on, and the
+  // same key turns it off. The other mode switches to itself, so l and L never
+  // leave repeat stuck with no way back to off.
+  function toggleRepeat(want: Exclude<RepeatMode, "off">) {
+    const mode = nextRepeatTarget(repeatIntent, snap.repeat, want);
+    repeatIntent = mode;
+    persistRepeat(mode);
+    showToast({
+      key: "repeat",
+      kind: "tile",
+      label: mode === "off" ? "Repeat off" : mode === "one" ? "Repeat one" : "Repeat all",
+      icon: mode === "one" ? RepeatOnce : Repeat,
     });
   }
 
@@ -227,13 +252,11 @@
         return;
       }
       case "repeat-all":
-        persistRepeat("all");
-        showToast({ key: "repeat", kind: "tile", label: "Repeat all", icon: Repeat });
+        toggleRepeat("all");
 
         return;
       case "repeat-one":
-        persistRepeat("one");
-        showToast({ key: "repeat", kind: "tile", label: "Repeat one", icon: RepeatOnce });
+        toggleRepeat("one");
 
         return;
     }

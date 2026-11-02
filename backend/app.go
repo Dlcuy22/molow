@@ -16,6 +16,10 @@ import (
 const (
 	appName        = "Molo"
 	appDescription = "A desktop audio player"
+	// appID is the bundle identity and, on Linux, the desktop entry the
+	// compositor uses to resolve the window and taskbar icon. The engine
+	// library is molo; this app is molow.
+	appID = "com.dlcuy22.molow"
 )
 
 // Window names, so the service can find a window it did not create and the
@@ -67,6 +71,13 @@ func Run(assets embed.FS) {
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 		},
+		Linux: application.LinuxOptions{
+			// The Wayland app_id is the desktop entry's identity: KDE and
+			// GNOME resolve the icon from <application id>.desktop, and GTK4
+			// has no per-window icon API. The id is also what the installed
+			// entry is named after, so bin/molo and a packaged molo agree.
+			ApplicationID: appID,
+		},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
@@ -75,6 +86,11 @@ func Run(assets embed.FS) {
 			Port: 18080,
 		},
 	})
+
+	// The desktop entry fixes the taskbar icon, but KWin draws the titlebar
+	// icon from the toplevel icon the client supplies. Point GTK at the same
+	// theme name so both surfaces agree.
+	setWindowIconName(appID)
 
 	// The effect window is created on demand from the main window (see
 	// PlayerService.OpenEffectWindow). It is not created hidden here: a closed

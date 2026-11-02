@@ -7,7 +7,7 @@ version: '3'
 info:
   companyName: "Asrian Putra" # The name of the company
   productName: "Molo" # The name of the application
-  productIdentifier: "com.dlcuy22.molo" # The unique product identifier
+  productIdentifier: "com.dlcuy22.molow" # The unique product identifier
   description: "A desktop audio player" # The application description
   copyright: "(c) 2026, Asrian Putra" # Copyright text
   comments: "Audio engine and DSP scripting engine" # Comments

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Molo
+Exec=molo
+Icon=com.dlcuy22.molow
+Categories=AudioVideo;Audio;Player;
+Comment=A desktop audio player
+Terminal=false
+Keywords=audio;music;player;
+Version=1.0
+StartupNotify=true

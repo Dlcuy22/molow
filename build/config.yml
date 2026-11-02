@@ -12,9 +12,6 @@ info:
   copyright: "(c) 2026, Asrian Putra" # Copyright text
   comments: "Audio engine and DSP scripting engine" # Comments
   version: "1.1.0" # The application version
-  # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
-  #                               # Should match the name of your .icon file without the extension
-  #                               # If not set and Assets.car exists, defaults to "appicon"
 
 # iOS build configuration (uncomment to customise iOS project generation)
 # Note: Keys under `ios` OVERRIDE values under `info` when set.

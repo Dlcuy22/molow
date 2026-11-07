@@ -1,28 +1,21 @@
 @import "tailwindcss";
 
-/*
- * Design tokens transcribed from DESIGN.md. The names match the token list, so
- * a value is never repeated inline and the palette stays in one place.
- *
- * Dark only by the owner's decision, so there is no light variant to keep in
- * sync and no theme toggle to get half-right.
- */
 @theme {
-  --color-bg: #1d1d20;
-  --color-surface: #2f2f32;
-  --color-fg: #f2f0ea;
-  --color-muted: #b0aca2;
-  --color-line: #454548;
-  --color-hover: #3a3a3e;
-  --color-selected: #434347;
-  --color-accent: #3584e4;
-  --color-focus: #648cc1;
-  --color-danger: #c44536;
-  --color-track: #454548;
-  --color-disabled: #6e6e72;
-  --color-meter-green: #62c554;
-  --color-meter-yellow: #e6c34a;
-  --color-meter-red: #d94b4b;
+  --color-bg: hsl(240 4.9% 12%);
+  --color-surface: hsl(240 3.1% 19%);
+  --color-fg: hsl(45 23.5% 93.3%);
+  --color-muted: hsl(42.9 8.1% 66.3%);
+  --color-line: hsl(240 2.1% 27.6%);
+  --color-hover: hsl(240 3.3% 23.5%);
+  --color-selected: hsl(240 2.9% 27.1%);
+  --color-accent: hsl(212.9 76.4% 55.1%);
+  --color-focus: hsl(214.2 42.9% 57.5%);
+  --color-danger: hsl(6.3 56.8% 49%);
+  --color-track: hsl(240 2.1% 27.6%);
+  --color-disabled: hsl(240 1.8% 43.9%);
+  --color-meter-green: hsl(112.6 49.3% 55.1%);
+  --color-meter-yellow: hsl(46.5 75.7% 59.6%);
+  --color-meter-red: hsl(0 65.1% 57.3%);
 
   /* Panels 6px, rows 4px, play button round. A flat scale on purpose: radius
    * separates a panel from a row, it does not decorate. */

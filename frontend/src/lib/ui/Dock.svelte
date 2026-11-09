@@ -312,7 +312,7 @@
   </div>
 
   <button
-    class="absolute right-[18px] grid size-[18px] place-items-center text-muted transition-colors hover:text-fg"
+    class="absolute right-[18px] top-1/2 grid size-[18px] -translate-y-1/2 place-items-center text-muted transition-colors hover:text-fg"
     aria-label="Open the full player"
     title="Open the full player"
     onclick={onexpand}

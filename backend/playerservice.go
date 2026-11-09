@@ -19,7 +19,10 @@ import (
 	"github.com/dlcuy22/molo"
 	"github.com/dlcuy22/molo/meta"
 	"github.com/dlcuy22/molo/provider"
+	"github.com/dlcuy22/molow/internal/artcache"
 	"github.com/dlcuy22/molow/internal/cover"
+	"github.com/dlcuy22/molow/internal/library"
+	"github.com/dlcuy22/molow/internal/library/sqlite"
 	"github.com/dlcuy22/molow/internal/spectrum"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -147,6 +150,13 @@ type PlayerService struct {
 	appSettingsMu sync.Mutex
 	appSettings   AppSettings
 
+	// libMu guards the catalogue handle and the source registry. A scan runs on
+	// its own goroutine, so the map is read while a scan writes progress.
+	libMu    sync.Mutex
+	libStore *sqlite.Store
+	libs     map[string]library.Source
+	scanning map[string]bool
+
 	log *slog.Logger
 }
 
@@ -233,6 +243,10 @@ func (s *PlayerService) ServiceStartup(_ context.Context, _ application.ServiceO
 	// transport logs once and stays inert.
 	s.initSystemMedia()
 
+	// Open the catalogue and start a background scan of each stored root. A
+	// failure leaves browsing empty and playback untouched.
+	s.initLibraries()
+
 	// Mirror the engine's debug stream to the terminal when the app was
 	// launched from one, so the desktop build can be watched without a second
 	// window. A GUI launch with no terminal leaves this off.
@@ -257,6 +271,14 @@ func (s *PlayerService) ServiceShutdown() error {
 	s.wg.Wait()
 	if s.preview != nil {
 		s.preview.close()
+	}
+
+	s.libMu.Lock()
+	store := s.libStore
+	s.libStore = nil
+	s.libMu.Unlock()
+	if store != nil {
+		_ = store.Close()
 	}
 
 	if s.player != nil {
@@ -593,6 +615,16 @@ func (s *PlayerService) Cover(id string) string {
 
 	if url, ok := s.coverCache[id]; ok {
 		return url
+	}
+
+	// The catalogue stores artwork bytes on disk under the cover id, so a card
+	// for a track that is not playing can still be drawn from memory.
+	if data := artcache.Load(id); len(data) > 0 {
+		if url, err := cover.DataURL(data); err == nil {
+			s.storeCover(id, url)
+
+			return url
+		}
 	}
 
 	data := s.player.Snapshot().Meta.Tags.Cover
@@ -1118,6 +1150,11 @@ func (s *PlayerService) TogglePause() error {
 func (s *PlayerService) Next() error { return s.command(func() error { return s.player.Next() }) }
 
 func (s *PlayerService) Prev() error { return s.command(func() error { return s.player.Prev() }) }
+
+// MoveQueue moves a queue entry, keeping the playing track by identity.
+func (s *PlayerService) MoveQueue(from, to int) error {
+	return s.command(func() error { return s.player.MoveQueue(from, to) })
+}
 
 // SetShuffle turns baked shuffle on or off. On, the queue is reordered once and
 // advances follow that order; off restores the order the shuffle was taken from.

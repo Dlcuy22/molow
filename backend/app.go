@@ -59,6 +59,7 @@ func Run(assets embed.FS) {
 	application.RegisterEvent[Snapshot](eventSnapshot)
 	application.RegisterEvent[[]float64](eventFrame)
 	application.RegisterEvent[[]EffectMetersInfo](eventEffectMeters)
+	application.RegisterEvent[LibraryProgress](eventLibrary)
 
 	service := newPlayerService()
 
@@ -104,7 +105,7 @@ func Run(assets embed.FS) {
 		Height:           720,
 		MinWidth:         820,
 		MinHeight:        560,
-		BackgroundColour: application.NewRGB(0x1d, 0x1d, 0x20),
+		BackgroundColour: application.NewRGB(0x13, 0x13, 0x15),
 		// Files dropped on the window are the other half of "add tracks": a
 		// listener folds them into the queue through the same service call the
 		// picker uses.
@@ -154,7 +155,7 @@ func (s *PlayerService) openEffectWindow() {
 		Height:           620,
 		MinWidth:         640,
 		MinHeight:        420,
-		BackgroundColour: application.NewRGB(0x1d, 0x1d, 0x20),
+		BackgroundColour: application.NewRGB(0x13, 0x13, 0x15),
 		URL:              "/?window=effects",
 	})
 	w.Show()

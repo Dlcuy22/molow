@@ -22,6 +22,7 @@ export type {
     EffectStageInfo,
     EffectVisualInfo,
     GeneralSettings,
+    LibraryProgress,
     Options,
     PlaybackSettings,
     PresetImportResult,

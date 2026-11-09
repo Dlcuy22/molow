@@ -16,6 +16,15 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as color$0 from "../internal/color/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as library$0 from "../internal/library/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as lyrics$0 from "../internal/lyrics/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as spectrum$0 from "../internal/spectrum/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -35,6 +44,19 @@ export function Accounts(): $CancellablePromise<$models.AccountInfo[] | null> {
  */
 export function AddEffect(kind: string, impl: string): $CancellablePromise<string> {
     return $Call.ByID(532102897, kind, impl);
+}
+
+/**
+ * AddLocalLibrary registers a folder as a library and starts its first scan.
+ * The folder is the identity: adding the same path twice returns the row that
+ * already exists rather than a second library.
+ */
+export function AddLocalLibrary(path: string): $CancellablePromise<library$0.Library> {
+    return $Call.ByID(2322056078, path);
+}
+
+export function AddToPlaylist(libraryID: string, playlistID: string, refs: string[] | null): $CancellablePromise<void> {
+    return $Call.ByID(3005025319, libraryID, playlistID, refs);
 }
 
 /**
@@ -121,6 +143,20 @@ export function ConfigureSpectrum(cfg: $models.SpectrumConfig): $CancellableProm
  */
 export function Cover(id: string): $CancellablePromise<string> {
     return $Call.ByID(1004003700, id);
+}
+
+/**
+ * CoverAccents returns the ranked accent palette of one cover. The album
+ * player uses the first entries; the rest are there for a caller that wants a
+ * different tie-break. The bytes come from the artwork cache, which the scanner
+ * fills, so this works for a library cover that was never the current track.
+ */
+export function CoverAccents(coverID: string): $CancellablePromise<color$0.Colour[] | null> {
+    return $Call.ByID(3762243019, coverID);
+}
+
+export function CreatePlaylist(libraryID: string, name: string): $CancellablePromise<library$0.Playlist> {
+    return $Call.ByID(1975157543, libraryID, name);
 }
 
 /**
@@ -212,6 +248,42 @@ export function InsertNextYTM(videoID: string): $CancellablePromise<void> {
 }
 
 /**
+ * Libraries lists every registered library.
+ */
+export function Libraries(): $CancellablePromise<library$0.Library[] | null> {
+    return $Call.ByID(3286409104);
+}
+
+/**
+ * LibraryAlbumTracks reads one album's tracks in order.
+ */
+export function LibraryAlbumTracks(id: string, album: string, artist: string): $CancellablePromise<library$0.Track[] | null> {
+    return $Call.ByID(727485811, id, album, artist);
+}
+
+/**
+ * LibraryFeed answers one tab of a library.
+ */
+export function LibraryFeed(id: string, tab: string, cursor: string, limit: number): $CancellablePromise<library$0.Page> {
+    return $Call.ByID(985230800, id, tab, cursor, limit);
+}
+
+/**
+ * LibrarySearch runs a library's own search capability.
+ */
+export function LibrarySearch(id: string, query: string, limit: number): $CancellablePromise<library$0.Page> {
+    return $Call.ByID(3834651128, id, query, limit);
+}
+
+/**
+ * Liked reports whether a catalogued ref carries a like. An uncatalogued path
+ * (a file dropped on the window) is simply not liked.
+ */
+export function Liked(path: string): $CancellablePromise<boolean> {
+    return $Call.ByID(3744855258, path);
+}
+
+/**
  * LoadPaths adds the chosen files and folders to the queue. When nothing is
  * queued yet it replaces the (empty) queue and starts the first track; when a
  * queue already exists it appends, so adding a folder does not cut off or reset
@@ -223,11 +295,27 @@ export function LoadPaths(paths: string[] | null): $CancellablePromise<void> {
 }
 
 /**
+ * Lyrics returns the sidecar lyric file for a track, read fresh each time. The
+ * lookup is forgiving about the file name; no file is a nil document, not an
+ * error.
+ */
+export function Lyrics(path: string): $CancellablePromise<lyrics$0.Document | null> {
+    return $Call.ByID(3576124737, path);
+}
+
+/**
  * MoveEffect moves the stage with id to index to in processing order. The index
  * is a final index in the resulting list, matching the engine.
  */
 export function MoveEffect(id: string, to: number): $CancellablePromise<void> {
     return $Call.ByID(340368489, id, to);
+}
+
+/**
+ * MoveQueue moves a queue entry, keeping the playing track by identity.
+ */
+export function MoveQueue($from: number, to: number): $CancellablePromise<void> {
+    return $Call.ByID(472364727, $from, to);
 }
 
 export function Next(): $CancellablePromise<void> {
@@ -276,10 +364,30 @@ export function Options(): $CancellablePromise<$models.Options> {
 }
 
 /**
+ * PickLibraryFolder shows the native folder picker and returns the path without
+ * queueing anything. It is separate from OpenFolder, which means "play this".
+ */
+export function PickLibraryFolder(): $CancellablePromise<string> {
+    return $Call.ByID(2367947347);
+}
+
+/**
  * PlayIndex starts queue row index.
  */
 export function PlayIndex(index: number): $CancellablePromise<void> {
     return $Call.ByID(3323768789, index);
+}
+
+/**
+ * PlayRefs replaces the queue with refs and starts the first. It is the library
+ * "play this album" action; playing one row passes a single ref.
+ */
+export function PlayRefs(refs: string[] | null): $CancellablePromise<void> {
+    return $Call.ByID(2761232937, refs);
+}
+
+export function Playlists(libraryID: string): $CancellablePromise<library$0.Playlist[] | null> {
+    return $Call.ByID(1904090572, libraryID);
 }
 
 export function Prev(): $CancellablePromise<void> {
@@ -340,6 +448,22 @@ export function RefreshAuth(): $CancellablePromise<$models.AuthStatus> {
  */
 export function RemoveEffect(id: string): $CancellablePromise<void> {
     return $Call.ByID(903599168, id);
+}
+
+export function RemoveFromPlaylist(libraryID: string, playlistID: string, refs: string[] | null): $CancellablePromise<void> {
+    return $Call.ByID(2243002079, libraryID, playlistID, refs);
+}
+
+export function RemoveLibrary(id: string): $CancellablePromise<void> {
+    return $Call.ByID(2918659700, id);
+}
+
+/**
+ * RescanLibrary rescans one root on a worker. A scan already running is not
+ * duplicated.
+ */
+export function RescanLibrary(id: string): $CancellablePromise<void> {
+    return $Call.ByID(967501736, id);
 }
 
 /**
@@ -422,6 +546,13 @@ export function SetEffectBypass(id: string, bypassed: boolean): $CancellableProm
  */
 export function SetEffectParam(id: string, key: string, value: any): $CancellablePromise<void> {
     return $Call.ByID(1434300507, id, key, value);
+}
+
+/**
+ * SetLiked writes a like through the library that owns the ref.
+ */
+export function SetLiked(libraryID: string, ref: string, liked: boolean): $CancellablePromise<void> {
+    return $Call.ByID(2942672408, libraryID, ref, liked);
 }
 
 /**
@@ -528,6 +659,13 @@ export function Stop(): $CancellablePromise<void> {
  */
 export function SwitchChannel(channelID: string): $CancellablePromise<void> {
     return $Call.ByID(1175181924, channelID);
+}
+
+/**
+ * ToggleLike flips a like for a catalogued ref and returns the new state.
+ */
+export function ToggleLike(path: string): $CancellablePromise<boolean> {
+    return $Call.ByID(1639947834, path);
 }
 
 /**

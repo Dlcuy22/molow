@@ -14,6 +14,11 @@ import "../github.com/wailsapp/wails/v3/internal/eventcreate.js";
 export const MoloEffectMeters = "molo:effect-meters";
 
 /**
+ * Name of the custom event "molo:library".
+ */
+export const MoloLibrary = "molo:library";
+
+/**
  * Name of the custom event "molo:snapshot".
  */
 export const MoloSnapshot = "molo:snapshot";

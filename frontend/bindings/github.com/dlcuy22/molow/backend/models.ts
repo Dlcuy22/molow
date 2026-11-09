@@ -181,6 +181,16 @@ export interface GeneralSettings {
 }
 
 /**
+ * LibraryProgress is the scan event payload.
+ */
+export interface LibraryProgress {
+    "libraryId": string;
+    "done": number;
+    "total": number;
+    "state": string;
+}
+
+/**
  * Options is the static chooser data.
  */
 export interface Options {

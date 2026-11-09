@@ -235,12 +235,18 @@
           <SpeakerHigh size="18" />
         {/if}
       </button>
-      <div class="relative flex h-[18px] w-[60px] items-center">
+      <div class="volume relative flex h-[18px] w-[60px] items-center">
         <div class="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-track"></div>
         <div
           class="absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-accent"
           style="width: {volume}%"
         ></div>
+        <div class="pointer-events-none absolute inset-x-[4px] top-1/2 h-0">
+          <span
+            class="volume-thumb absolute top-0 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent"
+            style="left: {volume}%"
+          ></span>
+        </div>
         <input
           class="absolute inset-0 h-full w-full cursor-pointer appearance-none bg-transparent opacity-0"
           type="range"

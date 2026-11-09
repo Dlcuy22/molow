@@ -9,6 +9,8 @@ without a deprecation cycle.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-10
+
 ### Added
 
 - The library overhaul: a SQLite catalogue at `<config>/molo/library.db`, a
@@ -25,6 +27,10 @@ without a deprecation cycle.
   a leading track index removed, with bilingual pairs and translation files.
 - Cover-derived album player gradients, ported from
   `tools/dominant_color/dominant_color.py` into `internal/color`.
+- A draggable progress bar in the dock, the floating bar and the album player,
+  with a hover-revealed thumb; docked bars put it on the edge facing the content.
+- A marquee dock title, shown only when the name does not fit before the
+  transport.
 
 ### Changed
 
@@ -32,6 +38,10 @@ without a deprecation cycle.
   panels are `surface`, in the order `DESIGN.md` defines.
 - `app.css` keeps every colour in HSL and adds the four bundled faces, the
   radius scale (4/6/8/16) and the panel shadows.
+- Dock controls have hit areas larger than their glyphs, scale on hover, and the
+  toggles and icon buttons take the same rounded tile as the like button.
+- The volume rail reveals its thumb only on hover or keyboard focus, like the
+  progress bar.
 
 ## [0.1.0] - 2026-11-06
 
@@ -54,5 +64,6 @@ First release.
 - Builds for Linux, Windows, and macOS, plus a server build that runs the same
   backend as an HTTP server.
 
-[Unreleased]: https://github.com/Dlcuy22/molow/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Dlcuy22/molow/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Dlcuy22/molow/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Dlcuy22/molow/releases/tag/v0.1.0

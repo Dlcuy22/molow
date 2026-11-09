@@ -1,4 +1,8 @@
-# MoLow
+<p align="center">
+  <img src="build/appicon.png" width="160" alt="MoLow logo">
+</p>
+
+<h1 align="center">MoLow</h1>
 
 ## What is this?
 
@@ -28,6 +32,16 @@ ready-to-use audio library before focusing on this UI implementation.
 
 The current UI is functional and every control is in place, but it is still not
 perfect, and I am working on it.
+
+## Screenshots
+
+<p align="center">
+  <img src=".github/assets/screenshot-2.webp" width="880" alt="Home view with recommendations, recently played albums and the player bar">
+</p>
+
+<p align="center">
+  <img src=".github/assets/screenshot-1.webp" width="880" alt="Now playing view with cover art, controls and synced lyrics">
+</p>
 
 ## Codec and container support
 | Name | Support | Note |

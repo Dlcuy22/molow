@@ -23,7 +23,7 @@ it also ships built-in effects written in Go, EQ among them.
 
 ## Project state
 
-MoLow is at its earliest stage of development. I spent my time building a
+MoLow is at its earliest stage of development. We spent our time building a
 ready-to-use audio library before focusing on this UI implementation.
 
 The current UI is functional and every control is in place, but it is still not
@@ -33,7 +33,7 @@ perfect, and I am working on it.
 | Name | Support | Note |
 |---|---|---|
 | MP3 | Yes | MPEG-1/2/2.5 Layer III |
-| FLAC | Yes | Lossless, 16- and 24-bit |
+| FLAC | Yes | Lossless, 16 and 24-bit |
 | WAV | Yes | Integer PCM 8/16/24/32-bit and IEEE float 32/64-bit |
 | Opus (`.opus`, `.ogg`) | Yes | Pure Go; the optional `libopusfile` path seeks faster |
 | Ogg Vorbis | No | Only Ogg Opus is read |
@@ -52,6 +52,16 @@ the codec implementations in pure Go.
 Every format is normalized to 48 kHz stereo float32 before it reaches the audio
 device, so one output stream serves every track.
 
+## Version 0.2 notice
+
+The UI has been overhauled with a new design that replaces the old one. The new
+UI is still in early development, so some features may be unfinished.
+
+## Downloads
+
+MoLow will not publish any executable or installer on the releases page until it
+reaches a stable branch. The project is still unstable and unfinished, so we
+will publish builds only when they are ready.
 
 ## Developing
 
@@ -63,10 +73,6 @@ tutorial to understand the basics: https://v3.wails.io/tutorials/03-notes-vanill
 
 After that, you can use `wails3 dev` and `wails3 build` to
 work in this repository.
-
-The Go side lives in `backend/`; the root `main.go` only embeds the built
-frontend and hands it to `backend.Run`, because `//go:embed` cannot reach a
-parent directory.
 
 ## Stack
 

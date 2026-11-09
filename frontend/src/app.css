@@ -313,9 +313,15 @@ body {
   scale: 1;
 }
 /* A docked bar has no second row, so its progress is the top edge: the line
- * thickens under the pointer and the thumb rides the fill at that moment. */
+ * thickens under the pointer and the thumb rides the fill at that moment. The
+ * pointer says the bar is a handle: grab over it, grabbing while held. */
 .seek-input {
   touch-action: none;
+  cursor: grab;
+}
+.seek-instant .seek-input,
+.seek-input:active {
+  cursor: grabbing;
 }
 .seek:has(.seek-input:focus-visible) .seek-thumb {
   box-shadow: 0 0 0 2px var(--color-focus);

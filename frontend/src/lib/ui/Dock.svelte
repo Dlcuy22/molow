@@ -256,7 +256,7 @@
   </div>
 
   <button
-    class="dock-btn absolute right-[13px] top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-md text-muted transition-colors hover:text-fg"
+    class="dock-btn dock-chip absolute right-[13px] top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-md text-muted transition-colors hover:text-fg"
     aria-label="Open the full player"
     title="Open the full player"
     onclick={onexpand}

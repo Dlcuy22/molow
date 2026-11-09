@@ -67,7 +67,7 @@
 
 <div class="relative h-full w-full overflow-hidden text-fg" style="background:{background}">
   <button
-    class="absolute right-[13px] top-[13px] z-20 grid size-8 place-items-center text-fg transition-opacity hover:opacity-70"
+    class="dock-btn dock-chip absolute right-[13px] top-[13px] z-20 grid size-8 place-items-center rounded-md text-fg transition-colors"
     aria-label="Close the full player"
     title="Close"
     onclick={onclose}

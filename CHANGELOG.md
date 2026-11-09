@@ -9,6 +9,30 @@ without a deprecation cycle.
 
 ## [Unreleased]
 
+### Added
+
+- The library overhaul: a SQLite catalogue at `<config>/molo/library.db`, a
+  folder scanner with file identity, full-text search, likes and playlist rows,
+  and the `Libraries`, `LibraryFeed`, `LibrarySearch`, `SetLiked` and playlist
+  bindings from `docs/plan/library-overhaul.md`.
+- A rebuilt interface that follows `DESIGN.md`: sidebar, content and dock, with
+  Home, Library and the full album player. Work Sans, Inter, Noto Sans and Noto
+  Sans JP ship with the frontend.
+- The queue window: opened from the dock, unpinned or pinned, with drag
+  reordering that keeps the playing track by identity (`MoveQueue` in the
+  engine) and a vertical ease-in-out open.
+- Lyrics: sidecar `.lrc` beside the track or in a `lyrics/` folder, matched with
+  a leading track index removed, with bilingual pairs and translation files.
+- Cover-derived album player gradients, ported from
+  `tools/dominant_color/dominant_color.py` into `internal/color`.
+
+### Changed
+
+- The window plane is `bg-dark` (`#131315`); the dock and sidebar are `bg` and
+  panels are `surface`, in the order `DESIGN.md` defines.
+- `app.css` keeps every colour in HSL and adds the four bundled faces, the
+  radius scale (4/6/8/16) and the panel shadows.
+
 ## [0.1.0] - 2026-11-06
 
 First release.

@@ -446,6 +446,7 @@ export const commands = {
   togglePause: () => invoke(PlayerService.TogglePause()),
   next: () => invoke(PlayerService.Next()),
   prev: () => invoke(PlayerService.Prev()),
+  moveQueue: (from: number, to: number) => invoke(PlayerService.MoveQueue(from, to)),
   shuffle: (on: boolean) => invoke(PlayerService.SetShuffle(on)),
   // setRepeat replaces the engine's repeat mode. Persisting it is a separate
   // write through the settings document, because repeat is playback state that

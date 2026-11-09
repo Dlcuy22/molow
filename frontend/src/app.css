@@ -1,8 +1,24 @@
 @import "tailwindcss";
 
+/* The four faces ship with the app: a desktop player cannot depend on a font
+ * being installed, and the CJK face decides the lyric line box. Only the
+ * subsets the UI can actually print are bundled. */
+@import "@fontsource/inter/latin-400.css";
+@import "@fontsource/inter/latin-500.css";
+@import "@fontsource/inter/latin-600.css";
+@import "@fontsource/work-sans/latin-700.css";
+@import "@fontsource/noto-sans/latin-400.css";
+@import "@fontsource/noto-sans/latin-700.css";
+@import "@fontsource/noto-sans-jp/japanese-500.css";
+@import "@fontsource/noto-sans-jp/latin-500.css";
+
 @theme {
+  /* Three background levels, in order: page, chrome, raised. Each step is a
+   * real token because the rule is the hierarchy, not a shade someone liked. */
+  --color-bg-dark: hsl(240 5% 7.8%);
   --color-bg: hsl(240 4.9% 12%);
   --color-surface: hsl(240 3.1% 19%);
+
   --color-fg: hsl(45 23.5% 93.3%);
   --color-muted: hsl(42.9 8.1% 66.3%);
   --color-line: hsl(240 2.1% 27.6%);
@@ -17,13 +33,27 @@
   --color-meter-yellow: hsl(46.5 75.7% 59.6%);
   --color-meter-red: hsl(0 65.1% 57.3%);
 
-  /* Panels 6px, rows 4px, play button round. A flat scale on purpose: radius
-   * separates a panel from a row, it does not decorate. */
-  --radius-panel: 6px;
-  --radius-row: 4px;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Work Sans", "Inter", system-ui, sans-serif;
+  --font-content: "Noto Sans", "Inter", system-ui, sans-serif;
+  --font-jp: "Noto Sans JP", "Noto Sans CJK JP", "Noto Sans", sans-serif;
 
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
-    Arial, sans-serif;
+  /* Four radii, each with one meaning: thumbnail, control, panel, float. */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 16px;
+
+  /* Panels float over the page, so the shadow is two layers: a wide soft one
+   * that separates, and a tight one that grounds the edge. */
+  --shadow-menu: 0 12px 32px hsl(0 0% 0% / 0.5), 0 2px 6px hsl(0 0% 0% / 0.35);
+  --shadow-float: 0 18px 48px hsl(0 0% 0% / 0.45),
+    0 2px 8px hsl(0 0% 0% / 0.3);
+  --shadow-lift: 0 10px 24px hsl(0 0% 0% / 0.55),
+    0 1px 3px hsl(0 0% 0% / 0.4);
+
+  --ease-panel: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Audio level meters use a fixed green-yellow-red scale so the color carries
@@ -43,13 +73,44 @@
   background: var(--color-meter-red);
 }
 
+/* The dock's duration sits between the transport and the right cluster. Below
+ * the width where those three stop fitting, the transport and the cluster win:
+ * the times are already in the full player. */
+@media (max-width: 879px) {
+  .dock-duration {
+    display: none;
+  }
+}
+
+/* A title that does not fit scrolls once its copy width, with a pause at each
+ * end. Two copies sit side by side, so the reset from the end to the start is
+ * the same frame: no visible jump. */
+.marquee {
+  animation: marquee var(--marquee-duration, 10s) linear infinite;
+}
+@keyframes marquee {
+  0%,
+  10% {
+    transform: translateX(0);
+  }
+  90%,
+  100% {
+    transform: translateX(calc(-1 * var(--marquee-shift, 0px)));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .marquee {
+    animation: none;
+  }
+}
+
 /* The window is an app frame, not a document: the text is not selectable, and
  * the empty chrome drags the window. */
 html,
 body {
   height: 100%;
   margin: 0;
-  background: var(--color-bg);
+  background: var(--color-bg-dark);
   color: var(--color-fg);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;

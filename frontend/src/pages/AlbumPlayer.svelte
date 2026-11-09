@@ -14,6 +14,7 @@
   import { commands } from "../lib/store";
   import { formatTime } from "../lib/format";
   import SeekBar from "../lib/ui/SeekBar.svelte";
+  import Marquee from "../lib/ui/Marquee.svelte";
   import Cover from "../lib/ui/Cover.svelte";
 
   let {
@@ -78,9 +79,10 @@
   <div class="absolute left-[12%] top-[18%] w-[28.2%] min-w-[240px] max-w-[333px]">
     <Cover id={snap.coverId} alt={snap.album} size={333} radius={16} fill class="w-full" />
 
-    <p class="mt-[11px] truncate font-display text-[20px] font-bold leading-tight">
-      {snap.title || "Nothing playing"}
-    </p>
+    <Marquee
+      text={snap.title || "Nothing playing"}
+      class="mt-[11px] font-display text-[20px] font-bold leading-tight"
+    />
     <p class="truncate text-[12px] leading-tight">{snap.artist}</p>
 
     <div class="mt-[16px] flex items-center justify-between text-[10px] tabular-nums">
@@ -98,9 +100,8 @@
 
     <div class="mx-auto mt-4 flex w-[253px] max-w-full items-center justify-between">
       <button
-        class="transition-opacity hover:opacity-70"
-        class:opacity-100={snap.shuffled}
-        class:opacity-60={!snap.shuffled}
+        class="dock-btn dock-chip -m-[5.5px] grid size-9 place-items-center rounded-md text-fg transition-colors disabled:text-disabled"
+        class:text-muted={!snap.shuffled}
         disabled={queue.length === 0}
         aria-label={snap.shuffled ? "Shuffle on" : "Shuffle off"}
         aria-pressed={snap.shuffled}
@@ -109,7 +110,7 @@
         <Shuffle size="25" weight={snap.shuffled ? "fill" : "regular"} />
       </button>
       <button
-        class="transition-opacity hover:opacity-70"
+        class="dock-btn -m-[5.5px] grid size-9 place-items-center text-fg transition-colors disabled:text-disabled"
         disabled={queue.length === 0}
         aria-label="Previous track"
         onclick={() => commands.prev()}
@@ -117,19 +118,19 @@
         <SkipBack size="25" weight="fill" />
       </button>
       <button
-        class="grid size-8 place-items-center rounded-full bg-fg text-bg-dark"
+        class="dock-btn dock-chip -m-[4px] grid size-10 place-items-center rounded-md text-fg transition-colors disabled:text-disabled"
         disabled={queue.length === 0}
         aria-label={snap.state === "playing" ? "Pause" : "Play"}
         onclick={() => commands.togglePause()}
       >
         {#if snap.state === "playing"}
-          <Pause size="16" weight="fill" />
+          <Pause size="32" weight="fill" />
         {:else}
-          <Play size="16" weight="fill" />
+          <Play size="32" weight="fill" />
         {/if}
       </button>
       <button
-        class="transition-opacity hover:opacity-70"
+        class="dock-btn -m-[5.5px] grid size-9 place-items-center text-fg transition-colors disabled:text-disabled"
         disabled={queue.length === 0}
         aria-label="Next track"
         onclick={() => commands.next()}
@@ -137,9 +138,8 @@
         <SkipForward size="25" weight="fill" />
       </button>
       <button
-        class="transition-opacity hover:opacity-70"
-        class:opacity-100={snap.repeat !== "off"}
-        class:opacity-60={snap.repeat === "off"}
+        class="dock-btn dock-chip -m-[5.5px] grid size-9 place-items-center rounded-md text-fg transition-colors disabled:text-disabled"
+        class:text-muted={snap.repeat === "off"}
         aria-label={snap.repeat === "off" ? "Repeat off" : "Repeat on"}
         aria-pressed={snap.repeat !== "off"}
         onclick={() => commands.setRepeat(snap.repeat === "off" ? "all" : "off")}

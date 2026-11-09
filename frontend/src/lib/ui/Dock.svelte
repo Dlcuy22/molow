@@ -17,9 +17,10 @@
   import type { Snapshot } from "../../../bindings/github.com/dlcuy22/molow/backend/models";
   import { commands } from "../store";
   import { muted, toggleMute, volumeBy } from "../volume";
-  import { fillFrac, formatTime, isActive } from "../format";
+  import { formatTime, isActive } from "../format";
   import Cover from "./Cover.svelte";
   import Marquee from "./Marquee.svelte";
+  import SeekBar from "./SeekBar.svelte";
 
   let {
     snap,
@@ -46,51 +47,12 @@
   const live = $derived(isActive(snap.state));
   const duration = $derived(snap.duration > 0 ? snap.duration : 0);
 
-  // The seek bar is optimistic: a drag moves the painted fill at once and the
-  // snapshot only clears the held value once the engine agrees.
-  let scrubbing = $state(false);
-  let scrubValue = $state(0);
-  let pendingSeek = $state<number | null>(null);
-  const position = $derived(scrubbing ? scrubValue : (pendingSeek ?? snap.position));
-  const seekFill = $derived(fillFrac(position, 0, duration));
-
-  $effect(() => {
-    if (pendingSeek !== null && Math.abs(snap.position - pendingSeek) < 750) {
-      pendingSeek = null;
-    }
-  });
-  $effect(() => {
-    if (pendingSeek === null) {
-      return;
-    }
-    const timer = setTimeout(() => (pendingSeek = null), 1500);
-
-    return () => clearTimeout(timer);
-  });
-
-  function seekTo(ms: number) {
-    const target = Math.min(Math.max(ms, 0), duration);
-    pendingSeek = target;
-    commands.seek(target);
-  }
-
-  function onSeekInput(e: Event) {
-    scrubbing = true;
-    pendingSeek = null;
-    scrubValue = Number((e.currentTarget as HTMLInputElement).value);
-  }
-
-  function onSeekCommit(e: Event) {
-    scrubbing = false;
-    seekTo(Number((e.currentTarget as HTMLInputElement).value));
-  }
-
   function onVolume(e: Event) {
     volumeBy(Number((e.currentTarget as HTMLInputElement).value) / 100 - snap.volume);
   }
 
   const volume = $derived(Math.round(snap.volume * 100));
-  const remaining = $derived(duration > 0 ? Math.max(0, duration - position) : 0);
+  const remaining = $derived(duration > 0 ? Math.max(0, duration - snap.position) : 0);
 </script>
 
 {#snippet transport()}
@@ -165,16 +127,13 @@
   class:border-line={floating}
 >
   {#if mode !== "floating"}
-    <div
-      class="absolute inset-x-0 h-[3px] {mode === 'top' ? 'bottom-0' : 'top-0'}"
-      aria-hidden="true"
-    >
-      <div class="absolute inset-0 bg-track"></div>
-      <div
-        class="seek-fill absolute inset-y-0 left-0 bg-accent"
-        style="width: {seekFill * 100}%"
-      ></div>
-    </div>
+    <SeekBar
+      variant="edge"
+      side={mode === "top" ? "bottom" : "top"}
+      position={snap.position}
+      {duration}
+      onseek={(ms) => commands.seek(ms)}
+    />
   {/if}
 
   <!-- Left: art, identity, like. It is bounded on the right by the transport's
@@ -209,26 +168,11 @@
     {#if floating}
       <div class="flex flex-col items-center gap-2">
         {@render transport()}
-        <div class="seek relative flex h-4 w-[400px] items-center" class:seek-instant={scrubbing}>
-          <div class="pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-track"></div>
-          <div class="pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full">
-            <div class="seek-fill h-full rounded-full bg-accent" style="width: {seekFill * 100}%"></div>
-          </div>
-          <input
-            class="seek-input absolute inset-0 m-0 h-full w-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-default"
-            type="range"
-            min="0"
-            max={duration || 1}
-            step="1000"
-            value={position}
-            disabled={duration === 0}
-            aria-label="Seek"
-            oninput={onSeekInput}
-            onchange={onSeekCommit}
-          />
+        <div class="w-[400px]">
+          <SeekBar position={snap.position} {duration} onseek={(ms) => commands.seek(ms)} />
         </div>
         <div class="flex w-[400px] justify-between text-[10px] tabular-nums text-muted">
-          <span>{formatTime(position)}</span>
+          <span>{formatTime(snap.position)}</span>
           <span>{formatTime(remaining)}</span>
         </div>
       </div>
@@ -242,7 +186,7 @@
       class="dock-duration absolute top-1/2 -translate-y-1/2 text-[11px] tabular-nums text-muted"
       style="left: calc(50% + 136px)"
     >
-      {formatTime(position)} / {formatTime(duration)}
+      {formatTime(snap.position)} / {formatTime(duration)}
     </span>
   {/if}
 

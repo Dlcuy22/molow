@@ -12,7 +12,8 @@
   import type { Snapshot } from "../../bindings/github.com/dlcuy22/molow/backend/models";
   import type { Lyrics } from "../lib/types";
   import { commands } from "../lib/store";
-  import { fillFrac, formatTime } from "../lib/format";
+  import { formatTime } from "../lib/format";
+  import SeekBar from "../lib/ui/SeekBar.svelte";
   import Cover from "../lib/ui/Cover.svelte";
 
   let {
@@ -32,7 +33,6 @@
   const queue = $derived(snap.queue ?? []);
   const duration = $derived(snap.duration > 0 ? snap.duration : 0);
   const position = $derived(snap.position);
-  const fill = $derived(fillFrac(position, 0, duration));
   const remaining = $derived(duration > 0 ? Math.max(0, duration - position) : 0);
 
   const background = $derived(
@@ -63,10 +63,6 @@
       shift = 360 - el.offsetTop - el.offsetHeight / 2;
     }
   });
-
-  function scrub(e: Event) {
-    onseek(Number((e.currentTarget as HTMLInputElement).value));
-  }
 </script>
 
 <div class="relative h-full w-full overflow-hidden text-fg" style="background:{background}">
@@ -91,21 +87,12 @@
       <span>{formatTime(position)}</span>
       <span>{formatTime(remaining)}</span>
     </div>
-    <div class="seek relative mt-1 flex h-4 w-full items-center">
-      <div class="pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-black/25"></div>
-      <div class="pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full">
-        <div class="seek-fill h-full rounded-full bg-fg" style="width: {fill * 100}%"></div>
-      </div>
-      <input
-        class="seek-input absolute inset-0 m-0 h-full w-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-default"
-        type="range"
-        min="0"
-        max={duration || 1}
-        step="1000"
-        value={position}
-        disabled={duration === 0}
-        aria-label="Seek"
-        oninput={scrub}
+    <div class="mt-1">
+      <SeekBar
+        position={snap.position}
+        {duration}
+        tone="fg"
+        onseek={(ms) => onseek(ms)}
       />
     </div>
 

@@ -82,6 +82,64 @@
   }
 }
 
+/* Dock controls are glyphs on a flat bar, so their hover state is the glyph
+ * itself: a small scale, no lift. Scaling the icon rather than the box keeps the
+ * transport row from shifting under the pointer.
+ *
+ * The hit box is deliberately larger than the glyph and pulls itself back with a
+ * negative margin, so the extra field never moves the icon out of the design's
+ * spacing: shuffle and repeat get 28 px, previous and next 32 px, the 18 px
+ * glyphs 28 px. */
+.dock-btn {
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+.dock-btn > svg {
+  transition: scale 140ms ease;
+}
+.dock-btn:hover:not(:disabled) > svg,
+.dock-btn:focus-visible > svg {
+  scale: 1.12;
+}
+.dock-btn:disabled {
+  cursor: default;
+}
+/* Toggles and icon buttons get the same tile the like button has, so every
+ * glyph target in the bar reads as pressable. */
+.dock-chip:hover:not(:disabled) {
+  background-color: var(--color-hover);
+}
+/* The play disc is a surface, not a glyph, so the whole disc grows a little
+ * under the pointer. The invisible ring around it gives the disc a 44 px hit
+ * target without making the disc itself larger. */
+.dock-play {
+  position: relative;
+  transition:
+    scale 140ms ease,
+    filter 140ms ease;
+}
+.dock-play::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+}
+.dock-play:hover:not(:disabled) {
+  scale: 1.05;
+  filter: brightness(0.95);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dock-btn > svg,
+  .dock-play {
+    transition: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dock-btn > svg {
+    transition: none;
+  }
+}
+
 /* A title that does not fit scrolls once its copy width, with a pause at each
  * end. Two copies sit side by side, so the reset from the end to the start is
  * the same frame: no visible jump. */

@@ -58,7 +58,7 @@
 {#snippet transport()}
   <div class="flex w-[223px] items-center justify-between">
     <button
-      class="transition-colors hover:text-fg disabled:text-disabled"
+      class="dock-btn dock-chip -m-[4.5px] grid size-7 place-items-center rounded-md transition-colors hover:text-fg disabled:text-disabled"
       class:text-fg={snap.shuffled}
       class:text-muted={!snap.shuffled}
       disabled={queue.length === 0}
@@ -69,7 +69,7 @@
       <Shuffle size="19" weight={snap.shuffled ? "fill" : "regular"} />
     </button>
     <button
-      class="text-fg transition-colors hover:text-muted disabled:text-disabled"
+      class="dock-btn -m-[5px] grid size-8 place-items-center text-fg transition-colors hover:text-muted disabled:text-disabled"
       disabled={queue.length === 0}
       aria-label="Previous track"
       onclick={() => commands.prev()}
@@ -77,7 +77,7 @@
       <SkipBack size="22" weight="fill" />
     </button>
     <button
-      class="grid size-[38px] place-items-center rounded-full bg-fg text-bg-dark transition-colors hover:brightness-95 disabled:bg-disabled"
+      class="dock-play grid size-[38px] cursor-pointer place-items-center rounded-full bg-fg text-bg-dark disabled:cursor-default disabled:bg-disabled"
       disabled={queue.length === 0}
       aria-label={snap.state === "playing" ? "Pause" : "Play"}
       onclick={() => commands.togglePause()}
@@ -89,7 +89,7 @@
       {/if}
     </button>
     <button
-      class="text-fg transition-colors hover:text-muted disabled:text-disabled"
+      class="dock-btn -m-[5px] grid size-8 place-items-center text-fg transition-colors hover:text-muted disabled:text-disabled"
       disabled={queue.length === 0}
       aria-label="Next track"
       onclick={() => commands.next()}
@@ -97,7 +97,7 @@
       <SkipForward size="22" weight="fill" />
     </button>
     <button
-      class="transition-colors hover:text-fg"
+      class="dock-btn dock-chip -m-[4.5px] grid size-7 place-items-center rounded-md transition-colors hover:text-fg"
       class:text-fg={snap.repeat !== "off"}
       class:text-muted={snap.repeat === "off"}
       aria-label={snap.repeat === "off" ? "Repeat off" : "Repeat on"}
@@ -151,7 +151,7 @@
       <span class="truncate text-[11px] text-muted">{snap.artist}</span>
     </div>
     <button
-      class="grid size-8 shrink-0 place-items-center rounded-md text-fg transition-colors hover:bg-hover"
+      class="dock-btn grid size-8 shrink-0 place-items-center rounded-md text-fg transition-colors hover:bg-hover"
       aria-label={liked ? "Unlike" : "Like"}
       title={liked ? "Unlike" : "Like"}
       aria-pressed={liked}
@@ -198,7 +198,7 @@
       : ''}"
   >
     <button
-      class="grid size-[18px] place-items-center text-muted transition-colors hover:text-fg"
+      class="dock-btn dock-chip -m-[5px] grid size-7 place-items-center rounded-md text-muted transition-colors hover:text-fg"
       aria-label="Lyrics"
       title="Lyrics"
       onclick={onlyrics}
@@ -211,7 +211,7 @@
         <span class="absolute inset-0 rounded-lg bg-[#d9d9d9] opacity-30" aria-hidden="true"></span>
       {/if}
       <button
-        class="relative text-muted transition-colors hover:text-fg"
+        class="dock-btn dock-chip grid size-7 place-items-center rounded-md text-muted transition-colors hover:text-fg"
         class:text-fg={queueOpen}
         class:text-muted={!queueOpen}
         aria-label="Queue"
@@ -225,7 +225,7 @@
 
     <div class="flex items-center gap-1.5">
       <button
-        class="grid size-[18px] place-items-center text-muted transition-colors hover:text-fg"
+        class="dock-btn -m-[5px] grid size-7 place-items-center text-muted transition-colors hover:text-fg"
         aria-label={$muted ? "Unmute" : "Mute"}
         onclick={toggleMute}
       >
@@ -256,7 +256,7 @@
   </div>
 
   <button
-    class="absolute right-[18px] top-1/2 grid size-[18px] -translate-y-1/2 place-items-center text-muted transition-colors hover:text-fg"
+    class="dock-btn absolute right-[13px] top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-md text-muted transition-colors hover:text-fg"
     aria-label="Open the full player"
     title="Open the full player"
     onclick={onexpand}

@@ -14,8 +14,8 @@ import (
 // window title, the about box and the dock, so they name the product rather
 // than the framework.
 const (
-	appName        = "Molo"
-	appDescription = "A desktop audio player"
+	appName        = "MoLow"
+	appDescription = "Music player and library manager made with ❤️"
 	// appID is the bundle identity and, on Linux, the desktop entry the
 	// compositor uses to resolve the window and taskbar icon. The engine
 	// library is molo; this app is molow.

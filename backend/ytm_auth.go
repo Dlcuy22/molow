@@ -70,4 +70,12 @@ func (p *ytmProvider) setClient(client *ytm.Client) {
 		return client.LoadPlaylist(ctx, id, cont, nil, nil, false)
 	}
 	p.loadSong = client.LoadSong
+	p.lyrics = client.GetSongLyricsTimed
+
+	// A different session can see different lyrics, so the sheets resolved
+	// under the previous one are dropped rather than reused.
+	p.sheetMu.Lock()
+	p.sheets = make(map[string]*ytm.Lyrics)
+	p.sheetAt = nil
+	p.sheetMu.Unlock()
 }

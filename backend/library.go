@@ -15,6 +15,7 @@ import (
 	"github.com/dlcuy22/molow/internal/library/local"
 	"github.com/dlcuy22/molow/internal/library/sqlite"
 	"github.com/dlcuy22/molow/internal/lyrics"
+	ytm "github.com/dlcuy22/ytm-go"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -384,11 +385,40 @@ func (s *PlayerService) PickLibraryFolder() (string, error) {
 	return dir, nil
 }
 
-// Lyrics returns the sidecar lyric file for a track, read fresh each time. The
-// lookup is forgiving about the file name; no file is a nil document, not an
-// error.
+// Lyrics returns the lyric sheet of a track. A local track reads its sidecar
+// file; a YouTube Music reference resolves the sheet from the catalogue, which
+// is the only remote source and never runs for a local track or album. No
+// lyrics is a nil document, not an error.
 func (s *PlayerService) Lyrics(path string) (*lyrics.Document, error) {
-	return lyrics.Load(path)
+	if !isYTMRef(path) {
+		return lyrics.Load(path)
+	}
+	if s.ytmProv == nil {
+		return nil, nil
+	}
+
+	sheet, ok := s.ytmProv.lyricsFor(s.ctx, path)
+	if !ok || sheet == nil {
+		return nil, nil
+	}
+
+	return ytmLyricsDocument(sheet), nil
+}
+
+// ytmLyricsDocument maps a catalogue sheet onto what the now-playing column
+// draws. The line end has no counterpart in the document, which follows a line
+// by its start time, and the instrumental markers the endpoint emits are
+// dropped so an instrumental intro does not render as a line of its own.
+func ytmLyricsDocument(sheet *ytm.Lyrics) *lyrics.Document {
+	doc := &lyrics.Document{Synced: sheet.Synced, Source: "ytmusic"}
+	for _, line := range sheet.Lines {
+		if line.Text == "" || line.Text == "♪" {
+			continue
+		}
+		doc.Lines = append(doc.Lines, lyrics.Line{TimeMs: line.StartMs, Text: line.Text})
+	}
+
+	return doc
 }
 
 // CoverAccents returns the ranked accent palette of one cover. The album

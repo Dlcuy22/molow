@@ -295,9 +295,10 @@ export function LoadPaths(paths: string[] | null): $CancellablePromise<void> {
 }
 
 /**
- * Lyrics returns the sidecar lyric file for a track, read fresh each time. The
- * lookup is forgiving about the file name; no file is a nil document, not an
- * error.
+ * Lyrics returns the lyric sheet of a track. A local track reads its sidecar
+ * file; a YouTube Music reference resolves the sheet from the catalogue, which
+ * is the only remote source and never runs for a local track or album. No
+ * lyrics is a nil document, not an error.
  */
 export function Lyrics(path: string): $CancellablePromise<lyrics$0.Document | null> {
     return $Call.ByID(3576124737, path);

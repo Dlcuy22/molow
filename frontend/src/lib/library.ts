@@ -346,7 +346,10 @@ export async function loadAccents(coverId: string): Promise<string[]> {
   }
 }
 
-/** loadLyrics reads the sidecar file for a track. */
+/**
+ * loadLyrics reads the lyric sheet of a track: the sidecar file for a local
+ * track, the catalogue sheet for a streamed one.
+ */
 export async function loadLyrics(path: string) {
   if (path === "") {
     return null;

@@ -291,6 +291,14 @@ type ytmProvider struct {
 	avatarMu   sync.Mutex
 	avatarData map[string]string
 
+	// sheetMu guards the lyric sheets. The now-playing column reads a sheet
+	// every time it redraws, and a sheet is immutable for a track, so resolving
+	// one twice only costs requests. A nil entry records a track known to have
+	// no lyrics, so that answer is not fetched again either.
+	sheetMu sync.Mutex
+	sheets  map[string]*ytm.Lyrics
+	sheetAt []string
+
 	log *slog.Logger
 
 	// seamless selects the experimental fast-start path: Open returns a
@@ -300,11 +308,12 @@ type ytmProvider struct {
 	// Open keeps the whole-track fetch exactly as before.
 	seamless bool
 
-	// resolve, search, loadArtist, loadPlaylist and loadSong are the network
-	// calls, indirected so a test can drive the provider and the service without
-	// touching YouTube. In production they are the client's own methods; the
-	// client is also kept so the account methods stay reachable, and so a stored
-	// session can be attached after startup without rebuilding the provider.
+	// resolve, search, loadArtist, loadPlaylist, loadSong and lyrics are the
+	// network calls, indirected so a test can drive the provider and the service
+	// without touching YouTube. In production they are the client's own methods;
+	// the client is also kept so the account methods stay reachable, and so a
+	// stored session can be attached after startup without rebuilding the
+	// provider.
 	//
 	// apiMu guards the whole set: a sign-in swaps every call at once while a
 	// track may be opening or a search running, so readers take a snapshot
@@ -316,6 +325,7 @@ type ytmProvider struct {
 	loadArtist   func(context.Context, string) (*ytm.Artist, error)
 	loadPlaylist func(context.Context, string, *ytm.BuiltInContinuation) (*ytm.Playlist, error)
 	loadSong     func(context.Context, string) (*ytm.Song, error)
+	lyrics       func(context.Context, string) (*ytm.Lyrics, error)
 }
 
 // ytmCalls is one consistent snapshot of the provider's network surface. A
@@ -327,6 +337,7 @@ type ytmCalls struct {
 	loadArtist   func(context.Context, string) (*ytm.Artist, error)
 	loadPlaylist func(context.Context, string, *ytm.BuiltInContinuation) (*ytm.Playlist, error)
 	loadSong     func(context.Context, string) (*ytm.Song, error)
+	lyrics       func(context.Context, string) (*ytm.Lyrics, error)
 }
 
 // calls reads the current network surface under the lock.
@@ -340,6 +351,7 @@ func (p *ytmProvider) calls() ytmCalls {
 		loadArtist:   p.loadArtist,
 		loadPlaylist: p.loadPlaylist,
 		loadSong:     p.loadSong,
+		lyrics:       p.lyrics,
 	}
 }
 
@@ -356,6 +368,7 @@ func newYTMProvider(index *ytmIndex, seamless bool, log *slog.Logger) *ytmProvid
 		index:      index,
 		artists:    newYTMArtistIndex(),
 		avatarData: make(map[string]string),
+		sheets:     make(map[string]*ytm.Lyrics),
 		log:        log,
 		http:       &http.Client{Timeout: ytmHTTPTimeout},
 		seamless:   seamless,
@@ -367,6 +380,7 @@ func newYTMProvider(index *ytmIndex, seamless bool, log *slog.Logger) *ytmProvid
 			return client.LoadPlaylist(ctx, id, cont, nil, nil, false)
 		},
 		loadSong: client.LoadSong,
+		lyrics:   client.GetSongLyricsTimed,
 	}
 }
 

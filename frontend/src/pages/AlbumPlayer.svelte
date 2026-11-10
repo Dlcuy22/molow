@@ -83,7 +83,7 @@
       text={snap.title || "Nothing playing"}
       class="mt-[11px] font-display text-[20px] font-bold leading-tight"
     />
-    <p class="truncate text-[12px] leading-tight">{snap.artist}</p>
+    <p class="truncate text-[12px] leading-tight text-fg/56">{snap.artist}</p>
 
     <div class="mt-[16px] flex items-center justify-between text-[10px] tabular-nums">
       <span>{formatTime(position)}</span>

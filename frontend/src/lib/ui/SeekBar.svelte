@@ -64,6 +64,9 @@
   }
 
   const fillColor = $derived(tone === "fg" ? "bg-fg" : "bg-accent");
+  // The album player's rail is translucent so the artwork shows through; the
+  // dock and floating bars keep the solid track.
+  const trackColor = $derived(tone === "fg" ? "bg-track/27" : "bg-track");
 </script>
 
 {#if variant === "edge"}
@@ -101,7 +104,7 @@
   </div>
 {:else}
   <div class="seek relative flex h-4 w-full items-center" class:seek-instant={scrubbing} class:opacity-40={disabled}>
-    <div class="pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full bg-track">
+    <div class="pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full {trackColor}">
       <div class="seek-fill h-full rounded-full {fillColor}" style="width: {fill * 100}%"></div>
     </div>
     <div class="pointer-events-none absolute inset-x-[5px] top-1/2 h-0">

@@ -4,16 +4,30 @@
 
   // The visualizer brief: bar shape, 150 points by default, a 200px tall bar
   // area, 3.8px bars with rounded ends, and a display that re-ranges to the
-  // loudest recent content.
-  const HEIGHT = 200;
+  // loudest recent content. The album player reuses the same renderer as a
+  // low strip that can drop the frame and the debug readout.
   const LINE_WIDTH = 3.8;
+
+  let {
+    height = 200,
+    color = "",
+    opacity = 1,
+    chrome = true,
+    debug = false,
+  }: {
+    height?: number;
+    color?: string;
+    opacity?: number;
+    chrome?: boolean;
+    debug?: boolean;
+  } = $props();
 
   // Debug overlay: the canvas redraw rate, the display's refresh rate, and the
   // average gap between incoming spectrum frames. A canvas that could redraw at
   // 60 while frames arrive every 90 ms is exactly what "choppy but the FPS
-  // looks fine" means, so the three numbers are shown side by side. Visible on
-  // launch; the D key hides it.
-  let showDebug = $state(true);
+  // looks fine" means, so the three numbers are shown side by side. Off unless
+  // the caller asks for it; the D key toggles it.
+  let showDebug = $state(false);
   let drawFps = $state(0);
   let rafFps = $state(0);
   let gapMs = $state(0);
@@ -22,6 +36,7 @@
   let canvas: HTMLCanvasElement;
 
   onMount(() => {
+    showDebug = debug;
     const ctx = canvas.getContext("2d");
     if (!ctx) {
       return;
@@ -30,7 +45,7 @@
     // Colours come from the design tokens rather than being duplicated here, so
     // the visualizer cannot drift from the palette.
     const styles = getComputedStyle(document.documentElement);
-    const barColor = styles.getPropertyValue("--color-fg").trim() || "#f2f0ea";
+    const barColor = color || styles.getPropertyValue("--color-fg").trim() || "#f2f0ea";
 
     // The buffer is sized to the backing store on resize, so a HiDPI display
     // draws crisp bars instead of a scaled-up blur. The CSS size is cached
@@ -156,9 +171,9 @@
         const barH = Math.max(width, level * (h - width));
         const y = h - base - barH + width / 2;
 
-        // Opacity tracks the level as well as the height, so a quiet band is
-        // dim rather than a short bright stub.
-        ctx.globalAlpha = 0.35 + level * 0.65;
+        // The bar is one flat tone at the caller's opacity: the graph reads as
+        // a single signal, and the level is carried by height alone.
+        ctx.globalAlpha = opacity;
         ctx.beginPath();
         ctx.moveTo(x, h - base);
         ctx.lineTo(x, y);
@@ -169,9 +184,10 @@
     raf = requestAnimationFrame(draw);
 
     // The D key toggles the overlay, which stays out of the way of every
-    // other key the app uses.
+    // other key the app uses. A caller that did not ask for the overlay keeps
+    // the key free.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "d" || e.key === "D") {
+      if (debug && (e.key === "d" || e.key === "D")) {
         showDebug = !showDebug;
       }
     };
@@ -189,12 +205,13 @@
 <!--
   The spectrum is the window's widest element because the brief's 150 points at
   3.8px need width to read as bars rather than a smear. It is the one place the
-  signal colour is white; the accent stays reserved for playback.
+  signal colour is white; the accent stays reserved for playback. The album
+  player asks for the same renderer with no frame and a translucent tone.
 -->
-<div class="rounded-[6px] border border-line bg-bg">
+<div class={chrome ? "rounded-[6px] border border-line bg-bg" : ""}>
   <!-- The canvas is decorative to a screen reader: it carries no information
        the status line does not. -->
-  <canvas bind:this={canvas} class="block w-full" style="height: {HEIGHT}px" aria-hidden="true"
+  <canvas bind:this={canvas} class="block w-full" style="height: {height}px" aria-hidden="true"
   ></canvas>
 </div>
 {#if showDebug}

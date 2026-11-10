@@ -11,10 +11,11 @@
   } from "phosphor-svelte";
   import type { Snapshot } from "../../bindings/github.com/dlcuy22/molow/backend/models";
   import type { Lyrics } from "../lib/types";
-  import { commands } from "../lib/store";
+  import { commands, spectrumConfig } from "../lib/store";
   import { formatTime } from "../lib/format";
   import SeekBar from "../lib/ui/SeekBar.svelte";
   import Marquee from "../lib/ui/Marquee.svelte";
+  import Spectrum from "../lib/components/Spectrum.svelte";
   import Cover from "../lib/ui/Cover.svelte";
 
   let {
@@ -187,4 +188,12 @@
       {/if}
     </div>
   </div>
+
+  <!-- The visualizer strip: the left half only, so it stops at the lyrics
+       column, and flush with the bottom of the frame. -->
+  {#if $spectrumConfig.enabled}
+    <div class="pointer-events-none absolute bottom-0 left-0 right-1/2 pr-6">
+      <Spectrum height={72} opacity={0.5} chrome={false} />
+    </div>
+  {/if}
 </div>

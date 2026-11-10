@@ -74,11 +74,11 @@
        area is taller than the line and the line grows on hover, which is where
        the thumb becomes available. -->
   <div
-    class="seek group absolute inset-x-0 h-3.5 {side === 'top' ? 'top-0' : 'bottom-0'}"
+    class="seek group/seek absolute inset-x-0 h-3.5 {side === 'top' ? 'top-0' : 'bottom-0'}"
     class:seek-instant={scrubbing}
   >
     <div
-      class="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-track transition-[height] duration-150 group-hover:h-[5px]"
+      class="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-track transition-[height] duration-150 group-hover/seek:h-[5px]"
     >
       <div class="seek-fill h-full {fillColor}" style="width: {fill * 100}%"></div>
     </div>

@@ -70,7 +70,9 @@
   <nav class="flex flex-col gap-1 px-3 pt-3.5" aria-label="Main">
     {#each nav as item (item.id)}
       <button
-        class="flex h-8 items-center gap-4 rounded-md text-[12px] transition-colors"
+        class="flex h-8 items-center gap-4 rounded-md text-[12px] transition-colors {active === item.id
+          ? ''
+          : 'hover:bg-hover'}"
         class:bg-selected={active === item.id}
         class:text-fg={active === item.id}
         class:text-muted={active !== item.id}
@@ -154,7 +156,7 @@
   <div class="px-3 pb-3">
     <div class="mx-1 mb-2 h-px bg-line"></div>
     <button
-      class="flex h-8 w-full items-center gap-4 rounded-md px-2.5 text-[12px] text-muted transition-colors hover:text-fg"
+      class="flex h-8 w-full items-center gap-4 rounded-md px-2.5 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
       class:justify-center={collapsed}
       class:px-2={collapsed}
       title="Settings"

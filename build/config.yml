@@ -6,12 +6,12 @@ version: '3'
 # This information is used to generate the build assets.
 info:
   companyName: "Asrian Putra" # The name of the company
-  productName: "Molo" # The name of the application
+  productName: "MoLow" # The name of the application
   productIdentifier: "com.dlcuy22.molow" # The unique product identifier
-  description: "A desktop audio player" # The application description
+  description: "Music player and library manager" # The application description
   copyright: "(c) 2026, Asrian Putra" # Copyright text
   comments: "Audio engine and DSP scripting engine" # Comments
-  version: "0.1.0" # The application version
+  version: "0.3.0" # The application version
 
 # iOS build configuration (uncomment to customise iOS project generation)
 # Note: Keys under `ios` OVERRIDE values under `info` when set.

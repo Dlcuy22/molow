@@ -9,6 +9,48 @@ without a deprecation cycle.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-10
+
+### Added
+
+- YouTube Music lyrics: lyrics resolve for streamed tracks, fetched from the
+  stream through a new `ytm_lyrics` module.
+- A visualizer on the album player: the app's spectrum pump draws a 72 px strip
+  in the foreground colour at half opacity over the artwork gradient, hidden
+  when the visualizer switch is off.
+- A vertical slide for the album player: the sheet glides up when opened and
+  back down when minimized (340 ms ease, disabled under reduced motion).
+- Clickable lyrics: every timed line is a seek control that jumps the track to
+  that second, and the lyric column scrolls freely, gliding back to the sung
+  line two seconds after the browsing stops.
+- The pointer fades out over the album player when the mouse rests for two
+  seconds; any input brings it back.
+- A playback setting "Play/Pause control style": the dock's inverted disc
+  (Default) or the album player's bare glyph (Simple), persisted in the
+  settings file.
+
+### Changed
+
+- Lyrics without timestamps are rejected on load instead of rendering unplayed
+  lines.
+- The album player matches the design: a bare 32 px play glyph, dock-style
+  hover tiles, a marquee title, and the seek rail and artist name dimmed to the
+  frame's 27 % and 56 % opacities.
+- The sidebar's Home, Search, Library and Settings rows take the same hover
+  tint as the rest of the app.
+- The album player's seek bar caps are flattened and shaped by a single clip
+  edge, so filling and track never mismatch at high zoom.
+- The app identity is MoLow, "music player and library manager", in the
+  window, the about box and the bundle metadata; dependencies upgraded (ytm-go
+  1.6.0).
+
+### Fixed
+
+- The dock's seek hover no longer fires from the rest of the dock: the thickened
+  progress line now reacts only to the bar's own hit field, not to the cover
+  thumb or title.
+- The README carries current screenshots of the library and now playing views.
+
 ## [0.2.0] - 2026-11-10
 
 ### Added

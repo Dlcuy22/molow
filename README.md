@@ -66,11 +66,6 @@ the codec implementations in pure Go.
 Every format is normalized to 48 kHz stereo float32 before it reaches the audio
 device, so one output stream serves every track.
 
-## Version 0.2 notice
-
-The UI has been overhauled with a new design that replaces the old one. The new
-UI is still in early development, so some features may be unfinished.
-
 ## Downloads
 
 MoLow will not publish any executable or installer on the releases page until it

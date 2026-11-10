@@ -36,11 +36,11 @@ perfect, and I am working on it.
 ## Screenshots
 
 <p align="center">
-  <img src=".github/assets/screenshot-2.webp" width="880" alt="Home view with recommendations, recently played albums and the player bar">
+  <img src=".github/assets/screenshot-2.webp" width="880" alt="Now playing view with cover art, controls, synced lyrics and the visualizer">
 </p>
 
 <p align="center">
-  <img src=".github/assets/screenshot-1.webp" width="880" alt="Now playing view with cover art, controls and synced lyrics">
+  <img src=".github/assets/screenshot-1.webp" width="880" alt="Library view with the album grid, filter tabs and the player bar">
 </p>
 
 ## Codec and container support

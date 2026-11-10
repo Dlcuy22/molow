@@ -60,11 +60,124 @@
 
   let viewport: HTMLDivElement | undefined = $state();
   let pairEls: HTMLDivElement[] = [];
-  let shift = $state(0);
-  $effect(() => {
+
+  // The lyric column scrolls like a document: any wheel, touch drag or scroll
+  // key hands control to the user for as long as they keep moving, and two
+  // seconds after the movement stops the pane glides back to the sung line.
+  // While the session is live the auto-follow stands down, so the pane never
+  // fights the hand that is scrolling it.
+  let userScrolling = $state(false);
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // The glides — both the auto-follow and the two-second return — are timed
+  // here rather than left to CSS, so the pane's easing never fights a glide
+  // the rAF loop is driving. Any user input cancels the flight immediately.
+  let glideRaf: number | undefined;
+  const GLIDE_MS = 700;
+
+  function stopGlide() {
+    if (glideRaf !== undefined) {
+      cancelAnimationFrame(glideRaf);
+      glideRaf = undefined;
+    }
+  }
+
+  function glideTo(target: number) {
+    if (!viewport) return;
+    stopGlide();
+    const vp = viewport;
+    const from = vp.scrollTop;
+    if (Math.abs(target - from) < 2) {
+      vp.scrollTop = target;
+      return;
+    }
+    const start = performance.now();
+    // Ease in-out cubic: the pane leaves and arrives without a jerk, which a
+    // single-ease curve reads as the sheet settling rather than snapping.
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / GLIDE_MS);
+      const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      vp.scrollTop = from + (target - from) * eased;
+      glideRaf = t < 1 ? requestAnimationFrame(step) : undefined;
+    };
+    glideRaf = requestAnimationFrame(step);
+  }
+
+  function beginUserScroll() {
+    userScrolling = true;
+    stopGlide();
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(returnToLine, 2000);
+  }
+
+  function endUserScroll() {
+    userScrolling = false;
+    clearTimeout(idleTimer);
+  }
+
+  function returnToLine() {
+    endUserScroll();
     const el = pairEls[active];
-    if (el) {
-      shift = 360 - el.offsetTop - el.offsetHeight / 2;
+    if (el && el.isConnected && viewport) {
+      centerOn(el);
+    }
+  }
+
+  // A line's scroll target puts it in the vertical centre of the pane, the
+  // same spot the old transform put the active line at. The positions are
+  // captured once at glide start, so mid-flight frames stay on the line
+  // originally aimed at.
+  function centerOn(el: HTMLElement) {
+    if (!viewport) return;
+    const vp = viewport.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    glideTo(viewport.scrollTop + (r.top - vp.top) - vp.height / 2 + r.height / 2);
+  }
+
+  // Wheel, touch and scroll keys arm the user session. A CSS smooth scroll —
+  // the pane's own gliding — fires scroll events too, so raw scroll events
+  // never count as user intent.
+  const armKeys = new Set([
+    "ArrowUp",
+    "ArrowDown",
+    "PageUp",
+    "PageDown",
+    "Home",
+    "End",
+    " ",
+  ]);
+
+  function onwheel(e: WheelEvent) {
+    if (e.deltaY !== 0) beginUserScroll();
+  }
+
+  function onkey(e: KeyboardEvent) {
+    if (armKeys.has(e.key)) beginUserScroll();
+  }
+
+  // A fresh track clears any browse session and any flight in progress.
+  $effect(() => {
+    void lyrics;
+    endUserScroll();
+    stopGlide();
+  });
+
+  // The idle timer and the glide must not outlive the pane.
+  $effect(() => {
+    return () => {
+      clearTimeout(idleTimer);
+      stopGlide();
+    };
+  });
+
+  // Auto-follow: scroll the active line to centre whenever the song moves and
+  // the user is not browsing. Clicks are handled by their own handler, which
+  // seeks first, so the line the user chose has become the active one.
+  $effect(() => {
+    if (userScrolling) return;
+    const el = pairEls[active];
+    if (el && el.isConnected) {
+      centerOn(el);
     }
   });
 </script>
@@ -161,16 +274,25 @@
   </div>
 
   <div class="absolute inset-y-0 left-1/2 right-0 pr-9">
-    <div bind:this={viewport} class="h-full overflow-hidden">
-      {#if lines.length === 0}
+    <!-- A scroll container: the touch and key handlers exist to detect the
+         user taking over the scroll, not to change the page. -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div
+      bind:this={viewport}
+      class="lyrics-scroll h-full overflow-y-auto overscroll-contain"
+      role="region"
+      aria-label="Lyrics"
+      tabindex="-1"
+      onwheel={onwheel}
+      ontouchmove={beginUserScroll}
+      onkeydown={onkey}
+    >
+    {#if lines.length === 0}
         <div class="flex h-full items-center pl-2 text-[12px] text-fg/50">
           No lyrics for this track.
         </div>
       {:else}
-        <div
-          class="flex flex-col gap-[22px] pl-2 transition-transform duration-500 ease-out"
-          style="transform: translateY({shift}px)"
-        >
+        <div class="flex flex-col gap-[22px] py-[calc(50vh-22px)] pl-2">
           {#each lines as line, i (line.timeMs + ":" + i)}
             <div
               bind:this={pairEls[i]}
@@ -178,7 +300,24 @@
               class:opacity-100={i === active}
               class:opacity-[0.28]={i !== active}
             >
-              <p class="font-jp text-[28px] font-medium leading-[1.4]">{line.text}</p>
+              {#if line.timeMs >= 0}
+                <!-- A timed line is a seek control: choosing it jumps the track
+                     to that second, ends any browse session and centres the
+                     chosen line. -->
+                <button
+                  class="cursor-pointer rounded-md border-0 bg-transparent p-0 text-left font-jp text-[28px] font-medium leading-[1.4] text-inherit transition-opacity hover:opacity-80"
+                  onclick={() => {
+                    onseek(line.timeMs);
+                    endUserScroll();
+                    const el = pairEls[i];
+                    if (el && el.isConnected) centerOn(el);
+                  }}
+                >
+                  {line.text}
+                </button>
+              {:else}
+                <p class="font-jp text-[28px] font-medium leading-[1.4]">{line.text}</p>
+              {/if}
               {#if line.translation}
                 <p
                   class="text-[26px] font-semibold leading-[1.4]"

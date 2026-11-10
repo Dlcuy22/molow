@@ -198,6 +198,16 @@
   }
 }
 
+/* The lyric column scrolls natively, but with no visible scrollbar: the wheel,
+ * touch and keys are the scroll drivers, and programmatic gliding can be told
+ * apart from them because it never raises those input events. */
+.lyrics-scroll {
+  scrollbar-width: none;
+}
+.lyrics-scroll::-webkit-scrollbar {
+  display: none;
+}
+
 /* The window is an app frame, not a document: the text is not selectable, and
  * the empty chrome drags the window. */
 html,

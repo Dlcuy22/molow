@@ -462,6 +462,7 @@
       mode="docked"
       {queueOpen}
       {liked}
+      playStyle={$appSettings.playback.playPauseStyle === "simple" ? "simple" : "default"}
       onexpand={openPlayer}
       onqueue={toggleQueue}
       onlyrics={openPlayer}

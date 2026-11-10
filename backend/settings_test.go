@@ -29,6 +29,9 @@ func TestAppSettingsDefaultsAreOffAndReference(t *testing.T) {
 	if got.Playback.Repeat != "off" {
 		t.Fatalf("repeat = %q, want off", got.Playback.Repeat)
 	}
+	if got.Playback.PlayPauseStyle != "default" {
+		t.Fatalf("playPauseStyle = %q, want default", got.Playback.PlayPauseStyle)
+	}
 	if !got.General.VisualizerEnabled {
 		t.Fatal("visualizer should default to on")
 	}
@@ -46,8 +49,9 @@ func TestAppSettingsRoundTrips(t *testing.T) {
 
 	want := AppSettings{
 		Playback: PlaybackSettings{
-			Crossfade: CrossfadeSettings{Enabled: true, DurationMs: 8000, SkipSameAlbum: false},
-			Repeat:    "one",
+			Crossfade:      CrossfadeSettings{Enabled: true, DurationMs: 8000, SkipSameAlbum: false},
+			Repeat:         "one",
+			PlayPauseStyle: "simple",
 		},
 		General: GeneralSettings{VisualizerEnabled: false},
 	}
@@ -61,6 +65,9 @@ func TestAppSettingsRoundTrips(t *testing.T) {
 	}
 	if got.Playback.Repeat != want.Playback.Repeat {
 		t.Fatalf("loaded repeat = %q, want %q", got.Playback.Repeat, want.Playback.Repeat)
+	}
+	if got.Playback.PlayPauseStyle != want.Playback.PlayPauseStyle {
+		t.Fatalf("loaded playPauseStyle = %q, want %q", got.Playback.PlayPauseStyle, want.Playback.PlayPauseStyle)
 	}
 	if got.General.VisualizerEnabled != want.General.VisualizerEnabled {
 		t.Fatalf("loaded visualizer = %v, want %v", got.General.VisualizerEnabled, want.General.VisualizerEnabled)
@@ -91,6 +98,9 @@ func TestLoadAppSettingsNormalizesAnOldSchemaFile(t *testing.T) {
 	if got.Playback.Repeat != "off" {
 		t.Fatalf("repeat = %q, want off for an old-schema file", got.Playback.Repeat)
 	}
+	if got.Playback.PlayPauseStyle != "default" {
+		t.Fatalf("playPauseStyle = %q, want default for an old-schema file", got.Playback.PlayPauseStyle)
+	}
 	if !got.General.VisualizerEnabled {
 		t.Fatal("visualizer = false, want on for a file that predates the field")
 	}
@@ -117,6 +127,29 @@ func TestLoadAppSettingsNormalizesAnUnknownRepeat(t *testing.T) {
 
 	if got := loadAppSettings().Playback.Repeat; got != "off" {
 		t.Fatalf("repeat = %q, want off for an unknown value", got)
+	}
+}
+
+// TestLoadAppSettingsNormalizesAnUnknownPlayPauseStyle proves the style falls
+// back to the default disc, so the panel always has a valid option selected.
+func TestLoadAppSettingsNormalizesAnUnknownPlayPauseStyle(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+
+	p, err := settingsPath()
+	if err != nil {
+		t.Fatalf("settingsPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"version":1,"playback":{"crossfade":{"durationMs":6000},"playPauseStyle":"fancy"}}`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := loadAppSettings().Playback.PlayPauseStyle; got != "default" {
+		t.Fatalf("playPauseStyle = %q, want default for an unknown value", got)
 	}
 }
 

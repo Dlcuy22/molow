@@ -115,6 +115,15 @@
     });
   }
 
+  // setPlayPauseStyle writes which play/pause control the dock draws: the
+  // inverted disc it shipped with, or the album player's bare glyph.
+  function setPlayPauseStyle(style: string) {
+    commands.setAppSettings({
+      ...$appSettings,
+      playback: { ...$appSettings.playback, playPauseStyle: style },
+    });
+  }
+
   // setVisualizer persists the flag and pokes the running pump at once. The
   // persisted value is what a restart reads; the ConfigureSpectrum call is what
   // hides the spectrum now, without waiting for the next save to reach Go.
@@ -235,6 +244,23 @@
                     { value: "one", label: "One" },
                   ]}
                   onchange={(v) => setRepeat(v)}
+                />
+              {/snippet}
+            </SettingRow>
+
+            <SettingRow
+              label="Play/Pause control style"
+              description="Default is the inverted disc in the dock; Simple is the bare glyph the album player uses."
+            >
+              {#snippet control()}
+                <Picker
+                  label="Play/Pause control style"
+                  value={$appSettings.playback.playPauseStyle}
+                  options={[
+                    { value: "default", label: "Default" },
+                    { value: "simple", label: "Simple" },
+                  ]}
+                  onchange={(v) => setPlayPauseStyle(v)}
                 />
               {/snippet}
             </SettingRow>

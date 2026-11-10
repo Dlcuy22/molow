@@ -109,11 +109,13 @@
 .dock-chip:hover:not(:disabled) {
   background-color: var(--color-hover);
 }
-/* The play disc is a surface, not a glyph, so the whole disc grows a little
- * under the pointer. The invisible ring around it gives the disc a 44 px hit
- * target without making the disc itself larger. */
+/* The default play control is a disc, a surface rather than a glyph, so the
+ * whole disc grows a little under the pointer. The invisible ring gives it a
+ * 44 px hit target without making the disc itself larger. The simple style
+ * uses .dock-btn and .dock-chip like every other glyph. */
 .dock-play {
   position: relative;
+  cursor: pointer;
   transition:
     scale 140ms ease,
     filter 140ms ease;
@@ -128,14 +130,12 @@
   scale: 1.05;
   filter: brightness(0.95);
 }
+.dock-play:disabled {
+  cursor: default;
+}
 @media (prefers-reduced-motion: reduce) {
   .dock-btn > svg,
   .dock-play {
-    transition: none;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .dock-btn > svg {
     transition: none;
   }
 }

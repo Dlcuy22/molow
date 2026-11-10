@@ -44,10 +44,13 @@ type AppSettings struct {
 
 // PlaybackSettings is the Playback tab. Crossfade is the track overlap; Repeat
 // is the engine's repeat mode as the "off"/"all"/"one" strings, the same
-// spelling the snapshot publishes.
+// spelling the snapshot publishes. PlayPauseStyle chooses the dock's primary
+// action: "default" is the inverted disc, "simple" is the bare album-player
+// glyph.
 type PlaybackSettings struct {
-	Crossfade CrossfadeSettings `json:"crossfade"`
-	Repeat    string            `json:"repeat"`
+	Crossfade      CrossfadeSettings `json:"crossfade"`
+	Repeat         string            `json:"repeat"`
+	PlayPauseStyle string            `json:"playPauseStyle"`
 }
 
 // StreamSettings is the Stream tab. It is empty today: the YouTube Music and
@@ -84,7 +87,8 @@ func defaultAppSettings() AppSettings {
 				DurationMs:    molo.DefaultCrossfadeMs,
 				SkipSameAlbum: true,
 			},
-			Repeat: "off",
+			Repeat:         "off",
+			PlayPauseStyle: "default",
 		},
 		General: GeneralSettings{
 			VisualizerEnabled: true,
@@ -178,6 +182,15 @@ func normalizeAppSettings(s AppSettings, present map[string]bool) AppSettings {
 		s.Playback.Repeat = def.Playback.Repeat
 	} else if _, err := repeatFromName(s.Playback.Repeat); err != nil {
 		s.Playback.Repeat = def.Playback.Repeat
+	}
+
+	// A file written before the control-style field existed gets the disc,
+	// which is what the dock shipped with. Only the two known names are kept,
+	// so a hand-edit cannot put the panel in a state with no selection.
+	switch s.Playback.PlayPauseStyle {
+	case "default", "simple":
+	default:
+		s.Playback.PlayPauseStyle = def.Playback.PlayPauseStyle
 	}
 
 	// An install that predates the field keeps its visualizer on; only an

@@ -103,6 +103,7 @@ export const appSettings = writable<AppSettings>({
   playback: {
     crossfade: { enabled: false, durationMs: 5000, skipSameAlbum: true },
     repeat: "off",
+    playPauseStyle: "default",
   },
   stream: {},
   general: { visualizerEnabled: true },

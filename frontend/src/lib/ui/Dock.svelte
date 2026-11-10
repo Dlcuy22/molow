@@ -27,6 +27,7 @@
     mode = "docked",
     queueOpen = false,
     liked = false,
+    playStyle = "default",
     onexpand = () => {},
     onqueue = () => {},
     onlyrics = () => {},
@@ -36,6 +37,7 @@
     mode?: "docked" | "top" | "floating";
     queueOpen?: boolean;
     liked?: boolean;
+    playStyle?: "default" | "simple";
     onexpand?: () => void;
     onqueue?: () => void;
     onlyrics?: () => void;
@@ -43,6 +45,7 @@
   } = $props();
 
   const floating = $derived(mode === "floating");
+  const simplePlay = $derived(playStyle === "simple");
   const queue = $derived(snap.queue ?? []);
   const live = $derived(isActive(snap.state));
   const duration = $derived(snap.duration > 0 ? snap.duration : 0);
@@ -77,15 +80,17 @@
       <SkipBack size="22" weight="fill" />
     </button>
     <button
-      class="dock-play grid size-[38px] cursor-pointer place-items-center rounded-full bg-fg text-bg-dark disabled:cursor-default disabled:bg-disabled"
+      class={simplePlay
+        ? "dock-btn dock-chip -m-[4px] grid size-10 place-items-center rounded-md text-fg transition-colors disabled:text-disabled"
+        : "dock-play grid size-[38px] place-items-center rounded-full bg-fg text-bg-dark disabled:bg-disabled"}
       disabled={queue.length === 0}
       aria-label={snap.state === "playing" ? "Pause" : "Play"}
       onclick={() => commands.togglePause()}
     >
       {#if snap.state === "playing"}
-        <Pause size="17" weight="fill" />
+        <Pause size={simplePlay ? 32 : 17} weight="fill" />
       {:else}
-        <Play size="17" weight="fill" />
+        <Play size={simplePlay ? 32 : 17} weight="fill" />
       {/if}
     </button>
     <button
@@ -116,8 +121,9 @@
 <!--
   Dock: the persistent bar. Docked, the progress is the top edge (or the bottom
   edge when the dock sits above the content); floating, there is room for the
-  bar under the transport with both times. The play disc is the only inverted
-  surface in the bar.
+  bar under the transport with both times. Every control is a foreground glyph
+  except the default play-pause, which is the inverted disc; the Simple style
+  swaps it for the album player's bare 32 px glyph.
 -->
 <div
   class="group relative h-[95px] w-full bg-bg text-fg"

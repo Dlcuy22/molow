@@ -202,11 +202,14 @@ export interface Options {
 /**
  * PlaybackSettings is the Playback tab. Crossfade is the track overlap; Repeat
  * is the engine's repeat mode as the "off"/"all"/"one" strings, the same
- * spelling the snapshot publishes.
+ * spelling the snapshot publishes. PlayPauseStyle chooses the dock's primary
+ * action: "default" is the inverted disc, "simple" is the bare album-player
+ * glyph.
  */
 export interface PlaybackSettings {
     "crossfade": CrossfadeSettings;
     "repeat": string;
+    "playPauseStyle": string;
 }
 
 /**

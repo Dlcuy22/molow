@@ -22,12 +22,14 @@
     snap,
     lyrics = null,
     stops = [],
+    open = true,
     onclose = () => {},
     onseek = (_ms: number) => {},
   }: {
     snap: Snapshot;
     lyrics?: Lyrics | null;
     stops?: string[];
+    open?: boolean;
     onclose?: () => void;
     onseek?: (ms: number) => void;
   } = $props();
@@ -67,7 +69,11 @@
   });
 </script>
 
-<div class="relative h-full w-full overflow-hidden text-fg" style="background:{background}">
+<div
+  class="album-sheet h-full w-full overflow-hidden text-fg"
+  class:open
+  style="background:{background}"
+>
   <button
     class="dock-btn dock-chip absolute right-[13px] top-[13px] z-20 grid size-8 place-items-center rounded-md text-fg transition-colors"
     aria-label="Close the full player"

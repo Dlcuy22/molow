@@ -62,6 +62,10 @@
   let queueOpen = $state(false);
   let queuePinned = $state(false);
   let playerOpen = $state(false);
+  // Mounted stays true through the closing transition, so the sheet can
+  // animate down before it is removed.
+  let playerMounted = $state(false);
+  let playerTimer: ReturnType<typeof setTimeout> | undefined;
 
   let lyrics = $state<Lyrics | null>(null);
   let accents = $state<string[]>([]);
@@ -174,12 +178,26 @@
     if (hasQueue) {
       closeQueue();
       playerOpen = true;
+      playerMounted = true;
     }
   }
 
   function openAlbum(album: Album) {
     void playAlbum(album);
     playerOpen = true;
+    playerMounted = true;
+  }
+
+  // closePlayer lowers the sheet before unmounting it: the CSS transition owns
+  // the motion, and the timeout only decides when the node can go away.
+  function closePlayer() {
+    playerOpen = false;
+    clearTimeout(playerTimer);
+    playerTimer = setTimeout(() => {
+      if (!playerOpen) {
+        playerMounted = false;
+      }
+    }, 340);
   }
 
   function playLibraryTrack(track: Track) {
@@ -373,7 +391,7 @@
   onpointerdown={outside}
   onkeydown={(e) => {
     if (e.key === "Escape" && playerOpen) {
-      playerOpen = false;
+      closePlayer();
     }
     if (e.key === "Escape" && searchOpen) {
       searchOpen = false;
@@ -381,108 +399,109 @@
   }}
 />
 
-{#if playerOpen}
+<div class="flex h-full flex-col bg-bg-dark text-fg" inert={playerMounted}>
+  <div class="flex min-h-0 flex-1">
+    <Sidebar
+      bind:width={sidebarWidth}
+      active={tab}
+      playlists={$playlistRows}
+      libraries={$libraries.map((l) => ({ id: l.id, name: l.name }))}
+      activeLibrary={$libraryId}
+      onswitch={(id) => void selectLibrary(id)}
+      onnav={(next) => {
+        tab = next === "library" ? "library" : "home";
+        searchOpen = false;
+      }}
+      onsearch={() => {
+        searchOpen = !searchOpen;
+        addOpen = false;
+      }}
+      onsettings={() => (settingsOpen = true)}
+    />
+
+    <main class="relative min-w-0 flex-1 overflow-hidden">
+      {#if tab === "home"}
+        <HomePage
+          shelves={$homePage.shelves}
+          {greeting}
+          onplay={playLibraryTrack}
+          onopenAlbum={openAlbum}
+          onplayAlbum={(a) => void playAlbum(a)}
+          onadd={() => void addLibrary()}
+        />
+      {:else}
+        <LibraryPage
+          shelves={$libraryPage.shelves}
+          {filter}
+          loading={$libraryLoading}
+          onfilter={setFilter}
+          onadd={() => (addOpen = !addOpen)}
+          onopenAlbum={openAlbum}
+          onplayAlbum={(a) => void playAlbum(a)}
+          onplay={playLibraryTrack}
+          onopenPlaylist={(id) => void loadLibrary("playlist:" + id)}
+        />
+      {/if}
+
+      {#if searchOpen}
+        <SearchOverlay
+          left={12}
+          onclose={() => (searchOpen = false)}
+          onplay={(t) => {
+            void playTrack(t);
+            searchOpen = false;
+          }}
+        />
+      {/if}
+
+      {#if queueOpen}
+        <QueueWindow
+          rows={queue}
+          pinned={queuePinned}
+          onpin={() => (queuePinned = !queuePinned)}
+          onplay={(i) => commands.playIndex(i)}
+          onmove={(from, to) => commands.moveQueue(from, to)}
+        />
+      {/if}
+    </main>
+  </div>
+
+  <Dock
+    {snap}
+    mode="docked"
+    {queueOpen}
+    {liked}
+    playStyle={$appSettings.playback.playPauseStyle === "simple" ? "simple" : "default"}
+    onexpand={openPlayer}
+    onqueue={toggleQueue}
+    onlyrics={openPlayer}
+    onlike={toggleLike}
+  />
+
+  {#if addOpen}
+    <AddMenu
+      onimport={() => {
+        void addLibrary();
+        addOpen = false;
+      }}
+      onytm={() => {
+        openPalette("ytm", false);
+        addOpen = false;
+      }}
+      onclose={() => (addOpen = false)}
+    />
+  {/if}
+</div>
+
+{#if playerMounted}
   <AlbumPlayer
     {snap}
     {lyrics}
     stops={accents}
-    onclose={() => (playerOpen = false)}
+    open={playerOpen}
+    onclose={closePlayer}
     onseek={(ms) => commands.seek(ms)}
   />
-{:else}
-  <div class="flex h-full flex-col bg-bg-dark text-fg">
-    <div class="flex min-h-0 flex-1">
-      <Sidebar
-        bind:width={sidebarWidth}
-        active={tab}
-        playlists={$playlistRows}
-        libraries={$libraries.map((l) => ({ id: l.id, name: l.name }))}
-        activeLibrary={$libraryId}
-        onswitch={(id) => void selectLibrary(id)}
-        onnav={(next) => {
-          tab = next === "library" ? "library" : "home";
-          searchOpen = false;
-        }}
-        onsearch={() => {
-          searchOpen = !searchOpen;
-          addOpen = false;
-        }}
-        onsettings={() => (settingsOpen = true)}
-      />
-
-      <main class="relative min-w-0 flex-1 overflow-hidden">
-        {#if tab === "home"}
-          <HomePage
-            shelves={$homePage.shelves}
-            {greeting}
-            onplay={playLibraryTrack}
-            onopenAlbum={openAlbum}
-            onplayAlbum={(a) => void playAlbum(a)}
-            onadd={() => void addLibrary()}
-          />
-        {:else}
-          <LibraryPage
-            shelves={$libraryPage.shelves}
-            {filter}
-            loading={$libraryLoading}
-            onfilter={setFilter}
-            onadd={() => (addOpen = !addOpen)}
-            onopenAlbum={openAlbum}
-            onplayAlbum={(a) => void playAlbum(a)}
-            onplay={playLibraryTrack}
-            onopenPlaylist={(id) => void loadLibrary("playlist:" + id)}
-          />
-        {/if}
-
-        {#if searchOpen}
-          <SearchOverlay
-            left={12}
-            onclose={() => (searchOpen = false)}
-            onplay={(t) => {
-              void playTrack(t);
-              searchOpen = false;
-            }}
-          />
-        {/if}
-
-        {#if queueOpen}
-          <QueueWindow
-            rows={queue}
-            pinned={queuePinned}
-            onpin={() => (queuePinned = !queuePinned)}
-            onplay={(i) => commands.playIndex(i)}
-            onmove={(from, to) => commands.moveQueue(from, to)}
-          />
-        {/if}
-      </main>
-    </div>
-
-    <Dock
-      {snap}
-      mode="docked"
-      {queueOpen}
-      {liked}
-      playStyle={$appSettings.playback.playPauseStyle === "simple" ? "simple" : "default"}
-      onexpand={openPlayer}
-      onqueue={toggleQueue}
-      onlyrics={openPlayer}
-      onlike={toggleLike}
-    />
-
-    {#if addOpen}
-      <AddMenu
-        onimport={() => {
-          void addLibrary();
-          addOpen = false;
-        }}
-        onytm={() => {
-          openPalette("ytm", false);
-          addOpen = false;
-        }}
-        onclose={() => (addOpen = false)}
-      />
-    {/if}
-  </div>
 {/if}
 
 <CommandPalette

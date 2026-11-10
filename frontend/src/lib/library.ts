@@ -349,13 +349,18 @@ export async function loadAccents(coverId: string): Promise<string[]> {
 /**
  * loadLyrics reads the lyric sheet of a track: the sidecar file for a local
  * track, the catalogue sheet for a streamed one.
+ *
+ * An untimed sheet is rejected as no lyrics. The player follows a line by its
+ * timestamp, so every line of a plain sheet would sit at the same position and
+ * the column would look stuck rather than read as text.
  */
 export async function loadLyrics(path: string) {
   if (path === "") {
     return null;
   }
   try {
-    return await PlayerService.Lyrics(path);
+    const doc = await PlayerService.Lyrics(path);
+    return doc?.synced ? doc : null;
   } catch {
     return null;
   }

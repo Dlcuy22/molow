@@ -180,11 +180,40 @@
       centerOn(el);
     }
   });
+
+  // The pointer dims out when the mouse rests: the artwork shows clean while
+  // the hand is still. Any input — a move, a press, a wheel turn or a key —
+  // wakes it again.
+  const CURSOR_IDLE_MS = 2000;
+  let cursorIdle = $state(false);
+  let cursorTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function wakeCursor() {
+    cursorIdle = false;
+    clearTimeout(cursorTimer);
+    cursorTimer = setTimeout(() => (cursorIdle = true), CURSOR_IDLE_MS);
+  }
+
+  // The idle clock runs from the moment the sheet is up and is torn down with
+  // it, so a closing sheet never leaves the pointer hidden.
+  wakeCursor();
+  $effect(() => {
+    if (!open) wakeCursor();
+    return () => clearTimeout(cursorTimer);
+  });
 </script>
+
+<svelte:window
+  onmousemove={wakeCursor}
+  onpointerdown={wakeCursor}
+  onwheel={wakeCursor}
+  onkeydown={wakeCursor}
+/>
 
 <div
   class="album-sheet h-full w-full overflow-hidden text-fg"
   class:open
+  class:cursor-idle={cursorIdle}
   style="background:{background}"
 >
   <button

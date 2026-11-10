@@ -198,6 +198,13 @@
   }
 }
 
+/* The pointer hides across the whole sheet while the mouse rests, covering
+ * children that carry their own cursor classes. */
+.cursor-idle,
+.cursor-idle * {
+  cursor: none !important;
+}
+
 /* The lyric column scrolls natively, but with no visible scrollbar: the wheel,
  * touch and keys are the scroll drivers, and programmatic gliding can be told
  * apart from them because it never raises those input events. */

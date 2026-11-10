@@ -4,8 +4,8 @@ github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNU
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
 github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8 h1:OtSeLS5y0Uy01jaKK4mA/WVIYtpzVm63vLVAPzJXigg=
 github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8/go.mod h1:apkPC/CR3s48O2D7Y++n1XWEpgPNNCjXYga3PPbJe2E=
-github.com/dlcuy22/ytm-go v1.5.0 h1:5SIy/Y/hR6Y5YCJm8cHhCXaokfG4+MsgPZXIO6Zxeog=
-github.com/dlcuy22/ytm-go v1.5.0/go.mod h1:TaivXqY6Vqv9A2ybOooua0NI0YPk/59rYk4Vc1gnMu4=
+github.com/dlcuy22/ytm-go v1.6.0 h1:UKMN+NDmWZZsQETATGSrobmv2h69hJxpy98rI9cfEO4=
+github.com/dlcuy22/ytm-go v1.6.0/go.mod h1:TaivXqY6Vqv9A2ybOooua0NI0YPk/59rYk4Vc1gnMu4=
 github.com/ebitengine/oto/v3 v3.5.1 h1:7gL5DxxSQp8S1Me2jDSp+gSAyondYxpjM5RPBBqLT0c=
 github.com/ebitengine/oto/v3 v3.5.1/go.mod h1:Elkm7yzTRns3w2efvibzVOoQ65YOwmec9a76dCiK10o=
 github.com/ebitengine/purego v0.11.2 h1:WWiTx8rD8zYdOwSj8O/NiNbsOvSAgJMTlyV1XlbUSeU=

@@ -1,9 +1,4 @@
 // Package color extracts a deterministic palette from artwork.
-//
-// The method is the reference implementation in
-// tools/dominant_color/dominant_color.py: a binned histogram over a bounded
-// thumbnail. It does not cluster and has no random seed, so the same cover
-// always yields the same ranked colours.
 package color
 
 import (

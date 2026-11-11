@@ -40,7 +40,12 @@ func Run(assets embed.FS) {
 	// never pops a console window.
 	consoleAttached = attachConsole()
 
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	level := slog.LevelInfo
+	// If enabled, a log with log level under INFO will show up in logs.
+	if os.Getenv("MOLOW_DEBUG") != "" {
+		level = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 
 	// Raise scheduling priority before the engine builds its audio thread, so
 	// the thread inherits it. The report names the platform and the scheduling

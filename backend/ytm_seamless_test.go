@@ -292,6 +292,58 @@ func TestYTMSeamlessReopenStartsAtFrameZero(t *testing.T) {
 // TestYTMSeamlessDisabledKeepsFullFetch pins the default: with the switch off
 // there is no Upgrade and the opener fetches the whole track, exactly as the
 // provider behaved before the fast path existed.
+// TestYTMSeamlessRecoversFromARefusedStream covers the fast-start path: the
+// refusal arrives before the first chunk, so the download restarts under a fresh
+// session with nothing in the buffer to throw away.
+func TestYTMSeamlessRecoversFromARefusedStream(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/refused" {
+			w.WriteHeader(http.StatusForbidden)
+
+			return
+		}
+		w.Header().Set("Content-Type", "audio/webm")
+		_, _ = w.Write(fixtureBytes(t))
+	}))
+	t.Cleanup(srv.Close)
+
+	var rotations atomic.Int32
+	p := &ytmProvider{
+		index:    newYTMIndex(),
+		http:     srv.Client(),
+		seamless: true,
+		resolve: func(context.Context, string) (*ytm.Streams, error) {
+			// The retry resolves after the rotation, so the URL is the one the
+			// server serves.
+			if rotations.Load() == 0 {
+				return ytmStreams(srv.URL+"/refused", time.Now().Add(time.Hour)), nil
+			}
+
+			return ytmStreams(srv.URL+"/media", time.Now().Add(time.Hour)), nil
+		},
+		rotate: func() { rotations.Add(1) },
+	}
+
+	src, err := p.Open(context.Background(), "ytm:abc123")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	dec, err := src.Opener(make(chan struct{}))
+	if err != nil {
+		t.Fatalf("Opener: %v", err)
+	}
+	defer dec.Close()
+
+	if n, err := dec.ReadFrames(make([]float32, 4800)); err != nil || n == 0 {
+		t.Fatalf("ReadFrames = (%d, %v), want audio after the retry", n, err)
+	}
+	if got := rotations.Load(); got != 1 {
+		t.Fatalf("session rotations = %d, want 1", got)
+	}
+}
+
+// TestYTMSeamlessDisabledKeepsFullFetch proves the switch is the whole path:
+// with seamless off the opener fetches the track before returning a decoder.
 func TestYTMSeamlessDisabledKeepsFullFetch(t *testing.T) {
 	srv, ranged := mediaServer(t)
 	p := &ytmProvider{

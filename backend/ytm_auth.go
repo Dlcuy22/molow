@@ -52,25 +52,14 @@ func (s *PlayerService) restoreYTM() {
 	}()
 }
 
-// SetLogger gives the provider a logger, so its parse failures and request
-// problems are visible instead of silent.
+// setClient swaps in the client built for a signed-in session, and drops the
+// lyric sheets because a different session can see different ones.
 func (p *ytmProvider) setClient(client *ytm.Client) {
 	if p == nil || client == nil {
 		return
 	}
 
-	client.SetLogger(p.log)
-	p.apiMu.Lock()
-	defer p.apiMu.Unlock()
-	p.client = client
-	p.resolve = client.GetStream
-	p.search = client.Search
-	p.loadArtist = client.LoadArtist
-	p.loadPlaylist = func(ctx context.Context, id string, cont *ytm.BuiltInContinuation) (*ytm.Playlist, error) {
-		return client.LoadPlaylist(ctx, id, cont, nil, nil, false)
-	}
-	p.loadSong = client.LoadSong
-	p.lyrics = client.GetSongLyricsTimed
+	p.installClient(client)
 
 	// A different session can see different lyrics, so the sheets resolved
 	// under the previous one are dropped rather than reused.

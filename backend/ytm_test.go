@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -176,6 +177,125 @@ func TestYTMProviderReResolvesExpiredURL(t *testing.T) {
 
 	if got := calls.Load(); got != 2 {
 		t.Fatalf("resolve calls = %d, want 2 (one at open, one on expiry)", got)
+	}
+}
+
+// TestYTMProviderRecoversFromARefusedStream pins the reason a 403 is not fatal:
+// the refusal belongs to the visitor that minted the URL, so one session
+// rotation and one retry turn it into a working track without an app restart.
+func TestYTMProviderRecoversFromARefusedStream(t *testing.T) {
+	// The same media path refuses the first URL and serves the second, which is
+	// how a rotated URL behaves after the visitor changes.
+	var refused, served atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/refused" {
+			refused.Store(true)
+			w.WriteHeader(http.StatusForbidden)
+
+			return
+		}
+		served.Store(true)
+		w.Header().Set("Content-Type", "audio/webm")
+		_, _ = w.Write(fixtureBytes(t))
+	}))
+	t.Cleanup(srv.Close)
+
+	var rotations atomic.Int32
+	var resolves atomic.Int32
+	p := &ytmProvider{
+		index: newYTMIndex(),
+		http:  srv.Client(),
+		resolve: func(context.Context, string) (*ytm.Streams, error) {
+			// The first URL is the refused one; a fresh session mints the other.
+			if resolves.Add(1) == 1 {
+				return ytmStreams(srv.URL+"/refused", time.Now().Add(time.Hour)), nil
+			}
+
+			return ytmStreams(srv.URL+"/media", time.Now().Add(time.Hour)), nil
+		},
+		rotate: func() { rotations.Add(1) },
+	}
+
+	src, err := p.Open(context.Background(), "ytm:abc123")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	dec, err := src.Opener(make(chan struct{}))
+	if err != nil {
+		t.Fatalf("Opener after a refused stream: %v", err)
+	}
+	defer dec.Close()
+
+	if n, err := dec.ReadFrames(make([]float32, 4800)); err != nil || n == 0 {
+		t.Fatalf("ReadFrames = (%d, %v), want audio after the retry", n, err)
+	}
+	if !refused.Load() || !served.Load() {
+		t.Fatalf("refused = %v, served = %v; want one of each", refused.Load(), served.Load())
+	}
+	if got := rotations.Load(); got != 1 {
+		t.Fatalf("session rotations = %d, want 1", got)
+	}
+	if got := resolves.Load(); got != 2 {
+		t.Fatalf("resolve calls = %d, want 2 (the first, then the retry)", got)
+	}
+}
+
+// TestYTMProviderKeepsTheSessionWhenTheRetryIsAlsoRefused checks the bound: one
+// rotation per stream, so a persistent refusal fails the track instead of
+// spinning through visitors.
+func TestYTMProviderKeepsTheSessionAfterOneRetry(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+
+	var rotations atomic.Int32
+	p := &ytmProvider{
+		index: newYTMIndex(),
+		http:  srv.Client(),
+		resolve: func(context.Context, string) (*ytm.Streams, error) {
+			return ytmStreams(srv.URL+"/refused", time.Now().Add(time.Hour)), nil
+		},
+		rotate: func() { rotations.Add(1) },
+	}
+
+	src, err := p.Open(context.Background(), "ytm:abc123")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := src.Opener(make(chan struct{})); !errors.Is(err, errYTMRefused) {
+		t.Fatalf("Opener = %v, want the refusal", err)
+	}
+	if got := rotations.Load(); got != 1 {
+		t.Fatalf("session rotations = %d, want exactly 1", got)
+	}
+	if got := hits.Load(); got != 2 {
+		t.Fatalf("media requests = %d, want 2 (the first and one retry)", got)
+	}
+}
+
+// TestYTMProviderRotateIdentityKeepsTheAccount pins the swap: recovery builds a
+// new client with a fresh visitor, but a signed-in session has to survive it,
+// because only playback goes out anonymously.
+func TestYTMProviderRotateIdentityKeepsTheAccount(t *testing.T) {
+	auth := &ytm.AuthState{Cookie: "SID=abc"}
+	refused := ytm.NewClient()
+	refused.SetAuth(auth)
+
+	p := newYTMProvider(newYTMIndex(), false, nil)
+	p.installClient(refused)
+	p.rotateIdentity()
+
+	if p.client == refused {
+		t.Fatal("rotateIdentity kept the refused client")
+	}
+	if got := p.client.Auth(); got != auth {
+		t.Fatalf("new client auth = %v, want the account carried over", got)
+	}
+	if p.sheets == nil {
+		t.Fatal("rotating the session dropped the lyric cache")
 	}
 }
 

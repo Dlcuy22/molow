@@ -327,6 +327,12 @@ type ytmProvider struct {
 	loadPlaylist func(context.Context, string, *ytm.BuiltInContinuation) (*ytm.Playlist, error)
 	loadSong     func(context.Context, string) (*ytm.Song, error)
 	lyrics       func(context.Context, string) (*ytm.Lyrics, error)
+
+	// rotate replaces the anonymous session the client is using. YouTube refuses
+	// a media URL by the visitor that asked for it, so a fresh visitor is what
+	// an app restart gives and what a refused stream needs. It is a field so a
+	// test can drive the recovery without a client.
+	rotate func()
 }
 
 // ytmCalls is one consistent snapshot of the provider's network surface. A
@@ -356,16 +362,21 @@ func (p *ytmProvider) calls() ytmCalls {
 	}
 }
 
+// ytmClient builds the client every network call goes through. The library logs
+// recovered parse panics instead of returning an empty list in silence, but only
+// when it has a logger.
+func ytmClient(log *slog.Logger) *ytm.Client {
+	client := ytm.NewClient()
+	client.SetLogger(log)
+
+	return client
+}
+
 func newYTMProvider(index *ytmIndex, seamless bool, log *slog.Logger) *ytmProvider {
 	if log == nil {
 		log = slog.Default()
 	}
-	client := ytm.NewClient()
-	// The library logs recovered parse panics instead of returning an empty list
-	// in silence, but only when it has a logger; without one it stays quiet.
-	client.SetLogger(log)
-
-	return &ytmProvider{
+	p := &ytmProvider{
 		index:      index,
 		artists:    newYTMArtistIndex(),
 		avatarData: make(map[string]string),
@@ -373,16 +384,49 @@ func newYTMProvider(index *ytmIndex, seamless bool, log *slog.Logger) *ytmProvid
 		log:        log,
 		http:       &http.Client{Timeout: ytmHTTPTimeout},
 		seamless:   seamless,
-		client:     client,
-		resolve:    client.GetStream,
-		search:     client.Search,
-		loadArtist: client.LoadArtist,
-		loadPlaylist: func(ctx context.Context, id string, cont *ytm.BuiltInContinuation) (*ytm.Playlist, error) {
-			return client.LoadPlaylist(ctx, id, cont, nil, nil, false)
-		},
-		loadSong: client.LoadSong,
-		lyrics:   client.GetSongLyricsTimed,
 	}
+	p.installClient(ytmClient(log))
+	p.rotate = p.rotateIdentity
+
+	return p
+}
+
+// installClient swaps the client and every call bound to it in one step, so a
+// reader that took a snapshot through [ytmProvider.calls] never mixes two
+// sessions.
+func (p *ytmProvider) installClient(client *ytm.Client) {
+	client.SetLogger(p.log)
+	p.apiMu.Lock()
+	defer p.apiMu.Unlock()
+	p.client = client
+	p.resolve = client.GetStream
+	p.search = client.Search
+	p.loadArtist = client.LoadArtist
+	p.loadPlaylist = func(ctx context.Context, id string, cont *ytm.BuiltInContinuation) (*ytm.Playlist, error) {
+		return client.LoadPlaylist(ctx, id, cont, nil, nil, false)
+	}
+	p.loadSong = client.LoadSong
+	p.lyrics = client.GetSongLyricsTimed
+}
+
+// rotateIdentity replaces the anonymous session. A stream refusal is bound to
+// the visitor that minted the URL, and the catalogue keeps answering under the
+// same visitor, so a new client is the restart the refusal needs. A signed-in
+// session is carried over: playback is anonymous either way, but search and the
+// library are not.
+func (p *ytmProvider) rotateIdentity() {
+	p.apiMu.RLock()
+	var auth *ytm.AuthState
+	if p.client != nil {
+		auth = p.client.Auth()
+	}
+	p.apiMu.RUnlock()
+
+	fresh := ytmClient(p.log)
+	if auth != nil {
+		fresh.SetAuth(auth)
+	}
+	p.installClient(fresh)
 }
 
 func (p *ytmProvider) Name() string { return "ytm" }
@@ -446,15 +490,10 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 	url := best.URL
 	expires := best.ExpiresAt
 
-	// refresh re-resolves a signed URL that has expired. It is shared by the
-	// full-fetch opener and the streaming start: a signed URL is bound to this
-	// host and dies after a few hours, and the streamer calls the opener again
-	// on the reopen-and-discard seek fallback and on a decoder swap, so
-	// re-resolving on expiry is what keeps a long session seeking correctly.
-	refresh := func() error {
-		if expires.IsZero() || !time.Now().After(expires) {
-			return nil
-		}
+	// renew resolves the track again and replaces the signed URL. It is shared by
+	// the expiry refresh and the refusal retry, because both need a URL minted
+	// under the session that is current now.
+	renew := func() error {
 		fresh, err := p.calls().resolve(ctx, id)
 		if err != nil {
 			return err
@@ -467,6 +506,17 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 		expires = f.ExpiresAt
 
 		return nil
+	}
+
+	// refresh re-resolves only an expired URL: the streamer calls the opener
+	// again on the reopen-and-discard seek fallback and on a decoder swap, so a
+	// URL that still works must not cost a request.
+	refresh := func() error {
+		if expires.IsZero() || !time.Now().After(expires) {
+			return nil
+		}
+
+		return renew()
 	}
 
 	if p.seamless {
@@ -484,7 +534,20 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 
 					return
 				}
-				go p.download(ctx, stop, url, ytmMaxTrackBytes, buf)
+				go func() {
+					err := p.download(ctx, stop, url, ytmMaxTrackBytes, buf)
+					// A refusal arrives with the headers, so no bytes are in
+					// the buffer and the retry starts the track over.
+					if errors.Is(err, errYTMRefused) {
+						if rerr := p.recoverRefused(renew); rerr != nil {
+							buf.finish(rerr)
+
+							return
+						}
+						err = p.download(ctx, stop, url, ytmMaxTrackBytes, buf)
+					}
+					buf.finish(err)
+				}()
 			})
 		}
 		src.Opener = func(stop <-chan struct{}) (decode.Decoder, error) {
@@ -516,6 +579,12 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 		}
 
 		data, err := p.fetch(ctx, stop, url, ytmMaxTrackBytes)
+		if errors.Is(err, errYTMRefused) {
+			if err := p.recoverRefused(renew); err != nil {
+				return nil, err
+			}
+			data, err = p.fetch(ctx, stop, url, ytmMaxTrackBytes)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -670,6 +739,11 @@ func thumbCandidates(url string) []string {
 	return []string{base + "maxresdefault.jpg" + tail, base + "sddefault.jpg" + tail, url}
 }
 
+// errYTMRefused marks a media request the host answered with 403. The refusal
+// belongs to the anonymous visitor that minted the URL, so the only retry that
+// helps is a new session and a fresh URL, never the same request again.
+var errYTMRefused = errors.New("ytm: media request refused")
+
 // fetch reads one URL whole into memory through the ranged GET that withBody
 // issues, bounded by limit.
 func (p *ytmProvider) fetch(parent context.Context, stop <-chan struct{}, url string, limit int64) ([]byte, error) {
@@ -691,10 +765,10 @@ func (p *ytmProvider) fetch(parent context.Context, stop <-chan struct{}, url st
 }
 
 // download streams one URL into buf with the ranged GET, stopping at limit
-// bytes so an endless or lying body cannot exhaust memory. The terminal error
-// is published through buf, so a forward reader blocked mid-track sees the
-// failure instead of parking forever.
-func (p *ytmProvider) download(parent context.Context, stop <-chan struct{}, url string, limit int64, buf *ytmStreamBuffer) {
+// bytes so an endless or lying body cannot exhaust memory. It returns the
+// terminal error, and the caller publishes it through buf so a forward reader
+// blocked mid-track sees the failure instead of parking forever.
+func (p *ytmProvider) download(parent context.Context, stop <-chan struct{}, url string, limit int64, buf *ytmStreamBuffer) error {
 	err := p.withBody(parent, stop, url, func(body io.Reader) error {
 		chunk := make([]byte, 64<<10)
 		var total int64
@@ -716,13 +790,30 @@ func (p *ytmProvider) download(parent context.Context, stop <-chan struct{}, url
 			}
 		}
 	})
-	buf.finish(err)
+	return err
+}
+
+// recoverRefused answers a refused stream with the change that can help: a new
+// anonymous session, so the next resolve mints a URL under a visitor YouTube has
+// not refused. renew swaps the signed URL. This is what restarting the app did,
+// without the restart.
+func (p *ytmProvider) recoverRefused(renew func() error) error {
+	p.logger().Warn("ytm: stream refused, starting a new session")
+	if p.rotate != nil {
+		p.rotate()
+	}
+
+	return renew()
 }
 
 // withBody issues the ranged GET the full fetch and the streaming download
 // share, and hands the live body to consume. The Range header is not an
 // optimisation: googlevideo throttles a GET without one to roughly 32 KiB/s,
 // measured at about eighty times slower on the same track.
+//
+// A 403 comes back from the header alone, before any of the body is read, so a
+// refused URL never leaves bytes in the caller's buffer and the retry can start
+// clean.
 //
 // stop, when non-nil, cancels the request; the streamer closes it on shutdown
 // so an opener cannot strand a producer goroutine in a blocked read. parent, if
@@ -759,6 +850,10 @@ func (p *ytmProvider) withBody(parent context.Context, stop <-chan struct{}, url
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		if resp.StatusCode == http.StatusForbidden {
+			return fmt.Errorf("%w: %s", errYTMRefused, resp.Status)
+		}
+
 		return fmt.Errorf("ytm: media request returned %s", resp.Status)
 	}
 

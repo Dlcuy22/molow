@@ -28,6 +28,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -634,15 +635,39 @@ func (p *ytmProvider) albumFor(ctx context.Context, ref string) string {
 // returns nothing rather than failing the track. ctx is honoured so a shutdown
 // does not wait out the HTTP timeout on a decorative fetch.
 func (p *ytmProvider) thumbFor(ctx context.Context, url string) []byte {
-	if url == "" {
-		return nil
-	}
-	data, err := p.fetch(ctx, nil, url, ytmMaxThumbBytes)
-	if err != nil {
-		return nil
+	for _, cand := range thumbCandidates(url) {
+		if ctx.Err() != nil {
+			return nil
+		}
+		data, err := p.fetch(ctx, nil, cand, ytmMaxThumbBytes)
+		if err != nil || len(data) == 0 {
+			continue
+		}
+
+		return data
 	}
 
-	return data
+	return nil
+}
+
+// ytvStillURL matches the video-host still forms (".../vi/ID/NAME.jpg"), whose
+// size prefix can be traded for a larger one. Signed song-artwork and avatar
+// URLs must not be touched, so only this path shape matches.
+var ytvStillURL = regexp.MustCompile(`(https?://[^/]+/vi/[^/?]+/)[a-z0-9]+\.jpg`)
+
+// thumbCandidates lists the URLs worth trying for one thumbnail, best first.
+// A video-category track lists only its feed thumbnails, such as the
+// letterboxed 480x360 hqdefault, while the host keeps larger stills the
+// listing never mentions. The listed URL stays last, since it always works.
+func thumbCandidates(url string) []string {
+	m := ytvStillURL.FindStringSubmatchIndex(url)
+	if m == nil {
+		return []string{url}
+	}
+	base := url[:m[3]]
+	tail := url[m[1]:]
+
+	return []string{base + "maxresdefault.jpg" + tail, base + "sddefault.jpg" + tail, url}
 }
 
 // fetch reads one URL whole into memory through the ranged GET that withBody

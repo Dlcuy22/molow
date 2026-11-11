@@ -194,6 +194,15 @@ export interface LibraryProgress {
 }
 
 /**
+ * LyricsCacheClear reports what ClearLyricsCache removed: the sidecar count
+ * and their total size in bytes.
+ */
+export interface LyricsCacheClear {
+    "files": number;
+    "bytes": number;
+}
+
+/**
  * LyricsSettings carries the lyric-provider configuration. Providers maps the
  * chain names ("petitlyrics", "betterlyrics", "lyricsplus", "kugou", "lrclib")
  * to their toggles, all on unless the user says otherwise. SaveLocation is

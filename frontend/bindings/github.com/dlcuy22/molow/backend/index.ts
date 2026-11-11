@@ -23,6 +23,7 @@ export type {
     EffectVisualInfo,
     GeneralSettings,
     LibraryProgress,
+    LyricsCacheClear,
     LyricsSettings,
     Options,
     PlaybackSettings,

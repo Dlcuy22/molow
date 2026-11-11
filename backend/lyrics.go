@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -297,6 +298,50 @@ func (s *PlayerService) PickLyricsFolder() (string, error) {
 	}
 
 	return dir, nil
+}
+
+// LyricsCacheClear reports what ClearLyricsCache removed: the sidecar count
+// and their total size in bytes.
+type LyricsCacheClear struct {
+	Files int   `json:"files"`
+	Bytes int64 `json:"bytes"`
+}
+
+// ClearLyricsCache deletes the sidecars in the YouTube Music lyrics folder, so
+// the next play fetches them again. Only .lrc files directly inside the folder
+// go: the folder can be user-chosen, and a nested folder or an unrelated file
+// there was not written by the cache.
+func (s *PlayerService) ClearLyricsCache() (LyricsCacheClear, error) {
+	removed := LyricsCacheClear{}
+	dir := s.lyricsDir()
+	if dir == "" {
+		return removed, nil
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return removed, err
+	}
+
+	var failures []error
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".lrc") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		removed.Files++
+		removed.Bytes += info.Size()
+	}
+
+	return removed, errors.Join(failures...)
 }
 
 // joinLyrics returns the prefetch's result, waiting for a chain that is still

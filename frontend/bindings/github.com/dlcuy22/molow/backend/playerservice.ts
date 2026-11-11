@@ -125,6 +125,16 @@ export function AuthStatus(): $CancellablePromise<$models.AuthStatus> {
 }
 
 /**
+ * ClearLyricsCache deletes the sidecars in the YouTube Music lyrics folder, so
+ * the next play fetches them again. Only .lrc files directly inside the folder
+ * go: the folder can be user-chosen, and a nested folder or an unrelated file
+ * there was not written by the cache.
+ */
+export function ClearLyricsCache(): $CancellablePromise<$models.LyricsCacheClear> {
+    return $Call.ByID(3833223240);
+}
+
+/**
  * ConfigureSpectrum replaces the visualizer shape. The frame is rebuilt, so the
  * range, the points and the transform size all take effect on the next tick.
  * Enabled is not part of the shape: it only gates the pump, so it can be

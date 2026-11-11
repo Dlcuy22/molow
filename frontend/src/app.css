@@ -248,11 +248,13 @@ body {
   height: 100%;
 }
 
-/* Focus is a real ring in the focus token, never a removed outline. Applies to
- * keyboard focus only, so a click does not leave a ring behind. */
+/* The browser's focus ring is a web artifact in a desktop surface: it appears
+ * around the whole settings dialog the moment Ctrl+I focuses the panel, and on
+ * any control the keyboard reaches. Click focus still happens, it just paints
+ * nothing; the pointer and the control's own state carry the feedback. */
+:focus,
 :focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
+  outline: none;
 }
 
 /* A thin scrollbar that belongs to the surface rather than the OS default. */

@@ -11,7 +11,7 @@
   }: { checked: boolean; label: string; onchange: (value: boolean) => void } = $props();
 </script>
 
-<label class="relative inline-flex shrink-0 items-center">
+<label class="relative inline-flex shrink-0 items-center self-center">
   <input
     class="peer h-4 w-7 cursor-pointer appearance-none rounded-full bg-track transition-colors checked:bg-accent"
     type="checkbox"

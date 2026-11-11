@@ -12,7 +12,7 @@
   } from "phosphor-svelte";
   import type { Snapshot } from "../../bindings/github.com/dlcuy22/molow/backend/models";
   import type { Lyrics } from "../lib/types";
-  import { commands, spectrumConfig } from "../lib/store";
+  import { commands, spectrumConfig, appSettings } from "../lib/store";
   import { formatTime } from "../lib/format";
   import { sweepSegments } from "../lib/word-sweep";
   import SeekBar from "../lib/ui/SeekBar.svelte";
@@ -77,6 +77,14 @@
   // instrumentalMark is the line text the TTML pre-processing leaves in a long
   // instrumental gap. The pane draws notes for it instead of the character.
   const instrumentalMark = "♪";
+  const visualizerStyle = $derived($appSettings.general.visualizerStyle ?? "minimal");
+  const visualizerFull = $derived($spectrumConfig.enabled && visualizerStyle === "full");
+  // lyricsFade masks the bottom of the lyrics column, transparent under the
+  // band and solid above it, so scrolled text dissolves into the visualizer.
+  const lyricsFade = [
+    "-webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 170px), transparent calc(100% - 8px))",
+    "mask-image: linear-gradient(to bottom, #000 calc(100% - 170px), transparent calc(100% - 8px))",
+  ].join("; ");
 
   let viewport: HTMLDivElement | undefined = $state();
   let pairEls: HTMLDivElement[] = [];
@@ -329,6 +337,7 @@
     <div
       bind:this={viewport}
       class="lyrics-scroll h-full overflow-y-auto overscroll-contain"
+      style={visualizerFull ? lyricsFade : ""}
       role="region"
       aria-label="Lyrics"
       tabindex="-1"
@@ -406,13 +415,28 @@
         </div>
       {/if}
     </div>
+    {#if visualizerFull}
+      <!-- The lyrics run on behind the band; this veil blurs them strongest at
+           the bottom and lets go upward, so the join reads as depth. -->
+      <div
+        class="pointer-events-none absolute inset-x-0 bottom-0"
+        style="height: 168px; -webkit-backdrop-filter: blur(7px); backdrop-filter: blur(7px); -webkit-mask-image: linear-gradient(to top, #000 0%, rgba(0, 0, 0, 0.7) 45%, transparent 100%); mask-image: linear-gradient(to top, #000 0%, rgba(0, 0, 0, 0.7) 45%, transparent 100%);"
+        aria-hidden="true"
+      ></div>
+    {/if}
   </div>
 
-  <!-- The visualizer strip: the left half only, so it stops at the lyrics
-       column, and flush with the bottom of the frame. -->
+  <!-- The visualizer: full runs across the bottom of the sheet, minimal keeps
+       the strip under the art column. -->
   {#if $spectrumConfig.enabled}
-    <div class="pointer-events-none absolute bottom-0 left-0 right-1/2 pr-6">
-      <Spectrum height={72} opacity={0.5} chrome={false} />
-    </div>
+    {#if visualizerFull}
+      <div class="pointer-events-none absolute inset-x-0 bottom-0">
+        <Spectrum height={72} opacity={0.5} chrome={false} />
+      </div>
+    {:else}
+      <div class="pointer-events-none absolute bottom-0 left-0 right-1/2 pr-6">
+        <Spectrum height={72} opacity={0.5} chrome={false} />
+      </div>
+    {/if}
   {/if}
 </div>

@@ -173,11 +173,14 @@ export interface EffectVisualInfo {
 }
 
 /**
- * GeneralSettings is the General tab. VisualizerEnabled restores the spectrum
- * pump on startup; it is the persisted half of the panel's visualizer switch.
+ * GeneralSettings is the General tab. VisualizerEnabled is the persisted
+ * on/off switch, the same one the v key flips and the panel's Off option
+ * writes. VisualizerStyle picks the album player layout, "full" or "minimal";
+ * off lives in VisualizerEnabled so the chosen layout survives a toggle.
  */
 export interface GeneralSettings {
     "visualizerEnabled": boolean;
+    "visualizerStyle": string;
 }
 
 /**
@@ -381,6 +384,13 @@ export interface SpectrumConfig {
      * transform can be zero wide.
      */
     "fft": number;
+
+    /**
+     * Scale is "dynamic" (follow the recent peak) or "fixed" (a pinned
+     * -100..0 dBFS window). Empty means dynamic, so a caller that predates the
+     * field keeps the dynamic default.
+     */
+    "scale": string;
 
     /**
      * Enabled gates the analysis pump. Off, the tick still fires but the

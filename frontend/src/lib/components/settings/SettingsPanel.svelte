@@ -4,27 +4,21 @@
   import type { CrossfadeSettings, LyricsSettings, SpectrumConfig } from "../../../../bindings/github.com/dlcuy22/molow/backend/models";
   import type { Param } from "../../../../bindings/github.com/dlcuy22/molow/internal/spectrum/models";
   import { fftLabel } from "../../spectrum-fft";
+  import { visualizerBars } from "../../visualizer";
   import DiscordCard from "../DiscordCard.svelte";
   import Switch from "./Switch.svelte";
   import Slider from "./Slider.svelte";
   import Picker from "./Picker.svelte";
-  import TextField from "./TextField.svelte";
+  import SettingGroup from "./SettingGroup.svelte";
   import SettingRow from "./SettingRow.svelte";
+  import TextField from "./TextField.svelte";
 
   // The settings panel: a modal overlay opened with Ctrl+I, with a tab per
-  // category. It matches the command palette's frame (backdrop, a centred
-  // surface, Escape to close) but is a square box: the panel is a utility
-  // surface, not a floating card, so it carries no radius.
-  //
-  // Playback carries Crossfade; General carries the visualizer, which is a
-  // display choice rather than a playback one; Integration carries Discord Rich
-  // Presence. Stream is present as the category the panel is meant to hold and
-  // says so rather than inventing controls. Every row is the same shape (label,
-  // note, control), so a new setting is one row and no new layout.
+  // category.
   let { open, onclose }: { open: boolean; onclose: () => void } = $props();
 
   type Tab = "general" | "playback" | "integration" | "stream";
-  let tab = $state<Tab>("playback");
+  let tab = $state<Tab>("general");
   let panelEl = $state<HTMLDivElement | null>(null);
 
   const crossfade = $derived($appSettings.playback.crossfade);
@@ -33,6 +27,11 @@
   // so the two cannot disagree after a reload: the pump is rebuilt from this
   // value on startup.
   const visualizerOn = $derived($appSettings.general.visualizerEnabled);
+  // Off is not a stored style: the panel shows Off when the switch is off, and
+  // the chosen layout stays ready for the next turn-on, including the v key.
+  const visualizerStyle = $derived($appSettings.general.visualizerStyle ?? "minimal");
+  const visualizerStyleValue = $derived(visualizerOn ? visualizerStyle : "off");
+  const dynamicScale = $derived(($spectrumConfig.scale ?? "dynamic") !== "fixed");
 
   // The Discord status line and toggle read the store the same way the panel
   // read them when they lived in the main window's right column.
@@ -87,7 +86,7 @@
   let wasOpen = false;
   $effect(() => {
     if (open && !wasOpen) {
-      tab = "playback";
+      tab = "general";
       panelEl?.focus();
     }
     wasOpen = open;
@@ -159,15 +158,24 @@
   const saveLocation = $derived($appSettings.playback.lyrics.saveLocation);
   const lyricsFolder = $derived($appSettings.playback.lyrics.folder);
 
-  // setVisualizer persists the flag and pokes the running pump at once. The
-  // persisted value is what a restart reads; the ConfigureSpectrum call is what
-  // hides the spectrum now, without waiting for the next save to reach Go.
-  function setVisualizer(enabled: boolean) {
+  // setVisualizerStyle persists the chosen layout and pokes the running pump
+  // at once. Off is the same switch the v key flips, and the layout is kept so
+  // turning the visualizer back on restores it. The point count follows the
+  // layout, so switching to full fills the wider sheet.
+  function setVisualizerStyle(style: string) {
+    const enabled = style !== "off";
     commands.setAppSettings({
       ...$appSettings,
-      general: { ...$appSettings.general, visualizerEnabled: enabled },
+      general: {
+        ...$appSettings.general,
+        visualizerEnabled: enabled,
+        visualizerStyle: enabled ? style : visualizerStyle,
+      },
     });
-    setSpectrum({ enabled });
+    setSpectrum({
+      enabled,
+      bars: visualizerBars(enabled ? style : visualizerStyle),
+    });
   }
 
   function onKeydown(e: KeyboardEvent) {
@@ -271,7 +279,7 @@
             >
               {#snippet control()}
                 <Picker
-                  label="Repeat"
+                  label={null}
                   value={repeat}
                   options={[
                     { value: "off", label: "Off" },
@@ -289,7 +297,7 @@
             >
               {#snippet control()}
                 <Picker
-                  label="Play/Pause control style"
+                  label={null}
                   value={$appSettings.playback.playPauseStyle}
                   options={[
                     { value: "default", label: "Default" },
@@ -355,7 +363,7 @@
             >
               {#snippet control()}
                 <Picker
-                  label="Save fetched lyrics"
+                  label={null}
                   value={saveLocation}
                   options={[
                     { value: "lyrics", label: "Lyrics folder" },
@@ -414,48 +422,71 @@
         {:else}
           <div class="divide-y divide-line">
             <SettingRow
-              label="Visualizer"
-              description="Draw the spectrum under the track title."
+              label="Album player visualizer"
+              description="Album player's Visualizer width"
             >
               {#snippet control()}
-                <Switch
-                  checked={visualizerOn}
-                  label="Visualizer"
-                  onchange={setVisualizer}
+                <Picker
+                  label={null}
+                  value={visualizerStyleValue}
+                  options={[
+                    { value: "full", label: "Full" },
+                    { value: "minimal", label: "Minimal" },
+                    { value: "off", label: "Off" },
+                  ]}
+                  onchange={setVisualizerStyle}
                 />
               {/snippet}
             </SettingRow>
 
-            <!-- The shape knobs are one group, dimmed together when the
-                 visualizer is off, because none of them changes anything the
-                 user can see while it is hidden. -->
-            <div class="grid grid-cols-2 gap-x-4 gap-y-3 py-2.5" class:opacity-40={!$spectrumConfig.enabled}>
-              {#each $spectrumSchema as p (p.key)}
-                {#if p.kind === "choice"}
-                  <!-- A choice has no continuous range, so the set the schema
-                       names is rendered instead of a slider over a span it
-                       cannot take. -->
-                  <Picker
-                    label={p.label}
-                    value={String(spectrumValue(p))}
-                    disabled={!$spectrumConfig.enabled}
-                    options={(p.choices ?? []).map((c) => ({ value: String(c), label: fftLabel(c) }))}
-                    onchange={(v) => onSpectrumParam(p, Number(v))}
-                  />
-                {:else}
-                  <Slider
-                    label={p.label}
-                    value={spectrumValue(p)}
-                    min={p.min}
-                    max={p.max}
-                    step={p.step}
-                    disabled={!$spectrumConfig.enabled}
-                    format={(v) => (p.key === "minHz" || p.key === "maxHz" ? `${v} Hz` : String(v))}
-                    onchange={(v) => onSpectrumParam(p, v)}
-                  />
-                {/if}
-              {/each}
-            </div>
+            <SettingRow
+              label="Dynamic scale"
+              description="Visualizer bar's behaviour"
+            >
+              {#snippet control()}
+                <Switch
+                  checked={dynamicScale}
+                  label="Dynamic scale"
+                  onchange={(on) => setSpectrum({ scale: on ? "dynamic" : "fixed" })}
+                />
+              {/snippet}
+            </SettingRow>
+
+            <SettingGroup
+              label="Visualizer shape"
+              description={null}
+            >
+              <!-- The knobs dim together when the visualizer is off, because
+                   none of them changes anything the user can see while it is
+                   hidden. -->
+              <div class="grid grid-cols-2 gap-x-4 gap-y-3" class:opacity-40={!$spectrumConfig.enabled}>
+                {#each $spectrumSchema as p (p.key)}
+                  {#if p.kind === "choice"}
+                    <!-- A choice has no continuous range, so the set the schema
+                         names is rendered instead of a slider over a span it
+                         cannot take. -->
+                    <Picker
+                      label={p.label}
+                      value={String(spectrumValue(p))}
+                      disabled={!$spectrumConfig.enabled}
+                      options={(p.choices ?? []).map((c) => ({ value: String(c), label: fftLabel(c) }))}
+                      onchange={(v) => onSpectrumParam(p, Number(v))}
+                    />
+                  {:else}
+                    <Slider
+                      label={p.label}
+                      value={spectrumValue(p)}
+                      min={p.min}
+                      max={p.max}
+                      step={p.step}
+                      disabled={!$spectrumConfig.enabled}
+                      format={(v) => (p.key === "minHz" || p.key === "maxHz" ? `${v} Hz` : String(v))}
+                      onchange={(v) => onSpectrumParam(p, v)}
+                    />
+                  {/if}
+                {/each}
+              </div>
+            </SettingGroup>
           </div>
         {/if}
       </div>

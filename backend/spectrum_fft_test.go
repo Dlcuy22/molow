@@ -181,3 +181,24 @@ func TestSpectrumEnableToggleKeepsTheRunner(t *testing.T) {
 		t.Fatal("re-enabling rebuilt the runner")
 	}
 }
+
+// TestSpectrumConfigRoundTripsTheScale covers the dynamic switch: the panel
+// reads back the mode it sent, and an empty field keeps the dynamic default so
+// a caller that predates the field is unchanged.
+func TestSpectrumConfigRoundTripsTheScale(t *testing.T) {
+	svc := spectrumService(t)
+
+	if err := svc.ConfigureSpectrum(SpectrumConfig{Bars: 150, MinHz: 20, MaxHz: 20000, Scale: "fixed"}); err != nil {
+		t.Fatalf("ConfigureSpectrum: %v", err)
+	}
+	if got := svc.SpectrumConfig().Scale; got != "fixed" {
+		t.Fatalf("Scale = %q, want fixed", got)
+	}
+
+	if err := svc.ConfigureSpectrum(SpectrumConfig{Bars: 150, MinHz: 20, MaxHz: 20000}); err != nil {
+		t.Fatalf("ConfigureSpectrum: %v", err)
+	}
+	if got := svc.SpectrumConfig().Scale; got != "dynamic" {
+		t.Fatalf("Scale = %q, want dynamic", got)
+	}
+}

@@ -218,12 +218,9 @@ func noise(amp float64, n int) []float32 {
 	return out
 }
 
-// TestFramesAreTemporallySmooth pins the display motion: the display
-// shows each fresh analysis directly, with no follower lagging it, so on
-// stationary noise the frame-to-frame movement is only the periodogram's own
-// flicker between heavily overlapping windows. It must stay small (correlated,
-// not jumpy) without being ironed flat: over-smoothing here is what read as a
-// slow display trailing the beat.
+// TestFramesAreTemporallySmooth pins the display motion: each frame is drawn
+// directly, so on stationary noise only the periodogram's flicker moves a bar.
+// It must stay small, without being ironed flat.
 func TestFramesAreTemporallySmooth(t *testing.T) {
 	tap := &sliceTap{samples: noise(0.3, 8192), chunk: 1440}
 	r := tap.runner(t, Config{Bars: 150, FFT: 8192})
@@ -263,14 +260,9 @@ func TestBandsAreSmoothAcrossFrequency(t *testing.T) {
 }
 
 // TestPeakHoldsStillOnStationaryInput pins the axis hysteresis: once settled
-// on unchanging audio, the scale must not wander.
-//
-// The measure is the mean absolute move from the settled peak, not the worst
-// single frame. The periodogram itself fluctuates frame to frame on noise (the
-// same flicker TestFramesAreTemporallySmooth allows), so one excursion says
-// nothing about the follower: it just says which window the run happened to
-// land on. A release fast enough to track that flicker shows up as a large mean
-// move, which is the drift this pins out.
+// on unchanging audio, the scale must not wander. The measure is the mean
+// absolute move from the settled peak, since one noisy frame says nothing and
+// a follower that tracks that flicker drifts.
 func TestPeakHoldsStillOnStationaryInput(t *testing.T) {
 	tap := &sliceTap{samples: noise(0.3, 8192), chunk: 1440}
 	r := tap.runner(t, Config{Bars: 150, FFT: 8192})
@@ -614,8 +606,9 @@ func TestJitterBufferCapsLag(t *testing.T) {
 	}
 }
 
-// one center per bar, strictly rising, inside [MinHz, MaxHz], and evenly
-// spaced in log frequency so equal pitch intervals get equal width.
+// TestBarCentersSpanTheRange pins the bar layout: one center per bar, strictly
+// rising, inside [MinHz, MaxHz], and evenly spaced in log frequency so equal
+// pitch intervals get equal width.
 func TestBarCentersSpanTheRange(t *testing.T) {
 	for _, cfg := range []Config{
 		{Bars: 150, FFT: 8192, SampleRate: 48000, MinHz: 20, MaxHz: 20000},
@@ -747,6 +740,78 @@ func TestRunnerAcceptsEveryFFTChoice(t *testing.T) {
 		}
 		if len(r.Bands()) == 0 {
 			t.Errorf("FFT %d produced no bands", size)
+		}
+	}
+}
+
+// TestFixedScaleReadsTheAbsoluteWindow pins the non-dynamic mapping: every bar
+// is (dB + 100) / 100, independent of what played before.
+func TestFixedScaleReadsTheAbsoluteWindow(t *testing.T) {
+	samples := tone(1007.8125, 2048)
+	for i := range samples {
+		samples[i] *= 0.5
+	}
+	tap := &sliceTap{samples: samples, chunk: 1024}
+	r := tap.runner(t, Config{Bars: 64, FFT: 2048, Scale: ScaleFixed})
+	tap.feed(r, 2048*12, 1024)
+
+	for b, db := range r.bands {
+		want := math.Max(0, math.Min(1, (db+100)/100))
+		if math.Abs(r.out[b]-want) > 1e-9 {
+			t.Fatalf("band %d: level = %.6f, want %.6f from %.2f dB", b, r.out[b], want, db)
+		}
+	}
+}
+
+// TestFixedScaleDoesNotFollowThePeak is the difference from the dynamic scale:
+// a quiet tone keeps its distance from the ceiling instead of being amplified.
+func TestFixedScaleDoesNotFollowThePeak(t *testing.T) {
+	measure := func(scale string) float64 {
+		samples := tone(1007.8125, 2048)
+		for i := range samples {
+			samples[i] *= 0.02
+		}
+		tap := &sliceTap{samples: samples, chunk: 1024}
+		r := tap.runner(t, Config{Bars: 64, FFT: 2048, Scale: scale})
+		tap.feed(r, 2048*12, 1024)
+
+		peak := 0.0
+		for _, v := range r.Bands() {
+			if v > peak {
+				peak = v
+			}
+		}
+
+		return peak
+	}
+
+	fixed := measure(ScaleFixed)
+	dynamic := measure(ScaleDynamic)
+	if fixed >= dynamic {
+		t.Fatalf("fixed peak %.3f should stay below the dynamic %.3f", fixed, dynamic)
+	}
+	if fixed < 0.3 || fixed > 0.9 {
+		t.Fatalf("fixed peak %.3f, want the quiet tone low but visible", fixed)
+	}
+}
+
+// TestScaleDefaults covers the zero value and a hand-written unknown name.
+func TestScaleDefaults(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want string
+	}{
+		{"", ScaleDynamic},
+		{"sideways", ScaleDynamic},
+		{ScaleFixed, ScaleFixed},
+		{ScaleDynamic, ScaleDynamic},
+	} {
+		r, err := New(silence{}, Config{Bars: 16, FFT: 1024, Scale: c.in})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if got := r.Config().Scale; got != c.want {
+			t.Fatalf("scale %q -> %q, want %q", c.in, got, c.want)
 		}
 	}
 }

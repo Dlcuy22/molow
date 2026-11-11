@@ -35,6 +35,9 @@ func TestAppSettingsDefaultsAreOffAndReference(t *testing.T) {
 	if !got.General.VisualizerEnabled {
 		t.Fatal("visualizer should default to on")
 	}
+	if got.General.VisualizerStyle != "minimal" {
+		t.Fatalf("visualizerStyle = %q, want minimal", got.General.VisualizerStyle)
+	}
 }
 
 // TestAppSettingsRoundTrips proves the panel's edits survive a restart, for
@@ -103,6 +106,40 @@ func TestLoadAppSettingsNormalizesAnOldSchemaFile(t *testing.T) {
 	}
 	if !got.General.VisualizerEnabled {
 		t.Fatal("visualizer = false, want on for a file that predates the field")
+	}
+}
+
+// TestLoadAppSettingsNormalizesTheVisualizerStyle pins the style field: a
+// known layout survives, while an unknown one or a missing one falls back to
+// minimal. Off is not a style; it lives in the enabled flag.
+func TestLoadAppSettingsNormalizesTheVisualizerStyle(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+
+	p, err := settingsPath()
+	if err != nil {
+		t.Fatalf("settingsPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"known", `{"version":1,"general":{"visualizerEnabled":true,"visualizerStyle":"full"}}`, "full"},
+		{"unknown", `{"version":1,"general":{"visualizerEnabled":true,"visualizerStyle":"sideways"}}`, "minimal"},
+		{"missing", `{"version":1,"general":{"visualizerEnabled":true}}`, "minimal"},
+	}
+	for _, c := range cases {
+		if err := os.WriteFile(p, []byte(c.body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := loadAppSettings().General.VisualizerStyle; got != c.want {
+			t.Fatalf("%s: style = %q, want %q", c.name, got, c.want)
+		}
 	}
 }
 

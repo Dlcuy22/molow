@@ -5,7 +5,9 @@
   // value plus the label shown for it; the value is what is emitted, so a
   // caller can carry an empty string (Auto) as a real choice, which a plain
   // value binding cannot express. The caret is decoration over a native select,
-  // so keyboard, Escape and the platform menu are the browser's own.
+  // so keyboard, Escape and the platform menu are the browser's own. The label
+  // is optional: a picker inside a SettingRow already has the row's label, so
+  // it passes null and name the select through ariaLabel instead.
   export interface PickerOption {
     value: string;
     label: string;
@@ -14,25 +16,29 @@
   let {
     value,
     options,
-    label,
+    label = null,
+    ariaLabel,
     disabled = false,
     onchange,
   }: {
     value: string;
     options: PickerOption[];
-    label: string;
+    label?: string | null;
+    ariaLabel?: string;
     disabled?: boolean;
     onchange: (value: string) => void;
   } = $props();
 </script>
 
-<label class="flex flex-col gap-1 text-xs text-muted">
-  <span class="truncate">{label}</span>
+<label class="flex flex-col gap-1 text-xs text-muted" class:self-center={!label}>
+  {#if label}
+    <span class="truncate">{label}</span>
+  {/if}
   <span class="relative">
     <select
       class="w-full appearance-none rounded-[4px] border border-line bg-surface py-1.5 pl-2.5 pr-7 text-xs text-fg transition-colors hover:bg-hover disabled:text-disabled"
       {disabled}
-      aria-label={label}
+      aria-label={label ?? ariaLabel}
       onchange={(e) => onchange(e.currentTarget.value)}
     >
       {#each options as o (o.value)}

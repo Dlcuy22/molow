@@ -74,10 +74,13 @@ type LyricsSettings struct {
 // so nothing is invented here.
 type StreamSettings struct{}
 
-// GeneralSettings is the General tab. VisualizerEnabled restores the spectrum
-// pump on startup; it is the persisted half of the panel's visualizer switch.
+// GeneralSettings is the General tab. VisualizerEnabled is the persisted
+// on/off switch, the same one the v key flips and the panel's Off option
+// writes. VisualizerStyle picks the album player layout, "full" or "minimal";
+// off lives in VisualizerEnabled so the chosen layout survives a toggle.
 type GeneralSettings struct {
-	VisualizerEnabled bool `json:"visualizerEnabled"`
+	VisualizerEnabled bool   `json:"visualizerEnabled"`
+	VisualizerStyle   string `json:"visualizerStyle"`
 }
 
 // CrossfadeSettings mirrors the engine's crossfade settings. It is restated
@@ -109,6 +112,7 @@ func defaultAppSettings() AppSettings {
 		},
 		General: GeneralSettings{
 			VisualizerEnabled: true,
+			VisualizerStyle:   "minimal",
 		},
 	}
 }
@@ -233,6 +237,16 @@ func normalizeAppSettings(s AppSettings, present map[string]bool) AppSettings {
 	// the panel sent is taken as-is.
 	if present != nil && !present["visualizerEnabled"] {
 		s.General.VisualizerEnabled = def.General.VisualizerEnabled
+	}
+
+	// A file written before the style field existed, or a hand-edit with an
+	// unknown value, gets the default layout. Off is not a style: it lives in
+	// the enabled flag, so the chosen layout survives turning the visualizer
+	// back on.
+	switch s.General.VisualizerStyle {
+	case "full", "minimal":
+	default:
+		s.General.VisualizerStyle = def.General.VisualizerStyle
 	}
 
 	return s

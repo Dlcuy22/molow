@@ -343,6 +343,42 @@ body {
   cursor: default;
 }
 
+/* The settings slider borrows the seek bar's mouse: the thumb stays out of the
+ * way until the pointer or the keyboard reaches the track, and the pointer says
+ * the track is a handle. The value still reads at rest from the fill, and a
+ * touch screen has no hover to reveal it, so it stays visible there. */
+.range-hover {
+  cursor: grab;
+}
+.range-hover:active {
+  cursor: grabbing;
+}
+.range-hover::-webkit-slider-thumb,
+.range-hover::-moz-range-thumb {
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+.range-hover:hover::-webkit-slider-thumb,
+.range-hover:focus-visible::-webkit-slider-thumb,
+.range-hover:active::-webkit-slider-thumb,
+.range-hover:hover::-moz-range-thumb,
+.range-hover:focus-visible::-moz-range-thumb,
+.range-hover:active::-moz-range-thumb {
+  opacity: 1;
+}
+@media (hover: none) {
+  .range-hover::-webkit-slider-thumb,
+  .range-hover::-moz-range-thumb {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .range-hover::-webkit-slider-thumb,
+  .range-hover::-moz-range-thumb {
+    transition: none;
+  }
+}
+
 /* The transport's seek bar keeps the native range underneath for pointer
  * travel, keyboard steps and assistive technology, but paints it transparent
  * and draws the bar itself. The thumb stays out of the way until the pointer or

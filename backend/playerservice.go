@@ -953,7 +953,7 @@ func (s *PlayerService) SpectrumConfig() SpectrumConfig {
 	enabled := s.spectrumEnabled
 	s.spectrumMu.Unlock()
 
-	return SpectrumConfig{Bars: cfg.Bars, MinHz: int(cfg.MinHz), MaxHz: int(cfg.MaxHz), FFT: cfg.FFT, Enabled: enabled}
+	return SpectrumConfig{Bars: cfg.Bars, MinHz: int(cfg.MinHz), MaxHz: int(cfg.MaxHz), FFT: cfg.FFT, Scale: cfg.Scale, Enabled: enabled}
 }
 
 // ConfigureSpectrum replaces the visualizer shape. The frame is rebuilt, so the
@@ -973,6 +973,12 @@ func (s *PlayerService) ConfigureSpectrum(cfg SpectrumConfig) error {
 	}
 	if cfg.FFT > 0 {
 		next.FFT = cfg.FFT
+	}
+	switch cfg.Scale {
+	case spectrum.ScaleFixed:
+		next.Scale = spectrum.ScaleFixed
+	default:
+		next.Scale = spectrum.ScaleDynamic
 	}
 	if next.MinHz >= next.MaxHz {
 		return fmt.Errorf("visualizer: low cut must be below high cut")
@@ -1350,6 +1356,10 @@ type SpectrumConfig struct {
 	// FFT is the transform length. Zero means the shipped default, because no
 	// transform can be zero wide.
 	FFT int `json:"fft"`
+	// Scale is "dynamic" (follow the recent peak) or "fixed" (a pinned
+	// -100..0 dBFS window). Empty means dynamic, so a caller that predates the
+	// field keeps the dynamic default.
+	Scale string `json:"scale"`
 	// Enabled gates the analysis pump. Off, the tick still fires but the
 	// transform is skipped, so a hidden visualizer costs no CPU. The service
 	// starts enabled.

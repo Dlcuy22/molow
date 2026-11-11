@@ -5,6 +5,8 @@
   // the bounds, the step and the unit label, so the same control serves a
   // seconds setting and any future numeric one. It reads the value it is given
   // rather than holding its own, so the panel's store stays the single source.
+  // `range-hover` gives it the seek bar's mouse: the thumb appears when the
+  // pointer or keyboard reaches the track, and the track is a grab handle.
   let {
     value,
     min,
@@ -36,7 +38,7 @@
     <span class="tabular-nums text-fg">{shown}</span>
   </span>
   <input
-    class="range disabled:opacity-40"
+    class="range range-hover disabled:opacity-40"
     type="range"
     {min}
     {max}

@@ -46,8 +46,13 @@ type Config struct {
 
 	// RangeDB is how far below the running peak a band falls to zero. It sets
 	// the contrast: a small range makes quiet bands visible, a large one makes
-	// the display peakier.
+	// the display peakier. It is unused by the fixed scale.
 	RangeDB float64
+
+	// Scale picks the vertical mapping. "dynamic" follows the loudest recent
+	// band, so quiet tracks fill the display; "fixed" pins the window to
+	// fixedFloorDB..0 dBFS, the absolute reading a studio analyzer shows.
+	Scale string
 
 	// Release is the per-frame decay of the peak follower in [0, 1). It is what
 	// makes the scale dynamic: the display re-ranges to the loudest recent
@@ -59,8 +64,19 @@ type Config struct {
 	Release float64
 }
 
+// ScaleDynamic follows the recent peak, so the display re-ranges with the
+// content. ScaleFixed pins the window to fixedFloorDB..0 dBFS instead, the way
+// a studio analyzer reads: a quiet passage stays visibly quiet.
+const (
+	ScaleDynamic = "dynamic"
+	ScaleFixed   = "fixed"
+)
+
+// fixedFloorDB is the bottom of the fixed scale. A band below it is silence.
+const fixedFloorDB = -100
+
 // DefaultConfig is the visualization the product ships with: 150 bars over the
-// full audible range at the engine's canonical rate.
+// full audible range at the engine's canonical rate, on the dynamic scale.
 func DefaultConfig() Config {
 	return Config{
 		Bars:       150,
@@ -69,6 +85,7 @@ func DefaultConfig() Config {
 		MinHz:      20,
 		MaxHz:      20000,
 		RangeDB:    60,
+		Scale:      ScaleDynamic,
 		Release:    0.92,
 	}
 }
@@ -224,6 +241,11 @@ func withDefaults(cfg Config) Config {
 	}
 	if cfg.RangeDB <= 0 {
 		cfg.RangeDB = def.RangeDB
+	}
+	switch cfg.Scale {
+	case ScaleDynamic, ScaleFixed:
+	default:
+		cfg.Scale = def.Scale
 	}
 	if cfg.Release <= 0 || cfg.Release >= 1 {
 		cfg.Release = def.Release
@@ -419,18 +441,25 @@ func (r *Runner) slide(n int) {
 	r.backlog = r.backlog[:rest]
 }
 
-// bandValue maps one band's dB to a display level in [0, 1] against the dynamic
-// range. A silent band sits at zero, and a partial first frame sits low rather
-// than reading as a level the audio never had.
+// bandValue maps one band's dB to a display level in [0, 1]. The dynamic scale
+// measures against the running peak; the fixed scale measures against the
+// absolute floor, so the level does not move when the track changes. A silent
+// band sits at zero, and a partial first frame sits low rather than reading as
+// a level the audio never had.
 func (r *Runner) bandValue(b int) float64 {
 	if r.filled < r.cfg.FFT {
 		return 0
 	}
-	top := r.peak
-	if math.IsInf(top, -1) {
-		return 0
+	var v float64
+	if r.cfg.Scale == ScaleFixed {
+		v = (r.bands[b] - fixedFloorDB) / -fixedFloorDB
+	} else {
+		top := r.peak
+		if math.IsInf(top, -1) {
+			return 0
+		}
+		v = (r.bands[b] - (top - r.cfg.RangeDB)) / r.cfg.RangeDB
 	}
-	v := (r.bands[b] - (top - r.cfg.RangeDB)) / r.cfg.RangeDB
 	if v < 0 || math.IsNaN(v) {
 		return 0
 	}

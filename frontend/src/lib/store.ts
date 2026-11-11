@@ -26,6 +26,7 @@ import type { Param } from "../../bindings/github.com/dlcuy22/molow/internal/spe
 import type { EffectKind, EffectPreset, EffectStage } from "./effect-types";
 import { toEffectKind, toEffectPreset, toEffectStage } from "./effect-adapter";
 import { initVolume, syncVolumeFromServer } from "./volume";
+import { visualizerBars } from "./visualizer";
 
 // The event names mirror the Go constants. They are repeated here rather than
 // imported because the generator does not emit string constants for register
@@ -69,6 +70,7 @@ export const spectrumConfig = writable<SpectrumConfig>({
   minHz: 20,
   maxHz: 20000,
   fft: 8192,
+  scale: "dynamic",
   enabled: true,
 });
 export const spectrumSchema = writable<Param[]>([]);
@@ -111,7 +113,7 @@ export const appSettings = writable<AppSettings>({
     },
   },
   stream: {},
-  general: { visualizerEnabled: true },
+  general: { visualizerEnabled: true, visualizerStyle: "minimal" },
 });
 
 /** queueCoverCache memoises the palette's per-track artwork by cover id, so a
@@ -366,6 +368,18 @@ function applyEffectMeters(rows: EffectMetersInfo[]): void {
   );
 }
 
+// withLayoutBars returns the config unchanged when its point count already
+// matches the layout, so a load that finds the shipped values configures
+// nothing.
+function withLayoutBars(cfg: SpectrumConfig, style: string | undefined): SpectrumConfig {
+  const bars = visualizerBars(style);
+  if (cfg.bars === bars) {
+    return cfg;
+  }
+
+  return { ...cfg, bars };
+}
+
 /**
  * connect subscribes to the Go push stream and loads the static data. It is
  * called once from the root component's onMount and returns the teardown.
@@ -400,11 +414,30 @@ export function connect(): () => void {
   // was attached.
   PlayerService.Snapshot().then(apply);
   PlayerService.Options().then(options.set);
-  PlayerService.SpectrumConfig().then(spectrumConfig.set);
+  // A layout owns its point count, and the two reads settle in any order, so
+  // each response is mapped against the style the store holds at that moment.
+  // The second one to land is the one that corrects the first.
+  PlayerService.SpectrumConfig().then((cfg) => {
+    const next = withLayoutBars(cfg, get(appSettings).general.visualizerStyle);
+    spectrumConfig.set(next);
+    if (!isEffectWindow && next !== cfg) {
+      void commands.configureSpectrum(next);
+    }
+  });
   PlayerService.SpectrumSchema().then((schema) => spectrumSchema.set(schema ?? []));
   PlayerService.PreviewConfig().then(previewConfig.set);
   PlayerService.DiscordStatus().then(discordStatus.set);
-  PlayerService.AppSettings().then(appSettings.set);
+  PlayerService.AppSettings().then((cfg) => {
+    appSettings.set(cfg);
+    const current = get(spectrumConfig);
+    const next = withLayoutBars(current, cfg.general.visualizerStyle);
+    if (next !== current) {
+      spectrumConfig.set(next);
+      if (!isEffectWindow) {
+        void commands.configureSpectrum(next);
+      }
+    }
+  });
   if (isEffectWindow) {
     void syncEffectChain();
     PlayerService.EffectKinds().then((kinds) => {

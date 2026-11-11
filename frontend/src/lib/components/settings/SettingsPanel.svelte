@@ -1,5 +1,7 @@
 <script lang="ts">
   import { appSettings, commands, discordStatus, spectrumConfig, spectrumSchema } from "../../store";
+  import { showToast } from "../../toast";
+  import { Check, WarningCircle } from "phosphor-svelte";
   import { PlayerService } from "../../../../bindings/github.com/dlcuy22/molow/backend";
   import type { CrossfadeSettings, LyricsSettings, SpectrumConfig } from "../../../../bindings/github.com/dlcuy22/molow/backend/models";
   import type { Param } from "../../../../bindings/github.com/dlcuy22/molow/internal/spectrum/models";
@@ -12,6 +14,7 @@
   import SettingGroup from "./SettingGroup.svelte";
   import SettingRow from "./SettingRow.svelte";
   import TextField from "./TextField.svelte";
+  import Button from "./Button.svelte";
 
   // The settings panel: a modal overlay opened with Ctrl+I, with a tab per
   // category.
@@ -152,6 +155,43 @@
     } catch {
       // Cancelled: no setting to write.
     }
+  }
+
+  // The result goes to a toast, so the row description stays fixed. Each press
+  // is its own answer, so it gets its own card.
+  async function clearLyricsCache() {
+    try {
+      const { files, bytes } = await PlayerService.ClearLyricsCache();
+      showToast({
+        key: "lyrics-cache",
+        kind: "message",
+        stack: true,
+        label:
+          files === 0
+            ? "Lyrics cache is already empty"
+            : `Cache cleared, ${cacheSize(bytes)} freed`,
+        icon: Check,
+      });
+    } catch {
+      showToast({
+        key: "lyrics-cache",
+        kind: "message",
+        stack: true,
+        label: "Could not clear the lyrics cache",
+        icon: WarningCircle,
+      });
+    }
+  }
+
+  function cacheSize(bytes: number): string {
+    if (bytes < 1024) {
+      return `${bytes} B`;
+    }
+    if (bytes < 1024 * 1024) {
+      return `${Math.round(bytes / 1024)} KB`;
+    }
+
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   const providers = $derived($appSettings.playback.lyrics.providers ?? {});
@@ -389,13 +429,17 @@
                     placeholder="Default"
                     onchange={(v) => setLyrics({ folder: v })}
                   />
-                  <button
-                    class="rounded-[4px] border border-line bg-surface px-2 py-1.5 text-xs text-fg transition-colors hover:bg-hover"
-                    onclick={() => void browseLyricsFolder()}
-                  >
-                    Browse
-                  </button>
+                  <Button label="Browse" onclick={browseLyricsFolder} />
                 </div>
+              {/snippet}
+            </SettingRow>
+
+            <SettingRow
+              label="Clear lyrics cache"
+              description="Fetched YouTube Music sheets in the lyrics folder. Clearing them makes the next play fetch again."
+            >
+              {#snippet control()}
+                <Button label="Clear" busyLabel="Clearing" onclick={clearLyricsCache} />
               {/snippet}
             </SettingRow>
           </div>
@@ -444,7 +488,7 @@
 
             <SettingRow
               label="Dynamic scale"
-              description="Visualizer bar's behaviour"
+              description="When enabled the bars become more 'Punchy'"
             >
               {#snippet control()}
                 <Switch

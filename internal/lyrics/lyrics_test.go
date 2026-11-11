@@ -50,6 +50,53 @@ func TestIndexlessNameMatchesIndexedTrack(t *testing.T) {
 	}
 }
 
+func TestTitleNamedSidecarMatchesTitledTrack(t *testing.T) {
+	dir := t.TempDir()
+	media := write(t, dir, "Michael Jackson - Billie Jean.opus", "")
+	write(t, dir, "lyrics/Billie Jean.lrc",
+		"[00:29.26]She was more like a beauty queen from a movie scene\n"+
+			"<She:29.264:29.664|was:29.664:29.931|more:29.931:30.198>\n")
+
+	doc, err := Load(media)
+	if err != nil || doc == nil {
+		t.Fatalf("doc: %+v err: %v", doc, err)
+	}
+	if len(doc.Lines) != 1 || !doc.Synced {
+		t.Fatalf("lines: %+v", doc.Lines)
+	}
+	if doc.Lines[0].Words == nil || len(doc.Lines[0].Words) != 3 {
+		t.Fatalf("words: %+v", doc.Lines[0].Words)
+	}
+}
+
+func TestTitledSidecarMatchesBareTrack(t *testing.T) {
+	dir := t.TempDir()
+	media := write(t, dir, "Billie Jean.flac", "")
+	write(t, dir, "Michael Jackson - Billie Jean.lrc", "[00:29.26]She was more like a beauty queen\n")
+
+	doc, err := Load(media)
+	if err != nil || doc == nil {
+		t.Fatalf("doc: %+v err: %v", doc, err)
+	}
+	if len(doc.Lines) != 1 {
+		t.Fatalf("lines: %+v", doc.Lines)
+	}
+}
+
+func TestUnrelatedTitleSidecarDoesNotMatch(t *testing.T) {
+	dir := t.TempDir()
+	media := write(t, dir, "Michael Jackson - Chicago.opus", "")
+	write(t, dir, "lyrics/Billie Jean.lrc", "[00:29.26]She was more like a beauty queen\n")
+
+	doc, err := Load(media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc != nil {
+		t.Fatalf("wanted nil, got %+v", doc)
+	}
+}
+
 func TestLyricsSubfolderAndTranslationFile(t *testing.T) {
 	dir := t.TempDir()
 	media := write(t, dir, "Song.flac", "")

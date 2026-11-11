@@ -385,24 +385,30 @@ func (s *PlayerService) PickLibraryFolder() (string, error) {
 	return dir, nil
 }
 
-// Lyrics returns the lyric sheet of a track. A local track reads its sidecar
-// file; a YouTube Music reference resolves the sheet from the catalogue, which
-// is the only remote source and never runs for a local track or album. No
-// lyrics is a nil document, not an error.
+// Lyrics returns the lyric sheet of a track. The sidecar loader is the only
+// read path; when its winner has not landed yet, the prefetch is joined. No
+// sheet renders ahead of the chain, so the embedded sheet arrives with the
+// same event as any fetched one. No lyrics is a nil document, not an error.
 func (s *PlayerService) Lyrics(path string) (*lyrics.Document, error) {
-	if !isYTMRef(path) {
-		return lyrics.Load(path)
-	}
-	if s.ytmProv == nil {
-		return nil, nil
+	doc, err := s.readLyricsOrJoin(path)
+	if err != nil || doc == nil {
+		return doc, err
 	}
 
-	sheet, ok := s.ytmProv.lyricsFor(s.ctx, path)
-	if !ok || sheet == nil {
-		return nil, nil
+	return s.instrumentalMarks(path, doc), nil
+}
+
+// readLyricsOrJoin is the one resolver: the sidecar loader first, then the
+// prefetch that is still running or just concluded.
+func (s *PlayerService) readLyricsOrJoin(path string) (*lyrics.Document, error) {
+	if doc, err := s.readLyrics(path); doc != nil || err != nil {
+		return doc, err
+	}
+	if doc, ok := s.joinLyrics(path); ok {
+		return doc, nil
 	}
 
-	return ytmLyricsDocument(sheet), nil
+	return nil, nil
 }
 
 // ytmLyricsDocument maps a catalogue sheet onto what the now-playing column

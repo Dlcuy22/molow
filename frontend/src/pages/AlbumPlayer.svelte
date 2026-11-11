@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     CaretDown,
+    MusicNote,
     Pause,
     Play,
     Repeat,
@@ -13,6 +14,7 @@
   import type { Lyrics } from "../lib/types";
   import { commands, spectrumConfig } from "../lib/store";
   import { formatTime } from "../lib/format";
+  import { sweepSegments } from "../lib/word-sweep";
   import SeekBar from "../lib/ui/SeekBar.svelte";
   import Marquee from "../lib/ui/Marquee.svelte";
   import Spectrum from "../lib/components/Spectrum.svelte";
@@ -58,6 +60,24 @@
     active = idx;
   });
 
+  // wordOpacity is how strongly one word shows at the play position. A sung
+  // word is solid, an unsung word sits dimmed, and the word under the play
+  // head fades between the two. Only the active line calls it; other lines
+  // keep their own opacity.
+  const wordOpacity = (w: { startMs: number; endMs: number }): number => {
+    if (position >= w.endMs) {
+      return 1;
+    }
+    if (position <= w.startMs || w.endMs <= w.startMs) {
+      return 0.3;
+    }
+    return 0.3 + 0.7 * ((position - w.startMs) / (w.endMs - w.startMs));
+  };
+
+  // instrumentalMark is the line text the TTML pre-processing leaves in a long
+  // instrumental gap. The pane draws notes for it instead of the character.
+  const instrumentalMark = "♪";
+
   let viewport: HTMLDivElement | undefined = $state();
   let pairEls: HTMLDivElement[] = [];
 
@@ -69,7 +89,7 @@
   let userScrolling = $state(false);
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
-  // The glides — both the auto-follow and the two-second return — are timed
+  // The glides, both the auto-follow and the two-second return are timed
   // here rather than left to CSS, so the pane's easing never fights a glide
   // the rAF loop is driving. Any user input cancels the flight immediately.
   let glideRaf: number | undefined;
@@ -134,8 +154,8 @@
     glideTo(viewport.scrollTop + (r.top - vp.top) - vp.height / 2 + r.height / 2);
   }
 
-  // Wheel, touch and scroll keys arm the user session. A CSS smooth scroll —
-  // the pane's own gliding — fires scroll events too, so raw scroll events
+  // Wheel, touch and scroll keys arm the user session. A CSS smooth scroll
+  // the pane's own gliding fires scroll events too, so raw scroll events
   // never count as user intent.
   const armKeys = new Set([
     "ArrowUp",
@@ -182,7 +202,7 @@
   });
 
   // The pointer dims out when the mouse rests: the artwork shows clean while
-  // the hand is still. Any input — a move, a press, a wheel turn or a key —
+  // the hand is still. Any input, a move, a press, a wheel turn or a key
   // wakes it again.
   const CURSOR_IDLE_MS = 2000;
   let cursorIdle = $state(false);
@@ -342,7 +362,32 @@
                     if (el && el.isConnected) centerOn(el);
                   }}
                 >
-                  {line.text}
+                  {#if line.text === instrumentalMark}
+                    <span class="inline-flex items-center gap-[2px]" aria-hidden="true">
+                      <MusicNote size={28} weight="fill" />
+                      <MusicNote size={28} weight="fill" />
+                      <MusicNote size={28} weight="fill" />
+                    </span>
+                  {:else if i === active && line.words && line.words.length > 0}
+                    <!-- The word sweep dims and lifts each timed word. The
+                         words sit inside the line text, so the gaps between
+                         them come from the line and are never highlighted. -->
+                    {@const segments = sweepSegments(line.text, line.words)}
+                    {#if segments}
+                      {#each segments as segment, j (j)}
+                        {#if segment.word}
+                          <span
+                            class="transition-opacity duration-100 ease-linear"
+                            style:opacity={wordOpacity(segment.word)}
+                          >{segment.text}</span>
+                        {:else}{segment.text}{/if}
+                      {/each}
+                    {:else}
+                      {line.text}
+                    {/if}
+                  {:else}
+                    {line.text}
+                  {/if}
                 </button>
               {:else}
                 <p class="font-jp text-[28px] font-medium leading-[1.4]">{line.text}</p>

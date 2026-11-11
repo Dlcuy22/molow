@@ -19,6 +19,11 @@ export const MoloEffectMeters = "molo:effect-meters";
 export const MoloLibrary = "molo:library";
 
 /**
+ * Name of the custom event "molo:lyrics".
+ */
+export const MoloLyrics = "molo:lyrics";
+
+/**
  * Name of the custom event "molo:snapshot".
  */
 export const MoloSnapshot = "molo:snapshot";

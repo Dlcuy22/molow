@@ -157,7 +157,23 @@ type PlayerService struct {
 	libs     map[string]library.Source
 	scanning map[string]bool
 
+	// The lyric prefetch runs one chain per track change, writes the result
+	// to disk as a sidecar, and lets the lyric pane join it. The loader stays
+	// the only read path; this state only tracks fetching and the session's
+	// cached outcome.
+	lyrics lyricsState
+
 	log *slog.Logger
+}
+
+// logger returns the service logger, or the default when a test built the
+// service without one, so a log line cannot panic on a nil logger.
+func (s *PlayerService) logger() *slog.Logger {
+	if s.log != nil {
+		return s.log
+	}
+
+	return slog.Default()
 }
 
 func newPlayerService() *PlayerService {
@@ -312,6 +328,7 @@ func (s *PlayerService) pumpEvents() {
 			s.emit(eventSnapshot, snap)
 			s.syncPresence(snap)
 			s.syncSystemMedia(snap)
+			s.syncLyrics(snap)
 		case <-ticker.C:
 			// A tick with no track is a wasted payload, but it is what lets the
 			// UI show a first "Ready" and recover if a push was ever missed.
@@ -319,6 +336,7 @@ func (s *PlayerService) pumpEvents() {
 			s.emit(eventSnapshot, snap)
 			s.syncPresence(snap)
 			s.syncSystemMedia(snap)
+			s.syncLyrics(snap)
 		}
 	}
 }

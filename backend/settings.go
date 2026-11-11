@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 
 	"github.com/dlcuy22/molo"
+	"github.com/dlcuy22/molow/internal/lyrics"
 )
 
 // settingsVersion is the schema version of the persisted file. It is written on
@@ -46,11 +47,26 @@ type AppSettings struct {
 // is the engine's repeat mode as the "off"/"all"/"one" strings, the same
 // spelling the snapshot publishes. PlayPauseStyle chooses the dock's primary
 // action: "default" is the inverted disc, "simple" is the bare album-player
-// glyph.
+// glyph. Lyrics is the lyric-provider group: the toggles (word-synced beats
+// line-synced across the board, so there is no order to move), where a fetched
+// sheet is written, and the folder the YouTube Music sidecar files live in.
 type PlaybackSettings struct {
 	Crossfade      CrossfadeSettings `json:"crossfade"`
 	Repeat         string            `json:"repeat"`
 	PlayPauseStyle string            `json:"playPauseStyle"`
+	Lyrics         LyricsSettings    `json:"lyrics"`
+}
+
+// LyricsSettings carries the lyric-provider configuration. Providers maps the
+// chain names ("petitlyrics", "betterlyrics", "lyricsplus", "kugou", "lrclib")
+// to their toggles, all on unless the user says otherwise. SaveLocation is
+// "lyrics" (a lyrics/ folder in the track's own directory) or "beside" (the
+// .lrc next to the file). Folder is where YouTube Music references cache their
+// <videoId>.lrc; an empty value keeps the default under the config dir.
+type LyricsSettings struct {
+	Providers    map[string]bool `json:"providers"`
+	SaveLocation string          `json:"saveLocation"`
+	Folder       string          `json:"folder"`
 }
 
 // StreamSettings is the Stream tab. It is empty today: the YouTube Music and
@@ -89,10 +105,27 @@ func defaultAppSettings() AppSettings {
 			},
 			Repeat:         "off",
 			PlayPauseStyle: "default",
+			Lyrics:         defaultLyricsSettings(),
 		},
 		General: GeneralSettings{
 			VisualizerEnabled: true,
 		},
+	}
+}
+
+// defaultLyricsSettings is the lyric-provider starting state: every provider
+// on, sheets written to a lyrics/ folder, YouTube Music files in the config
+// dir until the user picks a folder of their own.
+func defaultLyricsSettings() LyricsSettings {
+	providers := make(map[string]bool, len(lyrics.ChainProviders))
+	for _, name := range lyrics.ChainProviders {
+		providers[name] = true
+	}
+
+	return LyricsSettings{
+		Providers:    providers,
+		SaveLocation: "lyrics",
+		Folder:       "",
 	}
 }
 
@@ -193,6 +226,8 @@ func normalizeAppSettings(s AppSettings, present map[string]bool) AppSettings {
 		s.Playback.PlayPauseStyle = def.Playback.PlayPauseStyle
 	}
 
+	s.Playback.Lyrics = normalizeLyricsSettings(s.Playback.Lyrics, def.Playback.Lyrics)
+
 	// An install that predates the field keeps its visualizer on; only an
 	// explicit false turns it off. On the save path present is nil and the value
 	// the panel sent is taken as-is.
@@ -201,6 +236,35 @@ func normalizeAppSettings(s AppSettings, present map[string]bool) AppSettings {
 	}
 
 	return s
+}
+
+// clampCrossfadeMs bounds a duration to the engine's range.
+
+// normalizeLyricsSettings fills the lyric group in: unknown provider names are
+// dropped, known ones the file omitted default to on, and only the two save
+// locations are kept. legacyLyrics is the state a file written before this
+// group existed should show, and def is what normalization with no source
+// falls back to.
+func normalizeLyricsSettings(s LyricsSettings, def LyricsSettings) LyricsSettings {
+	out := LyricsSettings{
+		Providers: make(map[string]bool, len(lyrics.ChainProviders)),
+	}
+	for _, name := range lyrics.ChainProviders {
+		on, present := s.Providers[name]
+		if !present {
+			on = def.Providers[name]
+		}
+		out.Providers[name] = on
+	}
+	switch s.SaveLocation {
+	case "lyrics", "beside":
+		out.SaveLocation = s.SaveLocation
+	default:
+		out.SaveLocation = def.SaveLocation
+	}
+	out.Folder = s.Folder
+
+	return out
 }
 
 // clampCrossfadeMs bounds a duration to the engine's range.

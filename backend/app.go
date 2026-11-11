@@ -60,6 +60,7 @@ func Run(assets embed.FS) {
 	application.RegisterEvent[[]float64](eventFrame)
 	application.RegisterEvent[[]EffectMetersInfo](eventEffectMeters)
 	application.RegisterEvent[LibraryProgress](eventLibrary)
+	application.RegisterEvent[string](eventLyrics)
 
 	service := newPlayerService()
 

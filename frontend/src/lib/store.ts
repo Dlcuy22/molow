@@ -104,6 +104,11 @@ export const appSettings = writable<AppSettings>({
     crossfade: { enabled: false, durationMs: 5000, skipSameAlbum: true },
     repeat: "off",
     playPauseStyle: "default",
+    lyrics: {
+      providers: { petitlyrics: true, betterlyrics: true, lyricsplus: true, kugou: true, lrclib: true },
+      saveLocation: "lyrics",
+      folder: "",
+    },
   },
   stream: {},
   general: { visualizerEnabled: true },

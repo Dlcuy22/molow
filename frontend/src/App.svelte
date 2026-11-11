@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { Events } from "@wailsio/runtime";
   import { get } from "svelte/store";
   import { SpeakerHigh, SpeakerSlash } from "phosphor-svelte";
   import {
@@ -101,6 +102,25 @@
 
   // The lyric column and the backdrop follow the track, not the page.
   let lyricPath = "";
+  const setLyrics = (doc: Awaited<ReturnType<typeof loadLyrics>>) => {
+    lyrics = doc
+      ? {
+          lines: (doc.lines ?? []).map((l) => ({
+            timeMs: l.timeMs,
+            text: l.text,
+            translation: l.translation ?? "",
+            words:
+              l.words?.map((w) => ({
+                text: w.text,
+                startMs: w.startMs,
+                endMs: w.endMs,
+              })) ?? undefined,
+          })),
+          synced: doc.synced,
+          source: doc.source,
+        }
+      : null;
+  };
   $effect(() => {
     const path = snap.path;
     if (path === lyricPath) {
@@ -115,18 +135,26 @@
       if (lyricPath !== path) {
         return;
       }
-      lyrics = doc
-        ? {
-            lines: (doc.lines ?? []).map((l) => ({
-              timeMs: l.timeMs,
-              text: l.text,
-              translation: l.translation ?? "",
-            })),
-            synced: doc.synced,
-            source: doc.source,
-          }
-        : null;
+      setLyrics(doc);
     });
+  });
+
+  // The prefetch announces the sidecar it wrote, so a pane already open on
+  // this track reads it again instead of waiting for the next play.
+  $effect(() => {
+    const off = Events.On("molo:lyrics", (ev) => {
+      const path = ev.data as string;
+      if (path !== lyricPath || lyrics !== null) {
+        return;
+      }
+      void loadLyrics(path).then((doc) => {
+        if (lyricPath === path) {
+          setLyrics(doc);
+        }
+      });
+    });
+
+    return off;
   });
 
   let accentId = "";

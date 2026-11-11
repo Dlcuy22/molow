@@ -295,10 +295,10 @@ export function LoadPaths(paths: string[] | null): $CancellablePromise<void> {
 }
 
 /**
- * Lyrics returns the lyric sheet of a track. A local track reads its sidecar
- * file; a YouTube Music reference resolves the sheet from the catalogue, which
- * is the only remote source and never runs for a local track or album. No
- * lyrics is a nil document, not an error.
+ * Lyrics returns the lyric sheet of a track. The sidecar loader is the only
+ * read path; when its winner has not landed yet, the prefetch is joined. No
+ * sheet renders ahead of the chain, so the embedded sheet arrives with the
+ * same event as any fetched one. No lyrics is a nil document, not an error.
  */
 export function Lyrics(path: string): $CancellablePromise<lyrics$0.Document | null> {
     return $Call.ByID(3576124737, path);
@@ -370,6 +370,14 @@ export function Options(): $CancellablePromise<$models.Options> {
  */
 export function PickLibraryFolder(): $CancellablePromise<string> {
     return $Call.ByID(2367947347);
+}
+
+/**
+ * PickLyricsFolder shows the native folder picker for the YouTube Music lyric
+ * cache. It queues nothing; storage happens through SetAppSettings.
+ */
+export function PickLyricsFolder(): $CancellablePromise<string> {
+    return $Call.ByID(1185024288);
 }
 
 /**

@@ -13,10 +13,23 @@ export interface Document {
 
 /**
  * Line is one lyric line and its translation, keyed by the timestamp they
- * share. A file with no translation leaves Translation empty.
+ * share. A file with no translation leaves Translation empty. Words carries
+ * the per-word timing of a word-synced line; a line-synced line leaves it nil.
  */
 export interface Line {
     "timeMs": number;
     "text": string;
     "translation": string;
+    "words"?: Word[] | null;
+}
+
+/**
+ * Word is one sung segment of a line and its timing. End is always set: a
+ * provider may not supply one, so it falls back to the next word's start and
+ * for the last word to the next line's start, or half a second.
+ */
+export interface Word {
+    "text": string;
+    "startMs": number;
+    "endMs": number;
 }

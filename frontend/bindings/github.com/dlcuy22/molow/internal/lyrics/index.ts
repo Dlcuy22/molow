@@ -3,5 +3,6 @@
 
 export type {
     Document,
-    Line
+    Line,
+    Word
 } from "./models.js";

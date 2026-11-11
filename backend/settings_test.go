@@ -243,7 +243,7 @@ func TestSetAppSettingsReachesTheEngine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetAppSettings: %v", err)
 	}
-	if stored.Playback != next.Playback {
+	if !samePlayback(stored.Playback, next.Playback) {
 		t.Fatalf("SetAppSettings stored = %+v, want %+v", stored.Playback, next.Playback)
 	}
 
@@ -256,9 +256,30 @@ func TestSetAppSettingsReachesTheEngine(t *testing.T) {
 
 	// The document is persisted and reads back with the same values.
 	got := loadAppSettings()
-	if got.Playback != next.Playback {
+	if !samePlayback(got.Playback, next.Playback) {
 		t.Fatalf("persisted playback = %+v, want %+v", got.Playback, next.Playback)
 	}
+}
+
+// samePlayback compares the settings document field by field, since the
+// lyric-provider map is not comparable with ==.
+func samePlayback(a, b PlaybackSettings) bool {
+	if a.Crossfade != b.Crossfade || a.Repeat != b.Repeat || a.PlayPauseStyle != b.PlayPauseStyle {
+		return false
+	}
+	if a.Lyrics.SaveLocation != b.Lyrics.SaveLocation || a.Lyrics.Folder != b.Lyrics.Folder {
+		return false
+	}
+	if len(a.Lyrics.Providers) != len(b.Lyrics.Providers) {
+		return false
+	}
+	for name, on := range a.Lyrics.Providers {
+		if b.Lyrics.Providers[name] != on {
+			return false
+		}
+	}
+
+	return true
 }
 
 // TestSetAppSettingsKeepsVisualizerShape proves a save toggles only the
@@ -347,5 +368,88 @@ func TestCrossfadeMappingsRoundTrip(t *testing.T) {
 	back := crossfadeToSettings(eng)
 	if back != c {
 		t.Fatalf("round trip = %+v, want %+v", back, c)
+	}
+}
+
+// TestLoadAppSettingsNormalizesTheLyricsGroup proves a file from before the
+// lyric group gets the all-on defaults, unknown provider names are dropped and
+// only the two save locations are kept.
+func TestLoadAppSettingsNormalizesTheLyricsGroup(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+
+	p, err := settingsPath()
+	if err != nil {
+		t.Fatalf("settingsPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A pre-lyrics file gets the all-on defaults...
+	if err := os.WriteFile(p, []byte(`{"version":1,"playback":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lyrics := loadAppSettings().Playback.Lyrics
+	if len(lyrics.Providers) != 5 {
+		t.Fatalf("providers = %v, want the five chain names", lyrics.Providers)
+	}
+	for _, name := range []string{"betterlyrics", "lyricsplus", "kugou", "lrclib"} {
+		if !lyrics.Providers[name] {
+			t.Fatalf("provider %q = off, want the all-on default", name)
+		}
+	}
+	if lyrics.SaveLocation != "lyrics" {
+		t.Fatalf("saveLocation = %q, want lyrics for an unknown value", lyrics.SaveLocation)
+	}
+
+	// ...a file with junk keeps the real toggles and drops nothing sane.
+	if err := os.WriteFile(p, []byte(`{"version":1,"playback":{"lyrics":{"providers":{"betterlyrics":false,"mystery":true},"saveLocation":"desktop"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lyrics = loadAppSettings().Playback.Lyrics
+	if lyrics.Providers["betterlyrics"] {
+		t.Fatal("betterlyrics = on, want the saved off state")
+	}
+	if _, stray := lyrics.Providers["mystery"]; stray {
+		t.Fatal("an unknown provider name survived normalization")
+	}
+	for _, name := range []string{"lyricsplus", "kugou", "lrclib"} {
+		if !lyrics.Providers[name] {
+			t.Fatalf("provider %q = off, want the default on", name)
+		}
+	}
+	if lyrics.SaveLocation != "lyrics" {
+		t.Fatalf("saveLocation = %q, want lyrics for an unknown value", lyrics.SaveLocation)
+	}
+	if lyrics.Folder != "" {
+		t.Fatalf("folder = %q, want empty for the default", lyrics.Folder)
+	}
+}
+
+// TestLyricsTogglePersists proves a written providers map reads back: one
+// provider off survives the save.
+func TestLyricsTogglePersists(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+
+	svc := newPlayerService()
+	svc.player = newFakePlayer()
+
+	next := defaultAppSettings()
+	next.Playback.Lyrics.Providers["kugou"] = false
+	next.Playback.Lyrics.SaveLocation = "beside"
+	if _, err := svc.SetAppSettings(next); err != nil {
+		t.Fatalf("SetAppSettings: %v", err)
+	}
+
+	lyrics := loadAppSettings().Playback.Lyrics
+	if lyrics.Providers["kugou"] {
+		t.Fatal("kugou = on, want the saved off state")
+	}
+	if lyrics.Providers["lrclib"] != true {
+		t.Fatal("lrclib = off, want the untouched on state")
+	}
+	if lyrics.SaveLocation != "beside" {
+		t.Fatalf("saveLocation = %q, want beside", lyrics.SaveLocation)
 	}
 }

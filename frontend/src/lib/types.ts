@@ -79,10 +79,18 @@ export interface LibraryInfo {
   trackCount: number;
 }
 
+/** LyricWord is one sung segment of a word-synced line, in milliseconds. */
+export interface LyricWord {
+  text: string;
+  startMs: number;
+  endMs: number;
+}
+
 export interface LyricLine {
   timeMs: number;
   text: string;
   translation: string;
+  words?: LyricWord[];
 }
 
 export interface Lyrics {

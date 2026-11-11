@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/dlcuy22/molow/internal/lyrics"
 	ytm "github.com/dlcuy22/ytm-go"
 )
 
@@ -43,12 +46,8 @@ func TestLyricsLocalTrackSkipsYTM(t *testing.T) {
 		},
 	))
 
-	doc, err := s.Lyrics("/music/album/01. Song.flac")
-	if err != nil {
-		t.Fatalf("Lyrics: %v", err)
-	}
-	if doc != nil {
-		t.Fatalf("local track resolved to %+v, want nil", doc)
+	if doc, ok := s.ytmSheetTier("/music/album/01. Song.flac"); doc != nil || ok {
+		t.Fatalf("local track resolved to %+v %v, want nil false", doc, ok)
 	}
 	if calls != 0 {
 		t.Fatalf("catalogue calls = %d, want 0 for a local track", calls)
@@ -76,11 +75,8 @@ func TestLyricsYTMTrackResolvesSheet(t *testing.T) {
 		},
 	))
 
-	doc, err := s.Lyrics("ytm:abc123")
-	if err != nil {
-		t.Fatalf("Lyrics: %v", err)
-	}
-	if doc == nil {
+	doc, ok := s.ytmSheetTier("ytm:abc123")
+	if !ok || doc == nil {
 		t.Fatal("no document for a catalogue track with lyrics")
 	}
 	if !doc.Synced {
@@ -113,12 +109,8 @@ func TestLyricsYTMUnavailableIsCached(t *testing.T) {
 	))
 
 	for i := 0; i < 3; i++ {
-		doc, err := s.Lyrics("ytm:abc123")
-		if err != nil {
-			t.Fatalf("Lyrics: %v", err)
-		}
-		if doc != nil {
-			t.Fatalf("doc = %+v, want nil", doc)
+		if doc, ok := s.ytmSheetTier("ytm:abc123"); doc != nil || ok {
+			t.Fatalf("tier = %+v %v, want nil false", doc, ok)
 		}
 	}
 	if requests != 1 {
@@ -141,8 +133,8 @@ func TestLyricsYTMSongWithoutLyricsTabSkipsRequest(t *testing.T) {
 		},
 	))
 
-	if doc, err := s.Lyrics("ytm:abc123"); err != nil || doc != nil {
-		t.Fatalf("Lyrics = %+v, %v; want nil, nil", doc, err)
+	if doc, ok := s.ytmSheetTier("ytm:abc123"); doc != nil || ok {
+		t.Fatalf("tier = %+v %v, want nil false", doc, ok)
 	}
 	if requests != 0 {
 		t.Fatalf("lyric requests = %d, want 0", requests)
@@ -161,24 +153,86 @@ func TestLyricsYTMNetworkFailureIsNotAnError(t *testing.T) {
 		},
 	))
 
+	if doc, ok := s.ytmSheetTier("ytm:abc123"); doc != nil || ok {
+		t.Fatalf("tier = %+v %v, want nil false", doc, ok)
+	}
+}
+
+// TestLyricsWithoutProviderIsNil pins the degenerate case: a service built
+// without the YouTube provider still answers without a crash.
+func TestLyricsWithoutProviderIsNil(t *testing.T) {
+	if doc, ok := (&PlayerService{ctx: context.Background()}).ytmSheetTier("ytm:abc123"); doc != nil || ok {
+		t.Fatalf("tier = %+v %v, want nil false", doc, ok)
+	}
+}
+
+// TestLyricsWaitsForTheChain pins the race the catalogue fallback used to
+// lose: a pane opened on a YTM track before the pump registers the prefetch
+// gets nil, never the embedded sheet first. The event lands when the chain
+// concludes and the pane re-reads through the same resolver.
+func TestLyricsWaitsForTheChain(t *testing.T) {
+	calls := 0
+	s := lyricsService(lyricProvider(
+		func(context.Context, string) (*ytm.Song, error) {
+			calls++
+
+			return &ytm.Song{ID: "abc123", LyricsBrowseID: "MPLYt_x"}, nil
+		},
+		func(context.Context, string) (*ytm.Lyrics, error) {
+			calls++
+
+			return &ytm.Lyrics{Lines: []ytm.LyricLine{{Text: "embedded"}}}, nil
+		},
+	))
+
 	doc, err := s.Lyrics("ytm:abc123")
 	if err != nil {
 		t.Fatalf("Lyrics: %v", err)
 	}
 	if doc != nil {
-		t.Fatalf("doc = %+v, want nil", doc)
+		t.Fatalf("Lyrics = %+v, want nil while the chain has not concluded", doc)
+	}
+	if calls != 0 {
+		t.Fatalf("catalogue calls = %d, want 0 from the pane read", calls)
 	}
 }
 
-// TestLyricsWithoutProviderIsNil pins the degenerate case: a service built
-// without the YouTube provider still answers for a streamed reference.
-func TestLyricsWithoutProviderIsNil(t *testing.T) {
-	doc, err := (&PlayerService{ctx: context.Background()}).Lyrics("ytm:abc123")
+// TestLyricsChainFallsThroughToTheSheetTier pins the chain's last tier: a miss
+// across the providers leaves the catalogue sheet as the joined result, served
+// with the same event and state as any fetched sheet.
+func TestLyricsChainFallsThroughToTheSheetTier(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+
+	svc := newPlayerService()
+	svc.player = newFakePlayer()
+	svc.ytmProv = lyricProvider(
+		func(context.Context, string) (*ytm.Song, error) {
+			return &ytm.Song{ID: "abc123", LyricsBrowseID: "MPLYt_x"}, nil
+		},
+		func(context.Context, string) (*ytm.Lyrics, error) {
+			return &ytm.Lyrics{Lines: []ytm.LyricLine{{Text: "embedded"}}}, nil
+		},
+	)
+	for name := range svc.appSettings.Playback.Lyrics.Providers {
+		svc.appSettings.Playback.Lyrics.Providers[name] = false
+	}
+
+	cancel, done := startLyricsFetch(svc, "ytm:abc123", "abc123", lyrics.TrackMeta{Title: "Song"})
+	defer cancel()
+	<-done
+
+	doc, err := svc.Lyrics("ytm:abc123")
 	if err != nil {
 		t.Fatalf("Lyrics: %v", err)
 	}
-	if doc != nil {
-		t.Fatalf("doc = %+v, want nil", doc)
+	if doc == nil || doc.Source != "ytmusic" {
+		t.Fatalf("Lyrics = %+v, want the catalogue sheet through the join", doc)
+	}
+
+	// The tier is session memory only: nothing lands in the sidecar store.
+	if _, err := os.Stat(filepath.Join(root, "molo", "lyrics", "abc123.lrc")); !os.IsNotExist(err) {
+		t.Fatalf("catalogue sheet must not be written as a sidecar: stat err %v", err)
 	}
 }
 

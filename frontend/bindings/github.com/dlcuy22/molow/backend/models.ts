@@ -191,6 +191,20 @@ export interface LibraryProgress {
 }
 
 /**
+ * LyricsSettings carries the lyric-provider configuration. Providers maps the
+ * chain names ("petitlyrics", "betterlyrics", "lyricsplus", "kugou", "lrclib")
+ * to their toggles, all on unless the user says otherwise. SaveLocation is
+ * "lyrics" (a lyrics/ folder in the track's own directory) or "beside" (the
+ * .lrc next to the file). Folder is where YouTube Music references cache their
+ * <videoId>.lrc; an empty value keeps the default under the config dir.
+ */
+export interface LyricsSettings {
+    "providers": { [_ in string]?: boolean } | null;
+    "saveLocation": string;
+    "folder": string;
+}
+
+/**
  * Options is the static chooser data.
  */
 export interface Options {
@@ -204,12 +218,15 @@ export interface Options {
  * is the engine's repeat mode as the "off"/"all"/"one" strings, the same
  * spelling the snapshot publishes. PlayPauseStyle chooses the dock's primary
  * action: "default" is the inverted disc, "simple" is the bare album-player
- * glyph.
+ * glyph. Lyrics is the lyric-provider group: the toggles (word-synced beats
+ * line-synced across the board, so there is no order to move), where a fetched
+ * sheet is written, and the folder the YouTube Music sidecar files live in.
  */
 export interface PlaybackSettings {
     "crossfade": CrossfadeSettings;
     "repeat": string;
     "playPauseStyle": string;
+    "lyrics": LyricsSettings;
 }
 
 /**

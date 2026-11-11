@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/dlcuy22/molow/internal/lyrics"
 	ytm "github.com/dlcuy22/ytm-go"
 )
 
@@ -58,6 +59,22 @@ func (p *ytmProvider) lyricsFor(ctx context.Context, ref string) (*ytm.Lyrics, b
 	p.rememberSheet(ref, sheet)
 
 	return sheet, true
+}
+
+// ytmSheetTier is the last tier of the chain for a YouTube Music reference:
+// the catalogue's own sheet, mapped to the document shape. It is not written
+// as a sidecar and not remembered as a find, so the next session runs the
+// chain again.
+func (s *PlayerService) ytmSheetTier(path string) (*lyrics.Document, bool) {
+	if !isYTMRef(path) || s.ytmProv == nil {
+		return nil, false
+	}
+	sheet, ok := s.ytmProv.lyricsFor(s.ctx, path)
+	if !ok || sheet == nil {
+		return nil, false
+	}
+
+	return ytmLyricsDocument(sheet), true
 }
 
 // cachedSheet reads the cache. A nil sheet with true is a track known to have

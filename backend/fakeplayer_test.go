@@ -21,9 +21,10 @@ import (
 type fakePlayer struct {
 	mu sync.Mutex
 
-	state molo.State
-	path  string
-	pos   time.Duration
+	state    molo.State
+	path     string
+	pos      time.Duration
+	duration time.Duration
 
 	// autoActivate makes Play transition to Playing immediately. Tests that are
 	// not about the async build window set it; the ones that are leave it false
@@ -118,7 +119,7 @@ func (f *fakePlayer) Snapshot() molo.Snapshot {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	return molo.Snapshot{State: f.state, Path: f.path, Position: f.pos}
+	return molo.Snapshot{State: f.state, Path: f.path, Position: f.pos, Duration: f.duration}
 }
 
 func (f *fakePlayer) Events() <-chan molo.Event { return nil }

@@ -14,6 +14,7 @@ declare module "@wailsio/runtime" {
         interface CustomEvents {
             "molo:effect-meters": backend$0.EffectMetersInfo[] | null;
             "molo:library": backend$0.LibraryProgress;
+            "molo:lyrics": string;
             "molo:snapshot": backend$0.Snapshot;
             "molo:spectrum": number[] | null;
         }

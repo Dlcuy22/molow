@@ -1,12 +1,14 @@
 <script lang="ts">
   import { appSettings, commands, discordStatus, spectrumConfig, spectrumSchema } from "../../store";
-  import type { CrossfadeSettings, SpectrumConfig } from "../../../../bindings/github.com/dlcuy22/molow/backend/models";
+  import { PlayerService } from "../../../../bindings/github.com/dlcuy22/molow/backend";
+  import type { CrossfadeSettings, LyricsSettings, SpectrumConfig } from "../../../../bindings/github.com/dlcuy22/molow/backend/models";
   import type { Param } from "../../../../bindings/github.com/dlcuy22/molow/internal/spectrum/models";
   import { fftLabel } from "../../spectrum-fft";
   import DiscordCard from "../DiscordCard.svelte";
   import Switch from "./Switch.svelte";
   import Slider from "./Slider.svelte";
   import Picker from "./Picker.svelte";
+  import TextField from "./TextField.svelte";
   import SettingRow from "./SettingRow.svelte";
 
   // The settings panel: a modal overlay opened with Ctrl+I, with a tab per
@@ -123,6 +125,39 @@
       playback: { ...$appSettings.playback, playPauseStyle: style },
     });
   }
+
+  // setLyrics updates one field of the lyric-provider group: a toggle, the
+  // save location, or the YouTube Music cache folder.
+  function setLyrics(patch: Partial<LyricsSettings>) {
+    commands.setAppSettings({
+      ...$appSettings,
+      playback: {
+        ...$appSettings.playback,
+        lyrics: { ...$appSettings.playback.lyrics, ...patch },
+      },
+    });
+  }
+
+  function toggleProvider(name: string, on: boolean) {
+    setLyrics({ providers: { ...$appSettings.playback.lyrics.providers, [name]: on } });
+  }
+
+  // browseLyricsFolder opens the native picker and stores the choice.
+  // Cancelling changes nothing.
+  async function browseLyricsFolder() {
+    try {
+      const path = await PlayerService.PickLyricsFolder();
+      if (path) {
+        setLyrics({ folder: path });
+      }
+    } catch {
+      // Cancelled: no setting to write.
+    }
+  }
+
+  const providers = $derived($appSettings.playback.lyrics.providers ?? {});
+  const saveLocation = $derived($appSettings.playback.lyrics.saveLocation);
+  const lyricsFolder = $derived($appSettings.playback.lyrics.folder);
 
   // setVisualizer persists the flag and pokes the running pump at once. The
   // persisted value is what a restart reads; the ConfigureSpectrum call is what
@@ -262,6 +297,94 @@
                   ]}
                   onchange={(v) => setPlayPauseStyle(v)}
                 />
+              {/snippet}
+            </SettingRow>
+
+            <SettingRow
+              label="PetitLyrics"
+              description="Word-synced Japanese from the catalogue the others do not cover."
+            >
+              {#snippet control()}
+                <Switch checked={providers.petitlyrics ?? true} label="PetitLyrics" onchange={(on) => toggleProvider("petitlyrics", on)} />
+              {/snippet}
+            </SettingRow>
+
+            <SettingRow
+              label="BetterLyrics"
+              description="Word or line timing from a YouTube-anchored search."
+            >
+              {#snippet control()}
+                <Switch checked={providers.betterlyrics ?? true} label="BetterLyrics" onchange={(on) => toggleProvider("betterlyrics", on)} />
+              {/snippet}
+            </SettingRow>
+
+            <SettingRow
+              label="LyricsPlus"
+              description="Community mirrors with word or line timing, and a word-synced search fallback."
+            >
+              {#snippet control()}
+                <Switch checked={providers.lyricsplus ?? true} label="LyricsPlus" onchange={(on) => toggleProvider("lyricsplus", on)} />
+              {/snippet}
+            </SettingRow>
+
+            <SettingRow
+              label="KuGou"
+              description="Line-synced, from the Chinese catalogue."
+            >
+              {#snippet control()}
+                <Switch checked={providers.kugou ?? true} label="KuGou" onchange={(on) => toggleProvider("kugou", on)} />
+              {/snippet}
+            </SettingRow>
+
+            <SettingRow
+              label="LrcLib"
+              description="Line-synced from the open catalogue; runs last and catches what the others miss."
+            >
+              {#snippet control()}
+                <Switch checked={providers.lrclib ?? true} label="LrcLib" onchange={(on) => toggleProvider("lrclib", on)} />
+              {/snippet}
+            </SettingRow>
+
+            <SettingRow
+              label="Save fetched lyrics"
+              description={
+                saveLocation === "beside"
+                  ? "The .lrc lands beside the audio, one file per track in the album's own folder."
+                  : "The .lrc lands in a lyrics/ folder inside the album's own folder."
+              }
+            >
+              {#snippet control()}
+                <Picker
+                  label="Save fetched lyrics"
+                  value={saveLocation}
+                  options={[
+                    { value: "lyrics", label: "Lyrics folder" },
+                    { value: "beside", label: "Beside the track" },
+                  ]}
+                  onchange={(v) => setLyrics({ saveLocation: v })}
+                />
+              {/snippet}
+            </SettingRow>
+
+            <SettingRow
+              label="YouTube Music lyrics folder"
+              description="Where streamed tracks cache their sidecars, one file per video. The default lives under the app's config folder."
+            >
+              {#snippet control()}
+                <div class="flex items-end gap-1.5">
+                  <TextField
+                    label="YouTube Music lyrics folder"
+                    value={lyricsFolder}
+                    placeholder="Default"
+                    onchange={(v) => setLyrics({ folder: v })}
+                  />
+                  <button
+                    class="rounded-[4px] border border-line bg-surface px-2 py-1.5 text-xs text-fg transition-colors hover:bg-hover"
+                    onclick={() => void browseLyricsFolder()}
+                  >
+                    Browse
+                  </button>
+                </div>
               {/snippet}
             </SettingRow>
           </div>

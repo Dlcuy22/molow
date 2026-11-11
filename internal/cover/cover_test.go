@@ -87,8 +87,8 @@ func TestDataURLScalesDownAndKeepsAspect(t *testing.T) {
 
 	img := decodeDataURL(t, url)
 	b := img.Bounds()
-	if b.Dx() != 320 || b.Dy() != 240 {
-		t.Fatalf("thumbnail = %dx%d, want 320x240", b.Dx(), b.Dy())
+	if b.Dx() != 512 || b.Dy() != 384 {
+		t.Fatalf("thumbnail = %dx%d, want 512x384", b.Dx(), b.Dy())
 	}
 }
 

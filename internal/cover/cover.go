@@ -27,10 +27,10 @@ import (
 // so this is a normal outcome rather than a bug.
 var ErrNotImage = errors.New("cover: not a decodable image")
 
-// maxEdge bounds the longest side of a thumbnail. 320px covers the now-playing
-// tile at 2x on the largest window this app opens, and keeps the inline data
-// URL to a few tens of kilobytes.
-const maxEdge = 320
+// maxEdge is the longest side of a thumbnail. 512px keeps the now-playing
+// tile crisp above 1x display scaling and keeps the inline data URL to a few
+// tens of kilobytes.
+const maxEdge = 512
 
 // jpegQuality trades a little fidelity for a much smaller payload than PNG on
 // photographic album art.

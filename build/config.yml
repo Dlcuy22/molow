@@ -11,7 +11,7 @@ info:
   description: "Music player and library manager" # The application description
   copyright: "(c) 2026, Asrian Putra" # Copyright text
   comments: "Audio engine and DSP scripting engine" # Comments
-  version: "0.3.0" # The application version
+  version: "0.4.0" # The application version
 
 # iOS build configuration (uncomment to customise iOS project generation)
 # Note: Keys under `ios` OVERRIDE values under `info` when set.

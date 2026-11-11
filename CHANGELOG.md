@@ -9,6 +9,42 @@ without a deprecation cycle.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-11
+
+### Added
+
+- A lyric provider chain in `internal/lyrics`: PetitLyrics, BetterLyrics,
+  LyricsPlus, Kugou and LRCLIB, all on by default and each toggled in a new
+  Lyrics group under Playback. The first provider that answers with a sheet
+  wins, and the sheet is written as a sidecar, so the next play reads it from
+  disk.
+- Word-synced lyrics: a sheet that carries per-word marks is drawn word by word,
+  and a sheet with only line timing still plays line by line.
+- A save location for the sheets a provider returns: a `lyrics/` folder beside
+  the track or the `.lrc` next to the file, with the YouTube Music cache in a
+  folder of its own.
+- Two visualizer layouts: Full draws 256 points across the whole album sheet,
+  Minimal keeps the 72 px strip at 150. The layout is stored apart from the
+  on/off switch, so turning the visualizer back on restores the chosen one.
+- `MOLOW_DEBUG` raises the log level to debug for a run, so the lines below INFO
+  reach the log.
+
+### Changed
+
+- Artwork thumbnails decode at 512 px on the longest side instead of 320, which
+  keeps the now-playing tile crisp above 1x display scaling.
+- A YouTube Music thumbnail takes the largest still the video offers instead of
+  a fixed size.
+- The browser focus outline no longer draws, since it appeared around the whole
+  settings dialog as soon as Ctrl+I focused the panel; a control's own state
+  carries the feedback.
+
+### Fixed
+
+- Escape closes only the topmost surface. The settings panel and the command
+  palette take the press first, so the album player no longer minimizes under an
+  open dialog.
+
 ## [0.3.0] - 2026-11-10
 
 ### Added
@@ -106,6 +142,8 @@ First release.
 - Builds for Linux, Windows, and macOS, plus a server build that runs the same
   backend as an HTTP server.
 
-[Unreleased]: https://github.com/Dlcuy22/molow/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Dlcuy22/molow/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Dlcuy22/molow/releases/tag/v0.4.0
+[0.3.0]: https://github.com/Dlcuy22/molow/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Dlcuy22/molow/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Dlcuy22/molow/releases/tag/v0.1.0

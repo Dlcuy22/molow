@@ -418,10 +418,17 @@
 <svelte:window
   onpointerdown={outside}
   onkeydown={(e) => {
-    if (e.key === "Escape" && playerOpen) {
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    // A surface opened over the sheet owns Escape, so the sheet does not
+    // minimize under it. A dialog with focus closes itself and stops the
+    // event; this chain covers a press while focus sits outside the dialog.
+    if (settingsOpen) {
+      settingsOpen = false;
+    } else if (paletteOpen) {
+      closePalette();
+    } else if (playerOpen) {
       closePlayer();
-    }
-    if (e.key === "Escape" && searchOpen) {
+    } else if (searchOpen) {
       searchOpen = false;
     }
   }}

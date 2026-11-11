@@ -181,6 +181,9 @@
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
       e.preventDefault();
+      // The panel sits over the album player, which also closes on Escape.
+      // Stopping here keeps the press from reaching that handler.
+      e.stopPropagation();
       onclose();
     }
   }

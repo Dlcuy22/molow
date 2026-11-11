@@ -557,9 +557,11 @@
     }
 
     // Escape closes from anywhere in the dialog, including a focused button or
-    // slider, so the modal can always be dismissed by keyboard.
+    // slider, so the modal can always be dismissed by keyboard. The stop keeps
+    // the press from also closing the album player behind the palette.
     if (e.key === "Escape") {
       e.preventDefault();
+      e.stopPropagation();
       onclose();
 
       return;

@@ -4,6 +4,7 @@ import (
 	"embed"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/dlcuy22/molo/priority"
 	"github.com/lmittmann/tint"
@@ -49,10 +50,13 @@ func Run(assets embed.FS) {
 	}
 	// A terminal gets the tinted handler so the lines stay readable; a piped
 	// or redirected stderr keeps the ANSI codes out of whatever collects it.
+	// The time format follows the wails CLI's logger, so a dev session reads
+	// as one style.
 	tty := isatty.IsTerminal(os.Stderr.Fd())
 	logger := tint.NewTextHandler(os.Stderr, &tint.Options{
-		Level:   level,
-		NoColor: !tty || os.Getenv("NO_COLOR") != "",
+		Level:      level,
+		NoColor:    !tty || os.Getenv("NO_COLOR") != "",
+		TimeFormat: time.Kitchen,
 	})
 	// The desktop's steady state re-emits the same record every few seconds,
 	// so the lines are collapsed unless MOLOW_DEBUG_TIDY turns it off.

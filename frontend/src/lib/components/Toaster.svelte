@@ -86,32 +86,28 @@
           />
         {/key}
       {:else if t.kind === "bar"}
-        <div class="border border-line bg-surface">
-          <div class="flex w-64 flex-col gap-2 px-4 py-3">
-            <div class="flex items-baseline justify-between gap-3">
-              <span class="text-xs text-muted">{t.label}</span>
-              <span class="text-xs tabular-nums text-fg">{t.text}</span>
-            </div>
-            <!-- No transition on the fill: the value steps per keypress, and the
-                 bar would chase the number beside it. -->
-            <div class="h-1.5 w-full overflow-hidden rounded-full bg-track">
-              <div
-                class="h-full bg-accent"
-                style="width: {Math.round((t.value ?? 0) * 100)}%"
-              ></div>
-            </div>
-          </div>
-        </div>
+        <!-- Interactive: the card stays mounted so the level can ease, and the
+             card restarts its own clock on each new level, in step with the
+             store's timer, so a held key keeps it up. -->
+        <Toast
+          message={t.label}
+          icon={t.icon}
+          value={t.text}
+          progress={t.value}
+          eased
+          duration={TOAST_TTL.bar}
+          onclose={() => clearToast(t.id)}
+        />
       {:else if t.kind === "tile"}
-        <div class="border border-line bg-surface">
-          <div class="flex flex-col items-center gap-2 px-6 py-4">
-            {#if t.icon}
-              {@const Icon = t.icon}
-              <Icon size="40" weight="fill" class="text-fg" aria-hidden="true" />
-            {/if}
-            <span class="text-xs text-muted">{t.label}</span>
-          </div>
-        </div>
+        {#key t}
+          <Toast
+            message={t.label}
+            icon={t.icon}
+            layout="stacked"
+            duration={TOAST_TTL.tile}
+            onclose={() => clearToast(t.id)}
+          />
+        {/key}
       {:else}
         <div class="border border-line bg-surface">
           <div class="flex flex-col items-center gap-2 px-4 py-3">

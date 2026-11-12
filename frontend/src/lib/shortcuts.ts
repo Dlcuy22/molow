@@ -17,7 +17,9 @@ export type ShortcutAction =
   | "visualizer"
   | "mute"
   | "repeat-all"
-  | "repeat-one";
+  | "repeat-one"
+  | "seek-forward"
+  | "seek-back";
 
 /** ShortcutKeyEvent is the slice of KeyboardEvent the shortcut layer reads. A
  *  plain object works, so a test drives the keymap without constructing an
@@ -68,6 +70,17 @@ export function matchShortcut(e: ShortcutKeyEvent): ShortcutAction | null {
     case "<":
     case ",":
       return "prev";
+    // The arrows are the transport's own keys: right and left nudge the
+    // position, up and down the level. A shift does not change an arrow's
+    // key, so unlike the digit row they need no shifted guard.
+    case "ArrowRight":
+      return "seek-forward";
+    case "ArrowLeft":
+      return "seek-back";
+    case "ArrowUp":
+      return "volume-up";
+    case "ArrowDown":
+      return "volume-down";
     case "L":
       // Uppercase is the shifted key. It is matched before the lowercase pass
       // below so `L` cannot be read as repeat-all.
@@ -114,12 +127,9 @@ export function matchShortcut(e: ShortcutKeyEvent): ShortcutAction | null {
 }
 
 // The input types that mean "the user is typing". Everything else an input can
-// be (range, checkbox, radio, button, file) owns its own arrow keys but never
-// takes a letter, so a bare shortcut over one should still fire. A range slider
-// is the case that matters: it consumes the arrows and Home/End for its own
-// value, and nothing types into it, so swallowing `s` or `m` over a focused
-// slider would take a key the slider cannot use. An input with no type reads as
-// text in the DOM, so absence is text-like here too.
+// be (range, checkbox, radio, button, file) never takes a letter, so a bare
+// shortcut over one still fires. An input with no type reads as text in the
+// DOM, so absence is text-like here too.
 const TEXT_INPUT_TYPES = new Set([
   "text",
   "search",
@@ -130,11 +140,15 @@ const TEXT_INPUT_TYPES = new Set([
 ]);
 
 /**
- * shouldIgnoreTarget reports whether a keydown on this element is typing rather
- * than a shortcut. It reads only the properties a target carries, so a test can
- * pass a plain object; the live caller passes document.activeElement.
+ * shouldIgnoreTarget reports whether a keydown on this element belongs to the
+ * element rather than to a shortcut. A text-like field claims every key; a
+ * range slider claims only its own arrows, which the key argument identifies,
+ * so `s` or `m` over a focused slider still fires while the arrows move the
+ * slider instead of the volume behind it. It reads only the properties a
+ * target carries, so a test can pass a plain object; the live caller passes
+ * document.activeElement.
  */
-export function shouldIgnoreTarget(target: EventTarget | null): boolean {
+export function shouldIgnoreTarget(target: EventTarget | null, key?: string): boolean {
   if (target === null) {
     return false;
   }
@@ -153,6 +167,17 @@ export function shouldIgnoreTarget(target: EventTarget | null): boolean {
   if (tag === "INPUT") {
     const type = (el.type ?? "text").toLowerCase();
 
+    // The arrows are bound to the transport now, so a focused slider must
+    // claim them or one press would move the slider and the volume.
+    if (type === "range") {
+      return (
+        key === "ArrowUp" ||
+        key === "ArrowDown" ||
+        key === "ArrowLeft" ||
+        key === "ArrowRight"
+      );
+    }
+
     return type === "" || TEXT_INPUT_TYPES.has(type);
   }
   // isContentEditable is true on an editable node and on its descendants, so a
@@ -168,7 +193,9 @@ export function shouldIgnoreTarget(target: EventTarget | null): boolean {
 export interface ShortcutContext {
   isModalOpen(): boolean;
   isPaletteOpen(): boolean;
-  isEditableFocused(): boolean;
+  /** ownsKey reports whether the focused element claims this key for itself:
+   *  a text field claims everything, a slider only its arrows. */
+  ownsKey(key: string): boolean;
   openSettings(): void;
   openPalette(source: "queue" | "ytm", preview: boolean): void;
   closePaletteOrSwitch(source: "queue" | "ytm"): void;
@@ -199,7 +226,7 @@ export function shortcutFor(
   if (e.ctrlKey || e.metaKey || e.altKey) {
     return null;
   }
-  if (ctx.isEditableFocused()) {
+  if (ctx.ownsKey(e.key)) {
     return null;
   }
   if (!env.hasFocus || !env.visible) {

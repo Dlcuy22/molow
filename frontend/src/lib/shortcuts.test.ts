@@ -70,6 +70,16 @@ describe("matchShortcut", () => {
     expect(matchShortcut(key({ key: "," }))).toBe("prev");
   });
 
+  it("maps the arrows to seek and volume", () => {
+    expect(matchShortcut(key({ key: "ArrowRight" }))).toBe("seek-forward");
+    expect(matchShortcut(key({ key: "ArrowLeft" }))).toBe("seek-back");
+    expect(matchShortcut(key({ key: "ArrowUp" }))).toBe("volume-up");
+    expect(matchShortcut(key({ key: "ArrowDown" }))).toBe("volume-down");
+    // A shift does not change an arrow's key, so the shifted form is the same
+    // action rather than a rejected one.
+    expect(matchShortcut(key({ key: "ArrowUp", shiftKey: true }))).toBe("volume-up");
+  });
+
   it("maps the toggles", () => {
     expect(matchShortcut(key({ key: "s" }))).toBe("shuffle");
     expect(matchShortcut(key({ key: "v" }))).toBe("visualizer");
@@ -131,6 +141,22 @@ describe("shouldIgnoreTarget", () => {
     expect(shouldIgnoreTarget(el({ tagName: "BUTTON" }))).toBe(false);
   });
 
+  it("claims a slider's arrows, and only its arrows", () => {
+    // The arrows are bound to the transport now, so a focused slider must
+    // keep them or one press would move the slider and the volume.
+    const range = el({ tagName: "INPUT", type: "range" });
+    expect(shouldIgnoreTarget(range, "ArrowUp")).toBe(true);
+    expect(shouldIgnoreTarget(range, "ArrowDown")).toBe(true);
+    expect(shouldIgnoreTarget(range, "ArrowLeft")).toBe(true);
+    expect(shouldIgnoreTarget(range, "ArrowRight")).toBe(true);
+    // A letter over the slider is still the shortcut's, and a call without a
+    // key keeps the target-only inspection honest.
+    expect(shouldIgnoreTarget(range, "s")).toBe(false);
+    expect(shouldIgnoreTarget(range)).toBe(false);
+    // Another input's arrows were never the shortcut's to begin with.
+    expect(shouldIgnoreTarget(el({ tagName: "INPUT", type: "text" }), "ArrowUp")).toBe(true);
+  });
+
   it("ignores a contenteditable node", () => {
     expect(shouldIgnoreTarget(el({ tagName: "DIV", isContentEditable: true }))).toBe(true);
     expect(shouldIgnoreTarget(el({ tagName: "DIV", isContentEditable: false }))).toBe(false);
@@ -147,7 +173,7 @@ function context(over: Partial<ShortcutContext> = {}): ShortcutContext {
   return {
     isModalOpen: () => false,
     isPaletteOpen: () => false,
-    isEditableFocused: () => false,
+    ownsKey: () => false,
     openSettings: () => {},
     openPalette: () => {},
     closePaletteOrSwitch: () => {},
@@ -175,13 +201,29 @@ describe("shortcutFor gating", () => {
     expect(shortcutFor(key({ key: "n", altKey: true }), context(), focused)).toBeNull();
   });
 
-  it("ignores a key typed into an editable target", () => {
-    const ctx = context({ isEditableFocused: () => true });
+  it("ignores a key the focused target claims", () => {
+    const ctx = context({ ownsKey: () => true });
     expect(shortcutFor(key({ key: "l" }), ctx, focused)).toBeNull();
   });
 
+  it("hands the key to the target gate", () => {
+    // The gate must pass the actual key, because a slider claims only its
+    // arrows while a text field claims everything.
+    const seen: string[] = [];
+    const ctx = context({
+      ownsKey: (k) => {
+        seen.push(k);
+
+        return false;
+      },
+    });
+    shortcutFor(key({ key: "ArrowUp" }), ctx, focused);
+
+    expect(seen).toEqual(["ArrowUp"]);
+  });
+
   it("leaves space to a focused text field", () => {
-    const ctx = context({ isEditableFocused: () => true });
+    const ctx = context({ ownsKey: () => true });
     expect(shortcutFor(key({ key: " ", code: "Space" }), ctx, focused)).toBeNull();
   });
 
@@ -233,7 +275,7 @@ function recording(over: Partial<ShortcutContext> = {}): Calls {
   calls.ctx = {
     isModalOpen: () => false,
     isPaletteOpen: () => false,
-    isEditableFocused: () => false,
+    ownsKey: () => false,
     openSettings: () => {
       calls.settings += 1;
     },

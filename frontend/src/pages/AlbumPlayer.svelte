@@ -160,18 +160,12 @@
     glideTo(viewport.scrollTop + (r.top - vp.top) - vp.height / 2 + r.height / 2);
   }
 
-  // Wheel, touch and scroll keys arm the user session. A CSS smooth scroll
-  // the pane's own gliding fires scroll events too, so raw scroll events
-  // never count as user intent.
-  const armKeys = new Set([
-    "ArrowUp",
-    "ArrowDown",
-    "PageUp",
-    "PageDown",
-    "Home",
-    "End",
-    " ",
-  ]);
+  // Wheel, touch and the page scroll keys arm the user session. A CSS smooth
+  // scroll the pane's own gliding fires scroll events too, so raw scroll
+  // events never count as user intent. The arrows and space are transport
+  // keys now: the shortcut layer consumes them, so they can no longer scroll
+  // the pane and must not read as browsing.
+  const armKeys = new Set(["PageUp", "PageDown", "Home", "End"]);
 
   function onwheel(e: WheelEvent) {
     if (e.deltaY !== 0) beginUserScroll();

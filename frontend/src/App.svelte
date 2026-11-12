@@ -306,16 +306,20 @@
     openPalette(source, false);
   }
 
-  let volumeToastTimer: ReturnType<typeof setTimeout> | null = null;
+  // The card shows on the first press and every press after updates it in
+  // place, reading the optimistic value, so the bar moves with the key rather
+  // than reporting once after the hold ends. The store restarts the card's
+  // clock on each update, so the hold keeps it up.
   function showVolumeToast() {
-    if (volumeToastTimer !== null) {
-      clearTimeout(volumeToastTimer);
-    }
-    volumeToastTimer = setTimeout(() => {
-      volumeToastTimer = null;
-      const v = volume();
-      showToast({ key: "volume", kind: "bar", label: "Volume", value: v, text: `${percent(v)}%` });
-    }, 400);
+    const v = volume();
+    showToast({
+      key: "volume",
+      kind: "bar",
+      label: "Volume",
+      value: v,
+      text: `${percent(v)}%`,
+      icon: SpeakerHigh,
+    });
   }
 
   function showMuteToast() {
@@ -341,6 +345,9 @@
     repeatIntent = mode;
     persistRepeat(mode);
   }
+
+  // Seek step per arrow keypress, 5 seconds.
+  const SEEK_STEP_MS = 5000;
 
   function action(a: ShortcutAction) {
     switch (a) {
@@ -373,6 +380,19 @@
         commands.prev();
 
         return;
+      case "seek-forward":
+      case "seek-back": {
+        // The engine seek is absolute, so the target is the snapshot position
+        // plus the step, clamped to the track when its length is known.
+        if (!hasQueue) {
+          return;
+        }
+        const step = a === "seek-forward" ? SEEK_STEP_MS : -SEEK_STEP_MS;
+        const at = Math.max(0, snap.position + step);
+        commands.seek(snap.duration > 0 ? Math.min(at, snap.duration) : at);
+
+        return;
+      }
       case "shuffle": {
         const on = nextShuffleTarget(shuffleIntent, snap.shuffled);
         shuffleIntent = on;
@@ -405,9 +425,12 @@
 
   onMount(() =>
     installKeyboard({
-      isModalOpen: () => paletteOpen || settingsOpen || playerOpen,
+      // The album player sheet is not a modal to the keyboard: it is the
+      // playback view, so the playback keys belong to it. Only the surfaces
+      // that actually take the keyboard (the palette, settings) gate it.
+      isModalOpen: () => paletteOpen || settingsOpen,
       isPaletteOpen: () => paletteOpen,
-      isEditableFocused: () => shouldIgnoreTarget(document.activeElement),
+      ownsKey: (k) => shouldIgnoreTarget(document.activeElement, k),
       openSettings: () => (settingsOpen = !settingsOpen),
       openPalette,
       closePaletteOrSwitch,

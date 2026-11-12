@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Molo
-Exec=molo
+Exec=molow
 Icon=com.dlcuy22.molow
 Categories=AudioVideo;Audio;Player;
 Comment=A desktop audio player

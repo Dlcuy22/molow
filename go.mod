@@ -8,6 +8,8 @@ require (
 	github.com/ebitengine/purego v0.11.2
 	github.com/go-ole/go-ole v1.3.0
 	github.com/godbus/dbus/v5 v5.2.4
+	github.com/lmittmann/tint v1.2.1
+	github.com/mattn/go-isatty v0.0.24
 	github.com/ncruces/go-sqlite3 v0.37.0
 	github.com/tphakala/simd v1.14.0
 	github.com/wailsapp/wails/v3 v3.0.0
@@ -25,7 +27,6 @@ require (
 	github.com/ebitengine/oto/v3 v3.5.1 // indirect
 	github.com/jfreymuth/pulse v0.1.3 // indirect
 	github.com/mattn/go-colorable v0.1.16 // indirect
-	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-sqlite3-wasm/v6 v6.5.35401 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/tphakala/go-aac v0.7.1 // indirect

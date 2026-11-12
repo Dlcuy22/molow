@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"github.com/dlcuy22/molo/priority"
+	"github.com/lmittmann/tint"
+	"github.com/mattn/go-isatty"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -41,11 +43,24 @@ func Run(assets embed.FS) {
 	consoleAttached = attachConsole()
 
 	level := slog.LevelInfo
-	// If enabled, a log with log level under INFO will show up in logs.
+	// If MOLOW_DEBUG is set, a log below INFO shows up in the output.
 	if os.Getenv("MOLOW_DEBUG") != "" {
 		level = slog.LevelDebug
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+	// A terminal gets the tinted handler so the lines stay readable; a piped
+	// or redirected stderr keeps the ANSI codes out of whatever collects it.
+	tty := isatty.IsTerminal(os.Stderr.Fd())
+	logger := tint.NewTextHandler(os.Stderr, &tint.Options{
+		Level:   level,
+		NoColor: !tty || os.Getenv("NO_COLOR") != "",
+	})
+	// The desktop's steady state re-emits the same record every few seconds,
+	// so the lines are collapsed unless MOLOW_DEBUG_TIDY turns it off.
+	tidy := newTidyHandler(logger)
+	slog.SetDefault(slog.New(tidy))
+	// The held-back record keeps the repeat count of a stream that ends in
+	// repeats, so it is sent on before the process goes away.
+	defer func() { _ = tidy.Flush() }()
 
 	// Raise scheduling priority before the engine builds its audio thread, so
 	// the thread inherits it. The report names the platform and the scheduling
@@ -134,6 +149,8 @@ func Run(assets embed.FS) {
 
 	if err := app.Run(); err != nil {
 		slog.Error("application exited", "error", err)
+		// os.Exit skips defers, so the held-back record is sent on here too.
+		_ = tidy.Flush()
 		os.Exit(1)
 	}
 }

@@ -361,10 +361,8 @@ body {
   transition: opacity 140ms ease;
 }
 .range-hover:hover::-webkit-slider-thumb,
-.range-hover:focus-visible::-webkit-slider-thumb,
 .range-hover:active::-webkit-slider-thumb,
 .range-hover:hover::-moz-range-thumb,
-.range-hover:focus-visible::-moz-range-thumb,
 .range-hover:active::-moz-range-thumb {
   opacity: 1;
 }
@@ -383,8 +381,8 @@ body {
 
 /* The transport's seek bar keeps the native range underneath for pointer
  * travel, keyboard steps and assistive technology, but paints it transparent
- * and draws the bar itself. The thumb stays out of the way until the pointer or
- * keyboard reaches the bar, and the 4 Hz position snapshots are stretched with a
+ * and draws the bar itself. The thumb stays out of the way until the pointer
+ * reaches the bar, and the 4 Hz position snapshots are stretched with a
  * linear transition so the fill glides instead of stepping. */
 .seek-fill {
   transition: width 300ms linear;
@@ -398,7 +396,6 @@ body {
     scale 140ms ease;
 }
 .seek:hover .seek-thumb,
-.seek:has(.seek-input:focus-visible) .seek-thumb,
 .seek:active .seek-thumb {
   opacity: 1;
   scale: 1;
@@ -413,9 +410,6 @@ body {
 .seek-instant .seek-input,
 .seek-input:active {
   cursor: grabbing;
-}
-.seek:has(.seek-input:focus-visible) .seek-thumb {
-  box-shadow: 0 0 0 2px var(--color-focus);
 }
 /* A drag must track the pointer exactly, not ease behind it. */
 .seek-instant .seek-fill {
@@ -441,8 +435,8 @@ body {
 }
 
 /* The volume rail behaves like the progress bar: the thumb stays out of the way
- * until the pointer or the keyboard reaches the rail, then it grows into place.
- * The level still reads at rest from the fill alone. */
+ * until the pointer reaches the rail, then it grows into place. The level
+ * still reads at rest from the fill alone. */
 .volume-thumb {
   opacity: 0;
   scale: 0.5;
@@ -451,7 +445,6 @@ body {
     scale 140ms ease;
 }
 .volume:hover .volume-thumb,
-.volume:has(input:focus-visible) .volume-thumb,
 .volume:active .volume-thumb {
   opacity: 1;
   scale: 1;

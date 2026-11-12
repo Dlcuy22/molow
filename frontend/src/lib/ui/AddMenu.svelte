@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { CloudArrowDown, FolderSimplePlus } from "phosphor-svelte";
+  import CloudArrowDown from "phosphor-svelte/lib/CloudArrowDown";
+  import FolderSimplePlus from "phosphor-svelte/lib/FolderSimplePlus";
 
   let {
     top = 85,

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { CaretDown, Plus } from "phosphor-svelte";
+  import CaretDown from "phosphor-svelte/lib/CaretDown";
+  import Plus from "phosphor-svelte/lib/Plus";
   import type { Album, Shelf, Track } from "../lib/types";
   import AlbumCard from "../lib/ui/AlbumCard.svelte";
   import Chip from "../lib/ui/Chip.svelte";

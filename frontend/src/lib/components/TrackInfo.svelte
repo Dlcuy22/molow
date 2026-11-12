@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { MusicNotes } from "phosphor-svelte";
+  import MusicNotes from "phosphor-svelte/lib/MusicNotes";
   import { cover } from "../store";
   import { displayTitle, isRemoteRef, subtitle } from "../format";
   import type { Snapshot } from "../../../bindings/github.com/dlcuy22/molow/backend/models";

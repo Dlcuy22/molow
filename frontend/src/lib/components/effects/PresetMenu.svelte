@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { CaretDown, Check } from "phosphor-svelte";
+  import CaretDown from "phosphor-svelte/lib/CaretDown";
+  import Check from "phosphor-svelte/lib/Check";
   import { commands } from "../../store";
   import type { EffectPreset, EffectStage } from "../../effect-types";
 

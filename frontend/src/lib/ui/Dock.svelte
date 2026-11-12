@@ -1,19 +1,17 @@
 <script lang="ts">
-  import {
-    CaretUp,
-    Heart,
-    Queue,
-    Repeat,
-    RepeatOnce,
-    Shuffle,
-    SkipBack,
-    SkipForward,
-    Pause,
-    Play,
-    SpeakerHigh,
-    SpeakerSlash,
-    TextAlignLeft,
-  } from "phosphor-svelte";
+  import CaretUp from "phosphor-svelte/lib/CaretUp";
+  import Heart from "phosphor-svelte/lib/Heart";
+  import Queue from "phosphor-svelte/lib/Queue";
+  import Repeat from "phosphor-svelte/lib/Repeat";
+  import RepeatOnce from "phosphor-svelte/lib/RepeatOnce";
+  import Shuffle from "phosphor-svelte/lib/Shuffle";
+  import SkipBack from "phosphor-svelte/lib/SkipBack";
+  import SkipForward from "phosphor-svelte/lib/SkipForward";
+  import Pause from "phosphor-svelte/lib/Pause";
+  import Play from "phosphor-svelte/lib/Play";
+  import SpeakerHigh from "phosphor-svelte/lib/SpeakerHigh";
+  import SpeakerSlash from "phosphor-svelte/lib/SpeakerSlash";
+  import TextAlignLeft from "phosphor-svelte/lib/TextAlignLeft";
   import type { Snapshot } from "../../../bindings/github.com/dlcuy22/molow/backend/models";
   import { commands } from "../store";
   import { muted, toggleMute, volumeBy } from "../volume";

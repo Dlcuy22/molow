@@ -1,14 +1,12 @@
 <script lang="ts">
-  import {
-    Pause,
-    Play,
-    Shuffle,
-    SkipBack,
-    SkipForward,
-    Stop,
-    SpeakerHigh,
-    SpeakerSlash,
-  } from "phosphor-svelte";
+  import Pause from "phosphor-svelte/lib/Pause";
+  import Play from "phosphor-svelte/lib/Play";
+  import Shuffle from "phosphor-svelte/lib/Shuffle";
+  import SkipBack from "phosphor-svelte/lib/SkipBack";
+  import SkipForward from "phosphor-svelte/lib/SkipForward";
+  import Stop from "phosphor-svelte/lib/Stop";
+  import SpeakerHigh from "phosphor-svelte/lib/SpeakerHigh";
+  import SpeakerSlash from "phosphor-svelte/lib/SpeakerSlash";
   import { commands } from "../store";
   import { muted, toggleMute, volumeBy, volumeOverride } from "../volume";
   import { formatTime, isActive, percent, fillFrac } from "../format";

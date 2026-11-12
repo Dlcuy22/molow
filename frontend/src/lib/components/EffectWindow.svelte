@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { DotsSixVertical, Plus } from "phosphor-svelte";
+  import DotsSixVertical from "phosphor-svelte/lib/DotsSixVertical";
+  import Plus from "phosphor-svelte/lib/Plus";
   import { commands, connect, effectChain, effectKinds, player } from "../store";
   import EffectPanel from "./effects/EffectPanel.svelte";
   import EffectSidebar from "./effects/EffectSidebar.svelte";

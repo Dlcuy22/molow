@@ -2,7 +2,7 @@
   import { flip } from "svelte/animate";
   import { fade, fly } from "svelte/transition";
   import { cubicInOut } from "svelte/easing";
-  import { MusicNotes } from "phosphor-svelte";
+  import MusicNotes from "phosphor-svelte/lib/MusicNotes";
   import { clearToast, TOAST_TTL, toasts } from "../toast";
   import { cover, player } from "../store";
   import { displayTitle } from "../format";

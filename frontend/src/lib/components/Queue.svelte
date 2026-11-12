@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { MusicNote } from "phosphor-svelte";
+  import MusicNote from "phosphor-svelte/lib/MusicNote";
   import { commands } from "../store";
   import { baseName, isRemoteRef } from "../format";
   import type { QueueRow } from "../../../bindings/github.com/dlcuy22/molow/backend/models";

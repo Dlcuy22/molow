@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { MusicNotes } from "phosphor-svelte";
+  import MusicNotes from "phosphor-svelte/lib/MusicNotes";
   import { coverUrls, requestCover } from "../covers";
 
   let {

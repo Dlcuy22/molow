@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { MagnifyingGlass } from "phosphor-svelte";
+  import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
   import { fly } from "svelte/transition";
   import { cubicInOut } from "svelte/easing";
   import Cover from "./Cover.svelte";

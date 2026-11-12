@@ -2,7 +2,8 @@
   import { onMount } from "svelte";
   import { Events } from "@wailsio/runtime";
   import { get } from "svelte/store";
-  import { SpeakerHigh, SpeakerSlash } from "phosphor-svelte";
+  import SpeakerHigh from "phosphor-svelte/lib/SpeakerHigh";
+  import SpeakerSlash from "phosphor-svelte/lib/SpeakerSlash";
   import {
     connect,
     commands,

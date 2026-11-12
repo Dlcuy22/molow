@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Browser } from "@wailsio/runtime";
-  import { DiscordLogo, MusicNotes } from "phosphor-svelte";
+  import DiscordLogo from "phosphor-svelte/lib/DiscordLogo";
+  import MusicNotes from "phosphor-svelte/lib/MusicNotes";
   import { cover, discordStatus, player, artistAvatar } from "../store";
   import { displayArtist, displayTitle, formatTime, isRemoteRef, ytmVideoId } from "../format";
 

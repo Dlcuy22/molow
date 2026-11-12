@@ -1,15 +1,13 @@
 <script lang="ts">
-  import {
-    CaretDown,
-    MusicNote,
-    Pause,
-    Play,
-    Repeat,
-    RepeatOnce,
-    Shuffle,
-    SkipBack,
-    SkipForward,
-  } from "phosphor-svelte";
+  import CaretDown from "phosphor-svelte/lib/CaretDown";
+  import MusicNote from "phosphor-svelte/lib/MusicNote";
+  import Pause from "phosphor-svelte/lib/Pause";
+  import Play from "phosphor-svelte/lib/Play";
+  import Repeat from "phosphor-svelte/lib/Repeat";
+  import RepeatOnce from "phosphor-svelte/lib/RepeatOnce";
+  import Shuffle from "phosphor-svelte/lib/Shuffle";
+  import SkipBack from "phosphor-svelte/lib/SkipBack";
+  import SkipForward from "phosphor-svelte/lib/SkipForward";
   import type { Snapshot } from "../../bindings/github.com/dlcuy22/molow/backend/models";
   import type { Lyrics } from "../lib/types";
   import { commands, spectrumConfig, appSettings } from "../lib/store";

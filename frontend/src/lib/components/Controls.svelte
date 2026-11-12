@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { CaretDown, FolderOpen, Plus } from "phosphor-svelte";
+  import CaretDown from "phosphor-svelte/lib/CaretDown";
+  import FolderOpen from "phosphor-svelte/lib/FolderOpen";
+  import Plus from "phosphor-svelte/lib/Plus";
   import { busy, commands, options } from "../store";
 
   let { decoderPref, backend }: { decoderPref: string; backend: string } = $props();

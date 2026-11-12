@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { MagnifyingGlass, Plus } from "phosphor-svelte";
+  import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
+  import Plus from "phosphor-svelte/lib/Plus";
   import type { EffectKind } from "../../effect-types";
   import type { PresetImportResult } from "../../../../bindings/github.com/dlcuy22/molow/backend/models";
 

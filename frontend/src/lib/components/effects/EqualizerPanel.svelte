@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { Plus } from "phosphor-svelte";
+  import Plus from "phosphor-svelte/lib/Plus";
   import { appliedPresets, commands } from "../../store";
   import type { EffectPreset, EffectStage } from "../../effect-types";
   import { numericValue, paramValue } from "./effects-helpers";

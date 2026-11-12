@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CaretDown } from "phosphor-svelte";
+  import CaretDown from "phosphor-svelte/lib/CaretDown";
 
   // Picker: a labelled dropdown over a fixed set of choices. Each option is a
   // value plus the label shown for it; the value is what is emitted, so a

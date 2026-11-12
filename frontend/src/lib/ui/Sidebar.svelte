@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { Books, CaretUpDown, GearSix, House, MagnifyingGlass } from "phosphor-svelte";
+  import Books from "phosphor-svelte/lib/Books";
+  import CaretUpDown from "phosphor-svelte/lib/CaretUpDown";
+  import GearSix from "phosphor-svelte/lib/GearSix";
+  import House from "phosphor-svelte/lib/House";
+  import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
   import Cover from "./Cover.svelte";
 
   export interface PlaylistRow {

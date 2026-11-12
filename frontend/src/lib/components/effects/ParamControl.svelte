@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CaretDown } from "phosphor-svelte";
+  import CaretDown from "phosphor-svelte/lib/CaretDown";
   import { fillFrac } from "../../format";
   import type { EffectParam } from "../../effect-types";
   import {

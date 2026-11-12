@@ -1,7 +1,8 @@
 <script lang="ts">
   import { appSettings, commands, discordStatus, spectrumConfig, spectrumSchema } from "../../store";
   import { showToast } from "../../toast";
-  import { Check, WarningCircle } from "phosphor-svelte";
+  import Check from "phosphor-svelte/lib/Check";
+  import WarningCircle from "phosphor-svelte/lib/WarningCircle";
   import { PlayerService } from "../../../../bindings/github.com/dlcuy22/molow/backend";
   import type { CrossfadeSettings, LyricsSettings, SpectrumConfig } from "../../../../bindings/github.com/dlcuy22/molow/backend/models";
   import type { Param } from "../../../../bindings/github.com/dlcuy22/molow/internal/spectrum/models";

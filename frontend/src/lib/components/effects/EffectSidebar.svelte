@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { DotsSixVertical, Trash } from "phosphor-svelte";
+  import DotsSixVertical from "phosphor-svelte/lib/DotsSixVertical";
+  import Trash from "phosphor-svelte/lib/Trash";
   import type { EffectStage } from "../../effect-types";
   import { finalIndex, indexOfStage } from "./effects-helpers";
 

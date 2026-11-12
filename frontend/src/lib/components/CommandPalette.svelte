@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { MagnifyingGlass, MusicNote, Pause } from "phosphor-svelte";
+  import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
+  import MusicNote from "phosphor-svelte/lib/MusicNote";
+  import Pause from "phosphor-svelte/lib/Pause";
   import { commands, previewConfig, queueCover, searchYTM, ytmCover } from "../store";
   import { matchQueue, hasTags, isPlaylistKind, playlistIDFromQuery, ytmKindLabel, ytmPlaylistResult, ytmResultRow, ytmSubtitle } from "../search";
   import { formatTime, isRemoteRef, subtitle } from "../format";

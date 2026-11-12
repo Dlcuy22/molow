@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Play, PushPin } from "phosphor-svelte";
+  import Play from "phosphor-svelte/lib/Play";
+  import PushPin from "phosphor-svelte/lib/PushPin";
   import { fly } from "svelte/transition";
   import { cubicInOut } from "svelte/easing";
   import type { QueueRow } from "../../../bindings/github.com/dlcuy22/molow/backend/models";

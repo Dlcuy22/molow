@@ -113,7 +113,7 @@ export const appSettings = writable<AppSettings>({
     },
   },
   stream: {},
-  general: { visualizerEnabled: true, visualizerStyle: "minimal" },
+  general: { visualizerEnabled: true, visualizerStyle: "minimal", visualizerDelayMs: 25 },
 });
 
 /** queueCoverCache memoises the palette's per-track artwork by cover id, so a

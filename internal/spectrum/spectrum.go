@@ -62,6 +62,16 @@ type Config struct {
 	// TestPeakHoldsStillOnStationaryInput): a faster release re-amplifies
 	// quiet passages sooner but lets noise walk the scale.
 	Release float64
+
+	// DelayMs is the user's compensating lag, in milliseconds. The tap sits
+	// upstream of the device buffer and of every latency the driver and the
+	// hardware add after it, so the display leads the ear by that unmeasured
+	// remainder; wireless playback adds the codec's own buffer on top. The
+	// jitter cushion below already covers the app-side device buffer, so this
+	// is compensation on top of it, dialled in by ear in the settings panel.
+	// Zero means no compensation: the shipped default is a small value that
+	// accounts for a wired output chain.
+	DelayMs int
 }
 
 // ScaleDynamic follows the recent peak, so the display re-ranges with the
@@ -250,6 +260,11 @@ func withDefaults(cfg Config) Config {
 	if cfg.Release <= 0 || cfg.Release >= 1 {
 		cfg.Release = def.Release
 	}
+	// A negative delay is a hand-edit, not a setting the panel can produce:
+	// the display cannot lead the tap, so it clamps to no compensation.
+	if cfg.DelayMs < 0 {
+		cfg.DelayMs = 0
+	}
 
 	return cfg
 }
@@ -280,7 +295,8 @@ const maxStep = 200 * time.Millisecond
 
 // targetLagDivisor sizes the jitter buffer's cushion as SampleRate/divisor,
 // about 100 ms: roughly one device pull, enough that a late burst cannot starve
-// the next few frames. It is the display's fixed delay.
+// the next few frames. It is the display's own reserve; the user's delay in
+// cfg.DelayMs adds to the window's distance from the newest sample on top of it.
 const targetLagDivisor = 10
 
 // maxLagDivisor bounds the backlog at SampleRate/divisor, about 250 ms, on top
@@ -389,11 +405,13 @@ func (r *Runner) stepSamples() int {
 
 	step := int(elapsed.Nanoseconds() * int64(r.cfg.SampleRate) / int64(time.Second))
 
-	// Hold the cushion back: never slide closer than targetLag to the newest
-	// sample. That reserve is what keeps a late burst from starving the next
-	// few frames, because the window stops at the cushion and waits instead of
-	// catching up to the newest sample and stalling there.
-	if room := len(r.backlog) - r.targetLag(); step > room {
+	// Hold the cushion back: never slide closer than targetLag plus the user's
+	// delay to the newest sample. The reserve is what keeps a late burst from
+	// starving the next few frames, because the window stops at the line and
+	// waits instead of catching up to the newest sample and stalling there;
+	// the delay adds the compensation on top, so the window also holds back
+	// audio the listener has not reached yet.
+	if room := len(r.backlog) - r.targetLag() - r.delay(); step > room {
 		step = room
 	}
 	if step < 0 {
@@ -404,14 +422,22 @@ func (r *Runner) stepSamples() int {
 }
 
 // targetLag is the cushion the jitter buffer holds between the window and the
-// newest sample, about one device pull. It is the display's fixed lag and the
-// reserve that rides out a burst arriving late.
+// newest sample, about one device pull. It is the reserve that rides out a
+// burst arriving late; the window's full distance from the newest sample is
+// this cushion plus the user's compensation in delay.
 func (r *Runner) targetLag() int { return r.cfg.SampleRate / targetLagDivisor }
+
+// delay converts the user's compensation to samples. It is the extra distance
+// the window holds back behind the cushion, so the bars land with the sound on
+// a device whose output latency the engine cannot measure.
+func (r *Runner) delay() int { return r.cfg.SampleRate * r.cfg.DelayMs / 1000 }
 
 // maxBacklog bounds the backlog so a stalled consumer cannot grow it (and the
 // display lag with it) without bound; beyond it the oldest samples are dropped,
-// which is the same lose-history trade the tap itself makes.
-func (r *Runner) maxBacklog() int { return r.cfg.SampleRate / maxLagDivisor }
+// which is the same lose-history trade the tap itself makes. It rides above the
+// cushion by the same headroom it had before compensation existed, so a large
+// delay moves the steady state but never the reserve.
+func (r *Runner) maxBacklog() int { return r.cfg.SampleRate/maxLagDivisor + r.delay() }
 
 // slide advances the window by n samples: drop the oldest n, append the next n
 // from the backlog. The window holds exactly len(window) samples once the

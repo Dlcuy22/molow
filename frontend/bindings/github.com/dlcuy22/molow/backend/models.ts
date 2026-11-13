@@ -177,10 +177,14 @@ export interface EffectVisualInfo {
  * on/off switch, the same one the v key flips and the panel's Off option
  * writes. VisualizerStyle picks the album player layout, "full" or "minimal";
  * off lives in VisualizerEnabled so the chosen layout survives a toggle.
+ * VisualizerDelayMs is the user's compensation in milliseconds: the visualizer
+ * taps the stream upstream of the device and driver latencies, so it leads the
+ * ear, and the user dials the remainder in to land the bars with the sound.
  */
 export interface GeneralSettings {
     "visualizerEnabled": boolean;
     "visualizerStyle": string;
+    "visualizerDelayMs": number;
 }
 
 /**

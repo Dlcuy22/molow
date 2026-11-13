@@ -78,9 +78,13 @@ type StreamSettings struct{}
 // on/off switch, the same one the v key flips and the panel's Off option
 // writes. VisualizerStyle picks the album player layout, "full" or "minimal";
 // off lives in VisualizerEnabled so the chosen layout survives a toggle.
+// VisualizerDelayMs is the user's compensation in milliseconds: the visualizer
+// taps the stream upstream of the device and driver latencies, so it leads the
+// ear, and the user dials the remainder in to land the bars with the sound.
 type GeneralSettings struct {
 	VisualizerEnabled bool   `json:"visualizerEnabled"`
 	VisualizerStyle   string `json:"visualizerStyle"`
+	VisualizerDelayMs int    `json:"visualizerDelayMs"`
 }
 
 // CrossfadeSettings mirrors the engine's crossfade settings. It is restated
@@ -113,6 +117,11 @@ func defaultAppSettings() AppSettings {
 		General: GeneralSettings{
 			VisualizerEnabled: true,
 			VisualizerStyle:   "minimal",
+			// A small compensation by default: even a plain wired setup plays
+			// a few tens of milliseconds after the tap, so 25 ms lands the bars
+			// with the sound out of the box and the user only raises it for a
+			// wireless device.
+			VisualizerDelayMs: defaultVisualizerDelayMs,
 		},
 	}
 }
@@ -249,16 +258,49 @@ func normalizeAppSettings(s AppSettings, present map[string]bool) AppSettings {
 		s.General.VisualizerStyle = def.General.VisualizerStyle
 	}
 
+	// The delay is bounded on both ends: below zero has no meaning and above
+	// the slider's top the backlog it asks for would outrun what the tap ring
+	// can still serve. A file that predates the field gets the shipped default
+	// rather than zero, the same way a predated visualizerEnabled keeps its
+	// visualizer: absent is not the same as "explicitly none". On the save path
+	// present is nil and the panel's value is taken as-is, so a user who dials
+	// the slider to zero keeps it.
+	if present != nil && !present["visualizerDelayMs"] {
+		s.General.VisualizerDelayMs = def.General.VisualizerDelayMs
+	}
+	s.General.VisualizerDelayMs = clampVisualizerDelayMs(s.General.VisualizerDelayMs)
+
 	return s
 }
 
-// clampCrossfadeMs bounds a duration to the engine's range.
+// maxVisualizerDelayMs bounds the compensation. It sits well under the tap
+// ring's ~680 ms, so the history a large setting asks the display to hold is
+// always there, and it covers the slowest consumer codecs (Bluetooth sits
+// around 200-300 ms) plus the desktop's own output latency with room to spare.
+const maxVisualizerDelayMs = 500
+
+// defaultVisualizerDelayMs is the shipped compensation. It is not zero: the
+// desktop's own output chain (server quantum, driver, hardware) sits a few tens
+// of milliseconds below the tap, so 25 ms already lands the bars with the sound
+// on a wired setup; a wireless device raises it from there.
+const defaultVisualizerDelayMs = 25
+
+// clampVisualizerDelayMs bounds the visualizer's compensating delay to the
+// slider's range.
+func clampVisualizerDelayMs(ms int) int {
+	switch {
+	case ms < 0:
+		return 0
+	case ms > maxVisualizerDelayMs:
+		return maxVisualizerDelayMs
+	default:
+		return ms
+	}
+}
 
 // normalizeLyricsSettings fills the lyric group in: unknown provider names are
 // dropped, known ones the file omitted default to on, and only the two save
-// locations are kept. legacyLyrics is the state a file written before this
-// group existed should show, and def is what normalization with no source
-// falls back to.
+// locations are kept. def is what normalization with no source falls back to.
 func normalizeLyricsSettings(s LyricsSettings, def LyricsSettings) LyricsSettings {
 	out := LyricsSettings{
 		Providers: make(map[string]bool, len(lyrics.ChainProviders)),

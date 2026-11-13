@@ -338,6 +338,41 @@ func TestSuppressSpectrumSkipsRepeats(t *testing.T) {
 	}
 }
 
+// TestVisualizerDelayReachesTheRunner pins where the compensation comes from:
+// the shape payload never carries it, so a rebuild reads the settings document,
+// and a save of the document applies it on the spot through
+// applyAppSettingsLocked's spectrum reconfiguration.
+func TestVisualizerDelayReachesTheRunner(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	svc := newPlayerService()
+	svc.player = newFakePlayer()
+
+	next := defaultAppSettings()
+	next.General.VisualizerDelayMs = 120
+	if _, err := svc.SetAppSettings(next); err != nil {
+		t.Fatalf("SetAppSettings: %v", err)
+	}
+	if got := svc.runner.Config().DelayMs; got != 120 {
+		t.Fatalf("DelayMs after save = %d, want 120", got)
+	}
+
+	// An echo of the shape payload back must not reset the compensation: the
+	// delay is not a field the caller sends.
+	if err := svc.ConfigureSpectrum(SpectrumConfig{
+		Bars:    150,
+		MinHz:   20,
+		MaxHz:   20000,
+		FFT:     8192,
+		Enabled: true,
+	}); err != nil {
+		t.Fatalf("ConfigureSpectrum: %v", err)
+	}
+	if got := svc.runner.Config().DelayMs; got != 120 {
+		t.Fatalf("DelayMs after shape echo = %d, want 120", got)
+	}
+}
+
 // TestTrackStartClearsTheFailedTrackMessage pins the error lifetime: a failure
 // describes the track that died, so a later track that starts must clear the
 // line instead of leaving the previous track's 403 in the session.

@@ -85,6 +85,18 @@
     setSpectrum(patch);
   }
 
+  // setVisualizerDelay persists the compensating delay in the document. Go
+  // reads the delay from the document on every runner rebuild and the save
+  // reconfigures the spectrum (the same path the crossfade uses), so no second
+  // call is needed; the shape payload does not carry the field, so the knob
+  // cannot be erased by echoing the shape back.
+  function setVisualizerDelay(ms: number) {
+    commands.setAppSettings({
+      ...$appSettings,
+      general: { ...$appSettings.general, visualizerDelayMs: ms },
+    });
+  }
+
   // Reset to the default tab each time the panel opens, so it does not reopen
   // on a tab the user left it on.
   let wasOpen = false;
@@ -484,6 +496,26 @@
                   ]}
                   onchange={setVisualizerStyle}
                 />
+              {/snippet}
+            </SettingRow>
+
+            <SettingRow
+              label="Visualizer delay"
+              description="Adjust if the visualizer runs ahead of the beat vice versa"
+            >
+              {#snippet control()}
+                <div class="w-48 self-center">
+                  <Slider
+                    label="Delay"
+                    value={$appSettings.general.visualizerDelayMs}
+                    min={0}
+                    max={500}
+                    step={5}
+                    unit="ms"
+                    format={(v) => `${v} ms`}
+                    onchange={setVisualizerDelay}
+                  />
+                </div>
               {/snippet}
             </SettingRow>
 

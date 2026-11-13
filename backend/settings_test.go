@@ -38,6 +38,9 @@ func TestAppSettingsDefaultsAreOffAndReference(t *testing.T) {
 	if got.General.VisualizerStyle != "minimal" {
 		t.Fatalf("visualizerStyle = %q, want minimal", got.General.VisualizerStyle)
 	}
+	if got.General.VisualizerDelayMs != defaultVisualizerDelayMs {
+		t.Fatalf("visualizerDelayMs = %d, want %d", got.General.VisualizerDelayMs, defaultVisualizerDelayMs)
+	}
 }
 
 // TestAppSettingsRoundTrips proves the panel's edits survive a restart, for
@@ -232,6 +235,40 @@ func TestLoadAppSettingsClampsDuration(t *testing.T) {
 
 	if got := loadAppSettings().Playback.Crossfade.DurationMs; got != molo.MaxCrossfadeMs {
 		t.Fatalf("duration = %d, want the clamp %d", got, molo.MaxCrossfadeMs)
+	}
+}
+
+// TestLoadAppSettingsClampsVisualizerDelay pins the delay bounds and the
+// absent-field rule: a hand-edited file past the slider's top falls to it, a
+// negative one falls to no compensation, and a file that predates the field
+// gets the shipped default rather than zero (absent is not "explicitly none").
+func TestLoadAppSettingsClampsVisualizerDelay(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+
+	p, err := settingsPath()
+	if err != nil {
+		t.Fatalf("settingsPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		body string
+		want int
+	}{
+		{"above the top", `{"version":1,"general":{"visualizerDelayMs":9000}}`, maxVisualizerDelayMs},
+		{"below zero", `{"version":1,"general":{"visualizerDelayMs":-5}}`, 0},
+		{"absent field", `{"version":1,"general":{}}`, defaultVisualizerDelayMs},
+	} {
+		if err := os.WriteFile(p, []byte(tc.body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := loadAppSettings().General.VisualizerDelayMs; got != tc.want {
+			t.Fatalf("%s: delay = %d, want %d", tc.name, got, tc.want)
+		}
 	}
 }
 

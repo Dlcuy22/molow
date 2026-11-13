@@ -493,10 +493,32 @@ func equalFloats(a, b []float64) bool {
 	return true
 }
 
+// visualizerDelayMs reads the persisted compensation from the settings
+// document. The clamp is repeated here so even a document corrupted in memory
+// cannot hand the runner a value the display cannot hold.
+func (s *PlayerService) visualizerDelayMs() int {
+	s.appSettingsMu.Lock()
+	defer s.appSettingsMu.Unlock()
+
+	return clampVisualizerDelayMs(s.appSettings.General.VisualizerDelayMs)
+}
+
 // rebuildRunner installs a runner for the current spectrum config. The caller
 // holds no lock; the mutex is taken here.
 func (s *PlayerService) rebuildRunner() error {
-	runner, err := spectrum.New(s.tap, s.spectrumCfg)
+	// The delay is a persisted preference rather than part of the live shape,
+	// so it is resolved from the document here, and written back into the
+	// shape: any path that builds a runner (startup, a shape change, a settings
+	// save) then leaves the live config and the built runner agreeing on it.
+	delay := s.visualizerDelayMs()
+
+	s.spectrumMu.Lock()
+	cfg := s.spectrumCfg
+	cfg.DelayMs = delay
+	s.spectrumCfg = cfg
+	s.spectrumMu.Unlock()
+
+	runner, err := spectrum.New(s.tap, cfg)
 	if err != nil {
 		return fmt.Errorf("build visualizer: %w", err)
 	}
@@ -983,6 +1005,13 @@ func (s *PlayerService) ConfigureSpectrum(cfg SpectrumConfig) error {
 	if next.MinHz >= next.MaxHz {
 		return fmt.Errorf("visualizer: low cut must be below high cut")
 	}
+	// DelayMs is not part of the payload: it is a persisted preference, so the
+	// settings document is read here and every rebuild carries the current
+	// value. A save of the document reconfigures the spectrum (see
+	// applyAppSettingsLocked), so a new compensation applies on the spot, and
+	// a caller echoing the shape payload back cannot erase it by sending zero
+	// the field does not carry.
+	next.DelayMs = s.visualizerDelayMs()
 
 	s.spectrumMu.Lock()
 	wasEnabled := s.spectrumEnabled

@@ -587,6 +587,49 @@ func TestJitterBufferHoldsCushion(t *testing.T) {
 	}
 }
 
+// TestDelayHoldsTheWindowBack pins the user's compensation: with a delay
+// configured, the steady-state backlog sits a delay's worth further behind the
+// newest sample than the cushion alone, which is the whole mechanism — the
+// window the display shows is that much older, so the bars land with the
+// sound on a device that plays late.
+func TestDelayHoldsTheWindowBack(t *testing.T) {
+	const burst, tick = 4800, 800
+
+	build := func(delayMs int) *Runner {
+		tap := &sliceTap{samples: tone(1000, 8192), chunk: 4096}
+		r := tap.runner(t, Config{Bars: 64, FFT: 2048, DelayMs: delayMs})
+
+		for range 6 {
+			tap.arrive(burst)
+			for range burst / tick {
+				tap.tick(tick)
+				r.Frame()
+			}
+		}
+
+		return r
+	}
+
+	base := build(0)
+	delayed := build(500)
+
+	want := base.targetLag() + delayed.delay()
+	if got := len(delayed.backlog); got < want {
+		t.Fatalf("delayed backlog = %d, want at least the cushion plus the delay (%d)", got, want)
+	}
+	if got := len(base.backlog); got > want-1 {
+		t.Fatalf("undelayed backlog = %d, at or above %d: the delay did not move the window", got, want)
+	}
+}
+
+// TestNegativeDelayClampsToZero pins the hand-edit guard: a negative delay has
+// no meaning (the display cannot lead the tap) and falls back to none.
+func TestNegativeDelayClampsToZero(t *testing.T) {
+	if got := withDefaults(Config{DelayMs: -5}).DelayMs; got != 0 {
+		t.Fatalf("DelayMs = %d, want 0", got)
+	}
+}
+
 // TestJitterBufferCapsLag pins the other bound: a consumer that stalls must not
 // let the backlog (and with it the display lag) grow without bound. Beyond the
 // cap the oldest samples are dropped, the same lose-history trade the tap

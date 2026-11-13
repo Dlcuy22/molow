@@ -160,7 +160,7 @@
           <Plus size="14" aria-hidden="true" />
         </button>
       </div>
-      <div class="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      <div class="scroll-thin min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         <EffectSidebar
           {stages}
           {selectedId}
@@ -174,7 +174,7 @@
       </div>
     </aside>
 
-    <main class="min-h-0 flex-1 overflow-y-auto p-4">
+    <main class="scroll-thin min-h-0 flex-1 overflow-y-auto p-4">
       {#if tab === "registry"}
         <EffectRegistry {kinds} onadd={add} onimport={commands.importPreset} />
       {:else if tab === "script"}

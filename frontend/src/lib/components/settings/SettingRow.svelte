@@ -19,14 +19,17 @@
   } = $props();
 </script>
 
-<div class="flex items-start justify-between gap-4 py-2.5">
+<div class="flex items-center justify-between gap-4 py-2.5">
   <div class="min-w-0">
     <p class="text-sm text-fg">{label}</p>
     {#if description}
       <p class="mt-0.5 text-[11px] text-muted">{description}</p>
     {/if}
   </div>
-  <div class="flex shrink-0 items-start self-stretch">
+  <!-- Both columns center, so a row without a note is one line of label and
+       control on a shared middle line instead of a label pinned to the top
+       above the space the note would have filled. -->
+  <div class="flex shrink-0 items-center">
     {@render control()}
   </div>
 </div>

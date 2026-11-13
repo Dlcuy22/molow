@@ -26,7 +26,6 @@
   let panelEl = $state<HTMLDivElement | null>(null);
 
   const crossfade = $derived($appSettings.playback.crossfade);
-  const repeat = $derived($appSettings.playback.repeat);
   // The visualizer switch reads the persisted flag, not the live pump's flag,
   // so the two cannot disagree after a reload: the pump is rebuilt from this
   // value on startup.
@@ -118,17 +117,6 @@
         ...$appSettings.playback,
         crossfade: { ...$appSettings.playback.crossfade, ...patch },
       },
-    });
-  }
-
-  // setRepeat writes the mode to the settings document. Go applies it to the
-  // engine on the same save (applyAppSettingsLocked calls SetRepeat), so the
-  // panel needs no second call; the keyboard path is the one that must tell the
-  // engine and the file separately, because it does not go through this save.
-  function setRepeat(mode: string) {
-    commands.setAppSettings({
-      ...$appSettings,
-      playback: { ...$appSettings.playback, repeat: mode },
     });
   }
 
@@ -243,8 +231,12 @@
 </script>
 
 {#if open}
+  <!-- The gutter grows with the window: a narrow window keeps a tight margin,
+       a wide one gives the panel room to sit in. All of it is padding on this
+       flex container, so the panel's max-h-full counts the gutter and can never
+       overflow the viewport. -->
   <div
-    class="fixed inset-0 z-50 flex justify-center bg-black/50 p-4"
+    class="fixed inset-0 z-50 flex justify-center bg-black/50 px-[clamp(0.75rem,2vw,1.5rem)] pb-[clamp(0.75rem,2vw,1.5rem)] pt-[clamp(1rem,6vh,3.5rem)]"
     role="presentation"
     onclick={(e) => {
       if (e.target === e.currentTarget) onclose();
@@ -252,17 +244,16 @@
   >
     <div
       bind:this={panelEl}
-      class="mt-[8vh] flex max-h-[70vh] w-full max-w-lg flex-col overflow-hidden border border-line bg-surface"
+      class="flex max-h-full w-full max-w-[clamp(28rem,56vw,52rem)] flex-col overflow-hidden border border-line bg-surface"
       role="dialog"
       aria-modal="true"
       aria-label="Settings"
       tabindex="-1"
       onkeydown={onKeydown}
     >
-      <!-- Tabs across the top. A real tablist: each tab names a category, and
-           the panel below shows only the selected one. -->
+      <!-- Tabs across the top -->
       <div
-        class="flex shrink-0 items-center gap-1 border-b border-line px-2 py-1.5"
+        class="flex shrink-0 items-center gap-1 border-b border-line px-[clamp(0.5rem,1.6vw,1.25rem)] py-[clamp(0.375rem,1vh,0.75rem)]"
         role="tablist"
         aria-label="Settings categories"
       >
@@ -284,177 +275,178 @@
 
       <div
         id="settings-panel-body"
-        class="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 py-2"
+        class="scroll-thin min-h-0 flex-1 overflow-y-auto px-[clamp(0.5rem,1.6vw,1.25rem)] py-[clamp(0.5rem,1.2vh,1rem)]"
         role="tabpanel"
       >
         {#if tab === "playback"}
           <div class="divide-y divide-line">
-            <SettingRow
-              label="Crossfade"
-              description="Fade the end of a track into the start of the next."
-            >
-              {#snippet control()}
-                <Switch
-                  checked={crossfade.enabled}
+            <SettingGroup label="Crossfade" description={null}>
+              <!-- One feature's rows: the switch, the length it runs for, and
+                   the case it leaves alone. -->
+              <div class="divide-y divide-line">
+                <SettingRow
                   label="Crossfade"
-                  onchange={(enabled) => setCrossfade({ enabled })}
-                />
-              {/snippet}
-            </SettingRow>
+                  description="Fade the end of a track into the start of the next."
+                >
+                  {#snippet control()}
+                    <Switch
+                      checked={crossfade.enabled}
+                      label="Crossfade"
+                      onchange={(enabled) => setCrossfade({ enabled })}
+                    />
+                  {/snippet}
+                </SettingRow>
 
-            <div class="py-2.5" class:opacity-40={!crossfade.enabled}>
-              <Slider
-                label="Duration"
-                value={crossfade.durationMs / 1000}
-                min={1}
-                max={12}
-                step={1}
-                unit="s"
-                disabled={!crossfade.enabled}
-                format={(v) => `${v} s`}
-                onchange={(seconds) => setCrossfade({ durationMs: Math.round(seconds) * 1000 })}
-              />
-            </div>
-
-            <SettingRow
-              label="Skip for consecutive album tracks"
-              description="Leave tracks from the same album unblended, the way the album was sequenced."
-            >
-              {#snippet control()}
-                <Switch
-                  checked={crossfade.skipSameAlbum}
-                  label="Skip for consecutive album tracks"
-                  onchange={(skipSameAlbum) => setCrossfade({ skipSameAlbum })}
-                />
-              {/snippet}
-            </SettingRow>
-
-            <SettingRow
-              label="Repeat"
-              description="Play the queue again, or repeat the current track."
-            >
-              {#snippet control()}
-                <Picker
-                  label={null}
-                  value={repeat}
-                  options={[
-                    { value: "off", label: "Off" },
-                    { value: "all", label: "All" },
-                    { value: "one", label: "One" },
-                  ]}
-                  onchange={(v) => setRepeat(v)}
-                />
-              {/snippet}
-            </SettingRow>
-
-            <SettingRow
-              label="Play/Pause control style"
-              description="Default is the inverted disc in the dock; Simple is the bare glyph the album player uses."
-            >
-              {#snippet control()}
-                <Picker
-                  label={null}
-                  value={$appSettings.playback.playPauseStyle}
-                  options={[
-                    { value: "default", label: "Default" },
-                    { value: "simple", label: "Simple" },
-                  ]}
-                  onchange={(v) => setPlayPauseStyle(v)}
-                />
-              {/snippet}
-            </SettingRow>
-
-            <SettingRow
-              label="PetitLyrics"
-              description="Word-synced Japanese from the catalogue the others do not cover."
-            >
-              {#snippet control()}
-                <Switch checked={providers.petitlyrics ?? true} label="PetitLyrics" onchange={(on) => toggleProvider("petitlyrics", on)} />
-              {/snippet}
-            </SettingRow>
-
-            <SettingRow
-              label="BetterLyrics"
-              description="Word or line timing from a YouTube-anchored search."
-            >
-              {#snippet control()}
-                <Switch checked={providers.betterlyrics ?? true} label="BetterLyrics" onchange={(on) => toggleProvider("betterlyrics", on)} />
-              {/snippet}
-            </SettingRow>
-
-            <SettingRow
-              label="LyricsPlus"
-              description="Community mirrors with word or line timing, and a word-synced search fallback."
-            >
-              {#snippet control()}
-                <Switch checked={providers.lyricsplus ?? true} label="LyricsPlus" onchange={(on) => toggleProvider("lyricsplus", on)} />
-              {/snippet}
-            </SettingRow>
-
-            <SettingRow
-              label="KuGou"
-              description="Line-synced, from the Chinese catalogue."
-            >
-              {#snippet control()}
-                <Switch checked={providers.kugou ?? true} label="KuGou" onchange={(on) => toggleProvider("kugou", on)} />
-              {/snippet}
-            </SettingRow>
-
-            <SettingRow
-              label="LrcLib"
-              description="Line-synced from the open catalogue; runs last and catches what the others miss."
-            >
-              {#snippet control()}
-                <Switch checked={providers.lrclib ?? true} label="LrcLib" onchange={(on) => toggleProvider("lrclib", on)} />
-              {/snippet}
-            </SettingRow>
-
-            <SettingRow
-              label="Save fetched lyrics"
-              description={
-                saveLocation === "beside"
-                  ? "The .lrc lands beside the audio, one file per track in the album's own folder."
-                  : "The .lrc lands in a lyrics/ folder inside the album's own folder."
-              }
-            >
-              {#snippet control()}
-                <Picker
-                  label={null}
-                  value={saveLocation}
-                  options={[
-                    { value: "lyrics", label: "Lyrics folder" },
-                    { value: "beside", label: "Beside the track" },
-                  ]}
-                  onchange={(v) => setLyrics({ saveLocation: v })}
-                />
-              {/snippet}
-            </SettingRow>
-
-            <SettingRow
-              label="YouTube Music lyrics folder"
-              description="Where streamed tracks cache their sidecars, one file per video. The default lives under the app's config folder."
-            >
-              {#snippet control()}
-                <div class="flex items-end gap-1.5">
-                  <TextField
-                    label="YouTube Music lyrics folder"
-                    value={lyricsFolder}
-                    placeholder="Default"
-                    onchange={(v) => setLyrics({ folder: v })}
+                <div class="py-2.5" class:opacity-40={!crossfade.enabled}>
+                  <Slider
+                    label="Duration"
+                    value={crossfade.durationMs / 1000}
+                    min={1}
+                    max={12}
+                    step={1}
+                    unit="s"
+                    disabled={!crossfade.enabled}
+                    format={(v) => `${v} s`}
+                    onchange={(seconds) => setCrossfade({ durationMs: Math.round(seconds) * 1000 })}
                   />
-                  <Button label="Browse" onclick={browseLyricsFolder} />
                 </div>
-              {/snippet}
-            </SettingRow>
 
-            <SettingRow
-              label="Clear lyrics cache"
-              description="Fetched YouTube Music sheets in the lyrics folder. Clearing them makes the next play fetch again."
-            >
-              {#snippet control()}
-                <Button label="Clear" busyLabel="Clearing" onclick={clearLyricsCache} />
-              {/snippet}
-            </SettingRow>
+                <SettingRow
+                  label="Skip for consecutive album tracks"
+                  description="Leave tracks from the same album unblended"
+                >
+                  {#snippet control()}
+                    <Switch
+                      checked={crossfade.skipSameAlbum}
+                      label="Skip for consecutive album tracks"
+                      onchange={(skipSameAlbum) => setCrossfade({ skipSameAlbum })}
+                    />
+                  {/snippet}
+                </SettingRow>
+              </div>
+            </SettingGroup>
+
+            <SettingGroup label="Controls" description={null}>
+              <!-- How the main control is drawn. Repeat lives on the dock's own
+                   button and the l/L keys, so the panel does not repeat it. -->
+              <div class="divide-y divide-line">
+                <SettingRow
+                  label="Play/Pause control style"
+                  description={null}
+                >
+                  {#snippet control()}
+                    <Picker
+                      label={null}
+                      value={$appSettings.playback.playPauseStyle}
+                      options={[
+                        { value: "default", label: "Default" },
+                        { value: "simple", label: "Simple" },
+                      ]}
+                      onchange={(v) => setPlayPauseStyle(v)}
+                    />
+                  {/snippet}
+                </SettingRow>
+              </div>
+            </SettingGroup>
+
+            <SettingGroup label="Lyrics" description={null}>
+              <!-- Where a sheet comes from, and where the app keeps what it
+                   fetched: the providers first, then storage. -->
+              <div class="divide-y divide-line">
+                <SettingRow
+                  label="PetitLyrics"
+                  description="Word-synced"
+                >
+                  {#snippet control()}
+                    <Switch checked={providers.petitlyrics ?? true} label="PetitLyrics" onchange={(on) => toggleProvider("petitlyrics", on)} />
+                  {/snippet}
+                </SettingRow>
+
+                <SettingRow
+                  label="BetterLyrics"
+                  description="Word or line timing from a YouTube-anchored search."
+                >
+                  {#snippet control()}
+                    <Switch checked={providers.betterlyrics ?? true} label="BetterLyrics" onchange={(on) => toggleProvider("betterlyrics", on)} />
+                  {/snippet}
+                </SettingRow>
+
+                <SettingRow
+                  label="LyricsPlus"
+                  description="Word or line synced"
+                >
+                  {#snippet control()}
+                    <Switch checked={providers.lyricsplus ?? true} label="LyricsPlus" onchange={(on) => toggleProvider("lyricsplus", on)} />
+                  {/snippet}
+                </SettingRow>
+
+                <SettingRow
+                  label="KuGou"
+                  description="Line-synced"
+                >
+                  {#snippet control()}
+                    <Switch checked={providers.kugou ?? true} label="KuGou" onchange={(on) => toggleProvider("kugou", on)} />
+                  {/snippet}
+                </SettingRow>
+
+                <SettingRow
+                  label="LrcLib"
+                  description="Line-synced"
+                >
+                  {#snippet control()}
+                    <Switch checked={providers.lrclib ?? true} label="LrcLib" onchange={(on) => toggleProvider("lrclib", on)} />
+                  {/snippet}
+                </SettingRow>
+
+                <SettingRow
+                  label="Save fetched lyrics"
+                  description={
+                    saveLocation === "beside"
+                      ? "The .lrc lands beside the audio, one file per track in the album's own folder."
+                      : "The .lrc lands in a lyrics/ folder inside the album's own folder."
+                  }
+                >
+                  {#snippet control()}
+                    <Picker
+                      label={null}
+                      value={saveLocation}
+                      options={[
+                        { value: "lyrics", label: "Lyrics folder" },
+                        { value: "beside", label: "Beside the track" },
+                      ]}
+                      onchange={(v) => setLyrics({ saveLocation: v })}
+                    />
+                  {/snippet}
+                </SettingRow>
+
+                <SettingRow
+                  label="YouTube Music lyrics folder"
+                  description="Where streamed tracks cache their lyric."
+                >
+                  {#snippet control()}
+                    <div class="flex items-end gap-1.5">
+                      <TextField
+                        label={null}
+                        ariaLabel="YouTube Music lyrics folder"
+                        value={lyricsFolder}
+                        placeholder="Default"
+                        onchange={(v) => setLyrics({ folder: v })}
+                      />
+                      <Button label="Browse" onclick={browseLyricsFolder} />
+                    </div>
+                  {/snippet}
+                </SettingRow>
+
+                <SettingRow
+                  label="Clear lyrics cache"
+                  description="Clear Fetched YouTube Music Lyric cache"
+                >
+                  {#snippet control()}
+                    <Button label="Clear" busyLabel="Clearing" onclick={clearLyricsCache} />
+                  {/snippet}
+                </SettingRow>
+              </div>
+            </SettingGroup>
           </div>
         {:else if tab === "integration"}
           <div class="divide-y divide-line">
@@ -481,97 +473,104 @@
           </p>
         {:else}
           <div class="divide-y divide-line">
-            <SettingRow
-              label="Album player visualizer"
-              description="Album player's Visualizer width"
-            >
-              {#snippet control()}
-                <Picker
-                  label={null}
-                  value={visualizerStyleValue}
-                  options={[
-                    { value: "full", label: "Full" },
-                    { value: "minimal", label: "Minimal" },
-                    { value: "off", label: "Off" },
-                  ]}
-                  onchange={setVisualizerStyle}
-                />
-              {/snippet}
-            </SettingRow>
-
-            <SettingRow
-              label="Visualizer delay"
-              description="Adjust if the visualizer runs ahead of the beat vice versa"
-            >
-              {#snippet control()}
-                <div class="w-48 self-center">
-                  <Slider
-                    label="Delay"
-                    value={$appSettings.general.visualizerDelayMs}
-                    min={0}
-                    max={500}
-                    step={5}
-                    unit="ms"
-                    format={(v) => `${v} ms`}
-                    onchange={setVisualizerDelay}
-                  />
-                </div>
-              {/snippet}
-            </SettingRow>
-
-            <SettingRow
-              label="Dynamic scale"
-              description="When enabled the bars become more 'Punchy'"
-            >
-              {#snippet control()}
-                <Switch
-                  checked={dynamicScale}
-                  label="Dynamic scale"
-                  onchange={(on) => setSpectrum({ scale: on ? "dynamic" : "fixed" })}
-                />
-              {/snippet}
-            </SettingRow>
-
-            <SettingGroup
-              label="Visualizer shape"
-              description={null}
-            >
-              <!-- The knobs dim together when the visualizer is off, because
-                   none of them changes anything the user can see while it is
-                   hidden. -->
-              <div class="grid grid-cols-2 gap-x-4 gap-y-3" class:opacity-40={!$spectrumConfig.enabled}>
-                {#each $spectrumSchema as p (p.key)}
-                  {#if p.kind === "choice"}
-                    <!-- A choice has no continuous range, so the set the schema
-                         names is rendered instead of a slider over a span it
-                         cannot take. -->
+            <SettingGroup label="Visualizer" description={null}>
+              <!-- The rows keep their own labels and dividers inside the
+                   group; the shell only names the block, so a later knob is
+                   one more row here rather than a new section. -->
+              <div class="divide-y divide-line">
+                <SettingRow
+                  label="Album player visualizer"
+                  description="Album player's Visualizer width. Turn this off if you are having a performance issue."
+                >
+                  {#snippet control()}
                     <Picker
-                      label={p.label}
-                      value={String(spectrumValue(p))}
-                      disabled={!$spectrumConfig.enabled}
-                      options={(p.choices ?? []).map((c) => ({ value: String(c), label: fftLabel(c) }))}
-                      onchange={(v) => onSpectrumParam(p, Number(v))}
+                      label={null}
+                      value={visualizerStyleValue}
+                      options={[
+                        { value: "full", label: "Full" },
+                        { value: "minimal", label: "Minimal" },
+                        { value: "off", label: "Off" },
+                      ]}
+                      onchange={setVisualizerStyle}
                     />
-                  {:else}
-                    <Slider
-                      label={p.label}
-                      value={spectrumValue(p)}
-                      min={p.min}
-                      max={p.max}
-                      step={p.step}
-                      disabled={!$spectrumConfig.enabled}
-                      format={(v) => (p.key === "minHz" || p.key === "maxHz" ? `${v} Hz` : String(v))}
-                      onchange={(v) => onSpectrumParam(p, v)}
+                  {/snippet}
+                </SettingRow>
+
+                <SettingRow
+                  label="Visualizer delay"
+                  description="Adjust if the visualizer runs ahead of the beat vice versa"
+                >
+                  {#snippet control()}
+                    <div class="w-48 self-center">
+                      <Slider
+                        label="Delay"
+                        value={$appSettings.general.visualizerDelayMs}
+                        min={0}
+                        max={500}
+                        step={5}
+                        unit="ms"
+                        format={(v) => `${v} ms`}
+                        onchange={setVisualizerDelay}
+                      />
+                    </div>
+                  {/snippet}
+                </SettingRow>
+
+                <SettingRow
+                  label="Dynamic scale"
+                  description="When enabled the bars become more 'Punchy'"
+                >
+                  {#snippet control()}
+                    <Switch
+                      checked={dynamicScale}
+                      label="Dynamic scale"
+                      onchange={(on) => setSpectrum({ scale: on ? "dynamic" : "fixed" })}
                     />
-                  {/if}
-                {/each}
+                  {/snippet}
+                </SettingRow>
+
+                <div class="py-2.5">
+                  <!-- The knobs dim together when the visualizer is off,
+                       because none of them changes anything the user can see
+                       while it is hidden. -->
+                  <div
+                    class="grid grid-cols-2 gap-x-4 gap-y-3"
+                    class:opacity-40={!$spectrumConfig.enabled}
+                  >
+                    {#each $spectrumSchema as p (p.key)}
+                      {#if p.kind === "choice"}
+                        <!-- A choice has no continuous range, so the set the
+                             schema names is rendered instead of a slider over a
+                             span it cannot take. -->
+                        <Picker
+                          label={p.label}
+                          value={String(spectrumValue(p))}
+                          disabled={!$spectrumConfig.enabled}
+                          options={(p.choices ?? []).map((c) => ({ value: String(c), label: fftLabel(c) }))}
+                          onchange={(v) => onSpectrumParam(p, Number(v))}
+                        />
+                      {:else}
+                        <Slider
+                          label={p.label}
+                          value={spectrumValue(p)}
+                          min={p.min}
+                          max={p.max}
+                          step={p.step}
+                          disabled={!$spectrumConfig.enabled}
+                          format={(v) => (p.key === "minHz" || p.key === "maxHz" ? `${v} Hz` : String(v))}
+                          onchange={(v) => onSpectrumParam(p, v)}
+                        />
+                      {/if}
+                    {/each}
+                  </div>
+                </div>
               </div>
             </SettingGroup>
           </div>
         {/if}
       </div>
 
-      <div class="flex shrink-0 items-center gap-3 border-t border-line px-4 py-2 text-[11px] text-muted">
+      <div class="flex shrink-0 items-center gap-3 border-t border-line px-[clamp(0.5rem,1.6vw,1.25rem)] py-[clamp(0.375rem,1vh,0.75rem)] text-[11px] text-muted">
         <span>Settings apply as you change them.</span>
         <span class="ml-auto"><kbd class="font-sans text-fg">Esc</kbd> to close</span>
       </div>

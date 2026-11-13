@@ -578,15 +578,31 @@ func dashTail(s string) (string, bool) {
 	return s, false
 }
 
+// dashHead returns the part of s before the last separator, s itself when
+// there is none. It pairs with dashTail on the same split point.
+func dashHead(s string) string {
+	if i := strings.LastIndex(s, " - "); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+
+	return s
+}
+
 // titleScore is 1 when the title half of an "Artist - Title" name matches the
 // other side, cleaned of junk suffixes. It joins a titled track file and a
 // bare-title sidecar, either way around. Same weakest tier as cleanedScore.
 func titleScore(base, stem string) int {
-	baseTitle, _ := dashTail(base)
-	stemTitle, _ := dashTail(stem)
+	baseTitle, baseDashed := dashTail(base)
+	stemTitle, stemDashed := dashTail(stem)
 	baseKey := normalize(CleanKey(baseTitle))
 	stemKey := normalize(CleanKey(stemTitle))
 	if baseKey == "" || stemKey == "" || baseKey != stemKey {
+		return 0
+	}
+	if baseDashed && stemDashed &&
+		normalize(CleanKey(dashHead(base))) != normalize(CleanKey(dashHead(stem))) {
+		// Both names carry the separator: a folder of "Title - Artist" files
+		// shares one artist tail, so the heads must agree too.
 		return 0
 	}
 

@@ -97,6 +97,22 @@ func TestUnrelatedTitleSidecarDoesNotMatch(t *testing.T) {
 	}
 }
 
+// In a "Title - Artist" folder every filename shares the artist tail, so a
+// sidecar for one title must not serve the artist's other tracks.
+func TestSameArtistFolderDoesNotCrossMatch(t *testing.T) {
+	dir := t.TempDir()
+	media := write(t, dir, "過去に囚われている - ツユ.opus", "")
+	write(t, dir, "lyrics/それでも雨は降るんだね - ツユ.lrc", "[00:01.00]それでも雨は降るんだね\n")
+
+	doc, err := Load(media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc != nil {
+		t.Fatalf("wrong sidecar served: %s", doc.Source)
+	}
+}
+
 func TestLyricsSubfolderAndTranslationFile(t *testing.T) {
 	dir := t.TempDir()
 	media := write(t, dir, "Song.flac", "")

@@ -14,23 +14,23 @@
     </Installer>
     <PackageInformation
         PackageName="Player"
-        PackageDisplayName="Player"
+        PackageDisplayName="MoLow"
         PublisherName="CN=dlcuy22"
         PublisherDisplayName="dlcuy22"
-        Version="0.1.0.0"
-        PackageDescription="Local audio player">
+        Version="0.4.0.0"
+        PackageDescription="MoLow Music player and library manager">
         <Capabilities>
             <Capability Name="runFullTrust" />
-            
+
         </Capabilities>
         <Applications>
             <Application
-                Id="com.dlcuy22.player"
-                Description="Local audio player"
-                DisplayName="Player"
-                ExecutableName="player-webui"
+                Id="com.dlcuy22.MoLow"
+                Description="MoLow Music player and library manager"
+                DisplayName="MoLow"
+                ExecutableName="MoLow"
                 EntryPoint="Windows.FullTrustApplication">
-                
+
             </Application>
         </Applications>
         <Resources>
@@ -43,7 +43,7 @@
             <Framework>false</Framework>
             <DisplayName>Player</DisplayName>
             <PublisherDisplayName>dlcuy22</PublisherDisplayName>
-            <Description>Local audio player</Description>
+            <Description>MoLow Music player and library manager</Description>
             <Logo>Assets\AppIcon.png</Logo>
         </Properties>
     </PackageInformation>

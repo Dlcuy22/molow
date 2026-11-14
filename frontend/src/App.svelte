@@ -101,6 +101,14 @@
     void loadLibrary(filterTab(f));
   }
 
+  // The album player sheet is the only consumer of the lyric column and the
+  // spectrum pane, so the Go pumps idle while it is down. The report follows
+  // the mount, not the open flag: the sheet keeps drawing through its closing
+  // transition and only unmounts once it has slid away.
+  $effect(() => {
+    commands.setAlbumPlayerOpen(playerMounted);
+  });
+
   // The lyric column and the backdrop follow the track, not the page.
   let lyricPath = "";
   const setLyrics = (doc: Awaited<ReturnType<typeof loadLyrics>>) => {
@@ -123,6 +131,14 @@
       : null;
   };
   $effect(() => {
+    // The sheet is the only thing that draws lyrics, so a closed sheet reads
+    // no document at all. Dropping the memo on close makes the next open read
+    // the sidecar again, which also picks up a prefetch that finished while
+    // the sheet was shut.
+    if (!playerMounted) {
+      lyricPath = "";
+      return;
+    }
     const path = snap.path;
     if (path === lyricPath) {
       return;
@@ -143,6 +159,9 @@
   // The prefetch announces the sidecar it wrote, so a pane already open on
   // this track reads it again instead of waiting for the next play.
   $effect(() => {
+    if (!playerMounted) {
+      return;
+    }
     const off = Events.On("molo:lyrics", (ev) => {
       const path = ev.data as string;
       if (path !== lyricPath || lyrics !== null) {

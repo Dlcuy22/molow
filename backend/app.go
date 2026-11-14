@@ -151,6 +151,17 @@ func Run(assets embed.FS) {
 		}
 	})
 
+	// Minimise state comes from the OS events for the same reason the drop
+	// does: the webview cannot be trusted to report it (a minimised WebView2
+	// keeps compositing whatever it is sent), so the spectrum pump learns it
+	// from the window and stops producing frames nobody can see.
+	window.OnWindowEvent(events.Common.WindowMinimise, func(*application.WindowEvent) {
+		service.setMainWindowMinimised(true)
+	})
+	window.OnWindowEvent(events.Common.WindowUnMinimise, func(*application.WindowEvent) {
+		service.setMainWindowMinimised(false)
+	})
+
 	if err := app.Run(); err != nil {
 		slog.Error("application exited", "error", err)
 		// os.Exit skips defers, so the held-back record is sent on here too.
@@ -187,4 +198,24 @@ func (s *PlayerService) openEffectWindow() {
 	})
 	w.Show()
 	w.Focus()
+}
+
+// effectWindowPresent reports whether the effects window exists. The fast
+// meters are drawn only there, so a desktop session with the window closed
+// stops the tick instead of pushing a payload nobody renders. A session with
+// no main window is server mode, where a browser can render the meters, so
+// the tick keeps feeding; so does a service with no application (tests).
+// Only the window's existence is polled: IsVisible would synchronously hop
+// to the main thread at the tick's rate.
+func effectWindowPresent() bool {
+	app := application.Get()
+	if app == nil {
+		return true
+	}
+	if _, ok := app.Window.GetByName(mainWindowName); !ok {
+		return true
+	}
+	_, ok := app.Window.GetByName(effectWindowName)
+
+	return ok
 }

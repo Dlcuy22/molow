@@ -208,6 +208,53 @@ func TestSpectrumConfigRoundTripsTheScale(t *testing.T) {
 	}
 }
 
+// TestSpectrumWindowGateSkipsTheTransform pins the minimise gate: a minimised
+// main window stops the pump from touching the tap, because a webview keeps
+// compositing frames it is sent and the whole chain would be work nobody sees.
+// Restoring the window resumes the pump.
+func TestSpectrumWindowGateSkipsTheTransform(t *testing.T) {
+	svc := spectrumService(t)
+	svc.tap = &countingTap{}
+	if err := svc.rebuildRunner(); err != nil {
+		t.Fatalf("rebuildRunner: %v", err)
+	}
+
+	svc.setMainWindowMinimised(true)
+	svc.publishSpectrum()
+	if reads := svc.tap.(*countingTap).reads; reads != 0 {
+		t.Fatalf("minimised pump read the tap %d times, want 0", reads)
+	}
+
+	svc.setMainWindowMinimised(false)
+	svc.publishSpectrum()
+	if reads := svc.tap.(*countingTap).reads; reads == 0 {
+		t.Fatal("restored pump never read the tap")
+	}
+}
+
+// TestSpectrumAlbumPlayerGateSkipsTheTransform pins the sheet gate: the
+// visualizer lives only inside the album player, so a closed sheet stops the
+// pump from touching the tap at all, and opening it resumes.
+func TestSpectrumAlbumPlayerGateSkipsTheTransform(t *testing.T) {
+	svc := spectrumService(t)
+	svc.tap = &countingTap{}
+	if err := svc.rebuildRunner(); err != nil {
+		t.Fatalf("rebuildRunner: %v", err)
+	}
+
+	svc.SetAlbumPlayerOpen(false)
+	svc.publishSpectrum()
+	if reads := svc.tap.(*countingTap).reads; reads != 0 {
+		t.Fatalf("closed sheet pump read the tap %d times, want 0", reads)
+	}
+
+	svc.SetAlbumPlayerOpen(true)
+	svc.publishSpectrum()
+	if reads := svc.tap.(*countingTap).reads; reads == 0 {
+		t.Fatal("open sheet pump never read the tap")
+	}
+}
+
 // TestSpectrumConfigRoundTripsTheRate covers the frame-rate slider's path: what
 // the UI reads back is what it sent, and a zero keeps the shipped default so a
 // caller that predates the field is unchanged.

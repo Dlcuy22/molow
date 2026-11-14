@@ -119,6 +119,24 @@ type PlayerService struct {
 	// costs no CPU. The runner is kept, not rebuilt, so switching back on
 	// resumes from the live tap on the next tick.
 	spectrumEnabled bool
+	// windowHidden mirrors the main window's native minimise state. A
+	// minimised WebView2 keeps compositing whatever it is sent — the
+	// webview's own visibility events do not report the state reliably — so
+	// the pump stops producing frames instead: the whole chain (transform,
+	// serialise, bridge, repaint) is work nobody can see. Guarded by
+	// spectrumMu with the rest of the pump's state.
+	windowHidden bool
+	// albumPlayerOpen mirrors whether the album player sheet is up. The
+	// visualizer pane and the lyric column live only there, so the pump idles
+	// while the sheet is closed instead of computing frames for an unmounted
+	// display. The frontend reports the state through SetAlbumPlayerOpen.
+	albumPlayerOpen bool
+
+	// effectWindowPresent reports whether anything draws the fast effect
+	// meters. The production lookup asks the window manager; a test pins its
+	// own so the gate can be exercised without a window system.
+	effectWindowPresent func() bool
+
 	// rateChanged wakes the spectrum tick when the configured rate moves, so
 	// the ticker reschedules without rebuilding the runner. Buffered so a
 	// reconfigure racing the pump never blocks.
@@ -182,16 +200,21 @@ func newPlayerService() *PlayerService {
 		closing:         make(chan struct{}),
 		spectrumCfg:     spectrum.DefaultConfig(),
 		spectrumEnabled: true,
-		coverCache:      make(map[string]string),
-		index:           newTagIndex(),
-		ytm:             ytmIndex,
-		ytmProv:         newYTMProvider(ytmIndex, ytmSeamlessSwap, nil),
-		searchCache:     make(map[string][]YTMResult),
-		appSettings:     loadAppSettings(),
-		ctx:             ctx,
-		cancel:          cancel,
-		log:             slog.Default(),
-		rateChanged:     make(chan struct{}, 1),
+		// The pump starts armed: a service with no UI attached at all (server
+		// mode, a test) keeps its old behaviour, and the frontend reports the
+		// closed sheet as soon as it mounts.
+		albumPlayerOpen:     true,
+		effectWindowPresent: effectWindowPresent,
+		rateChanged:         make(chan struct{}, 1),
+		coverCache:          make(map[string]string),
+		index:               newTagIndex(),
+		ytm:                 ytmIndex,
+		ytmProv:             newYTMProvider(ytmIndex, ytmSeamlessSwap, nil),
+		searchCache:         make(map[string][]YTMResult),
+		appSettings:         loadAppSettings(),
+		ctx:                 ctx,
+		cancel:              cancel,
+		log:                 slog.Default(),
 	}
 }
 
@@ -377,8 +400,13 @@ func (s *PlayerService) pumpEffectMeters() {
 
 // publishEffectMeters emits one lean meter payload. A chain with no metered
 // stage, or an engine that is not built yet, emits nothing rather than an empty
-// event, so an idle player does not push a payload at 60 Hz forever.
+// event, so an idle player does not push a payload at 60 Hz forever. A closed
+// effects window skips the engine read entirely, because only that window
+// draws the meters.
 func (s *PlayerService) publishEffectMeters() {
+	if !s.effectWindowPresent() {
+		return
+	}
 	fx, err := s.effects()
 	if err != nil {
 		return
@@ -432,18 +460,23 @@ func (s *PlayerService) spectrumPeriod() time.Duration {
 
 // publishSpectrum computes one frame and emits it as a plain slice of levels.
 // A disabled visualizer skips the transform entirely: the tick still fires, but
-// with no listener the display would only burn CPU on a frame nobody draws.
-// A frame that carries nothing new is skipped: an identical repeat (the
-// runner holds its display while the tap has no new samples, e.g. paused) or
-// continued near-silence after the drain already reached the floor. Without
-// this the bridge would push 150 floats at 60 Hz forever, even for a frozen
-// or empty display the frontend would just redraw identically.
+// with no listener the display would only burn CPU on a frame nobody draws. A
+// minimised main window skips too: a webview keeps compositing frames it is
+// sent even when nobody can see them. So does a closed album player, where no
+// visualizer is mounted to draw them. A frame that carries nothing new is
+// skipped: an identical repeat (the runner holds its display while the tap has
+// no new samples, e.g. paused) or continued near-silence after the drain
+// already reached the floor. Without this the bridge would push 150 floats at
+// 60 Hz forever, even for a frozen or empty display the frontend would just
+// redraw identically.
 func (s *PlayerService) publishSpectrum() {
 	s.spectrumMu.Lock()
 	runner := s.runner
 	enabled := s.spectrumEnabled
+	hidden := s.windowHidden
+	open := s.albumPlayerOpen
 	s.spectrumMu.Unlock()
-	if runner == nil || !enabled {
+	if runner == nil || !enabled || hidden || !open {
 		return
 	}
 
@@ -455,6 +488,34 @@ func (s *PlayerService) publishSpectrum() {
 	out := make([]float64, len(bands))
 	copy(out, bands)
 	s.emit(eventFrame, out)
+}
+
+// setMainWindowMinimised records the main window's native state, as reported
+// by the OS events Wails fires. The webview's own visibility is not consulted:
+// a minimised WebView2 does not reliably report hidden, so the state has to
+// come from the window itself.
+func (s *PlayerService) setMainWindowMinimised(hidden bool) {
+	s.spectrumMu.Lock()
+	s.windowHidden = hidden
+	s.spectrumMu.Unlock()
+}
+
+// SetAlbumPlayerOpen reports whether the album player sheet is showing. The
+// visualizer lives only there, so the pump idles while the sheet is closed
+// instead of producing frames for a pane that is not mounted. The frontend
+// calls it when the sheet mounts and unmounts.
+func (s *PlayerService) SetAlbumPlayerOpen(open bool) {
+	s.spectrumMu.Lock()
+	wasOpen := s.albumPlayerOpen
+	s.albumPlayerOpen = open
+	// A pane that mounts subscribes fresh and expects a frame; the runner kept
+	// running nothing while the sheet was closed, so the suppression state
+	// from before it closed no longer describes what is on screen.
+	if open && !wasOpen {
+		s.spectrumLast = s.spectrumLast[:0]
+		s.spectrumLastSilent = false
+	}
+	s.spectrumMu.Unlock()
 }
 
 // suppressSpectrum reports whether bands is not worth emitting, recording it

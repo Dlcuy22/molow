@@ -500,6 +500,12 @@ export const commands = {
   setBackend: (name: string) => invoke(PlayerService.SetBackend(name)),
   configureSpectrum: (cfg: SpectrumConfig) =>
     invoke(PlayerService.ConfigureSpectrum(cfg)),
+  // setAlbumPlayerOpen tells Go whether the sheet is up, so the spectrum pump
+  // idles while nothing is mounted to draw its frames. It is a plain notify:
+  // a rejection means the bridge is gone, not a user-visible failure.
+  setAlbumPlayerOpen: (open: boolean) => {
+    PlayerService.SetAlbumPlayerOpen(open).catch(() => {});
+  },
   // The two pickers are the slow commands: they open a native dialog and may
   // walk a folder tree, so they also drive the busy flag.
   openFiles: () => run(() => PlayerService.OpenFiles()),

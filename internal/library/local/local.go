@@ -1,5 +1,6 @@
-// Package local is the filesystem library: one root, scanned into the shared
-// SQLite catalogue, browsed through the same contract a remote library uses.
+// Package local is the filesystem library: its watched folders, scanned into
+// the shared SQLite catalogue, browsed through the same contract a remote
+// library uses.
 package local
 
 import (
@@ -16,6 +17,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,7 +31,14 @@ type ScanProgress struct {
 	Total     int
 }
 
-// Local is one watched root.
+// ScanResult is what one scan walked: how many files it indexed and, for an
+// import scan, the refs it indexed in walk order.
+type ScanResult struct {
+	Count int
+	Refs  []string
+}
+
+// Local is one browsable local library over its watched roots.
 type Local struct {
 	store *sqlite.Store
 	lib   library.Library
@@ -149,6 +158,11 @@ func (l *Local) home(limit int) (library.Page, error) {
 	if err != nil {
 		return library.Page{}, err
 	}
+	// An empty library draws no shelves: the page's empty state is the
+	// onboarding, and it keys on the shelves being absent.
+	if len(tracks) == 0 {
+		return library.Page{}, nil
+	}
 	albums, _, err := l.store.Albums(l.lib.ID, 5, 0)
 	if err != nil {
 		return library.Page{}, err
@@ -228,11 +242,41 @@ func (l *Local) RemoveFromPlaylist(_ context.Context, id string, refs []string) 
 	return l.store.RemoveFromPlaylist(id, refs)
 }
 
-// Scan walks the root and writes the catalogue. The walk is synchronous; the
+// Scan walks every root and writes the catalogue. The walk is synchronous; the
 // service runs it on a worker so a large folder does not block the UI.
 func (l *Local) Scan(ctx context.Context) (int, error) {
+	res, err := l.importScan(ctx, "")
+	if err != nil {
+		return 0, err
+	}
+
+	return res.Count, nil
+}
+
+// ImportScan walks every root like Scan, and when importRoot names one of them
+// also reports the refs indexed under it in walk order — the entries the
+// playlist an import creates.
+func (l *Local) ImportScan(ctx context.Context, importRoot string) (ScanResult, error) {
+	return l.importScan(ctx, importRoot)
+}
+
+func (l *Local) importScan(ctx context.Context, importRoot string) (ScanResult, error) {
 	l.setStatus(library.StatusScanning, "")
 	start := time.Now().Unix()
+
+	roots, err := l.roots()
+	if err != nil {
+		l.setStatus(library.StatusError, err.Error())
+
+		return ScanResult{}, err
+	}
+	if len(roots) == 0 {
+		// A library with no folders has nothing to walk; the import flow adds
+		// a root before scanning, so this is only reachable defensively.
+		l.setStatus(library.StatusReady, "")
+
+		return ScanResult{}, nil
+	}
 
 	var (
 		seen  int
@@ -240,35 +284,38 @@ func (l *Local) Scan(ctx context.Context) (int, error) {
 		last  error
 		paths []string
 	)
-	err := filepath.WalkDir(l.lib.Root, func(path string, d fs.DirEntry, err error) error {
+	for _, root := range roots {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				if d != nil && d.IsDir() {
+					return fs.SkipDir
+				}
+				errs++
+
+				return nil
+			}
+			if d.IsDir() {
+				name := d.Name()
+				if path != root && (strings.HasPrefix(name, ".") || name == "@eaDir") {
+					return fs.SkipDir
+				}
+
+				return nil
+			}
+			if l.exts[strings.ToLower(filepath.Ext(path))] {
+				paths = append(paths, path)
+			}
+
+			return nil
+		})
 		if err != nil {
-			if d != nil && d.IsDir() {
-				return fs.SkipDir
-			}
-			errs++
+			l.setStatus(library.StatusError, err.Error())
 
-			return nil
+			return ScanResult{}, err
 		}
-		if d.IsDir() {
-			name := d.Name()
-			if path != l.lib.Root && (strings.HasPrefix(name, ".") || name == "@eaDir") {
-				return fs.SkipDir
-			}
-
-			return nil
-		}
-		if l.exts[strings.ToLower(filepath.Ext(path))] {
-			paths = append(paths, path)
-		}
-
-		return nil
-	})
-	if err != nil {
-		l.setStatus(library.StatusError, err.Error())
-
-		return 0, err
 	}
 
+	var refs []string
 	for i, path := range paths {
 		if ctx.Err() != nil {
 			break
@@ -278,6 +325,9 @@ func (l *Local) Scan(ctx context.Context) (int, error) {
 			last = err
 		} else {
 			seen++
+			if importRoot != "" && underPath(path, importRoot) {
+				refs = append(refs, path)
+			}
 		}
 		if l.onChange != nil && (i%25 == 0 || i == len(paths)-1) {
 			l.onChange(ScanProgress{LibraryID: l.lib.ID, Done: i + 1, Total: len(paths)})
@@ -287,21 +337,61 @@ func (l *Local) Scan(ctx context.Context) (int, error) {
 	if err := l.store.MarkMissing(l.lib.ID, start); err != nil {
 		l.setStatus(library.StatusError, err.Error())
 
-		return seen, err
+		return ScanResult{Count: seen}, err
 	}
 	if err := l.store.TouchScan(l.lib.ID); err != nil {
 		l.setStatus(library.StatusError, err.Error())
 
-		return seen, err
+		return ScanResult{Count: seen}, err
 	}
 	if errs > 0 && last != nil {
 		l.setStatus(library.StatusReady, fmt.Sprintf("%d files could not be read", errs))
 
-		return seen, nil
+		return ScanResult{Count: seen, Refs: refs}, nil
 	}
 	l.setStatus(library.StatusReady, "")
 
-	return seen, nil
+	return ScanResult{Count: seen, Refs: refs}, nil
+}
+
+// roots reads the watched folders from the store, which is the truth: an
+// import adds a root after the Local was built. A row that predates the roots
+// table falls back to its single root column.
+func (l *Local) roots() ([]string, error) {
+	roots, err := l.store.Roots(l.lib.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(roots) == 0 && l.lib.Root != "" {
+		return []string{l.lib.Root}, nil
+	}
+
+	return roots, nil
+}
+
+// underPath reports whether path lives under root, comparing the prefix the
+// way the filesystem will: case sensitively on a case-sensitive filesystem,
+// insensitively on Windows and macOS.
+func underPath(path, root string) bool {
+	sep := string(os.PathSeparator)
+	prefix := root + sep
+	if samePath(path, root) {
+		return true
+	}
+	if runtime.GOOS == "linux" {
+		return strings.HasPrefix(path, prefix)
+	}
+
+	return len(path) > len(prefix) && strings.EqualFold(path[:len(prefix)], prefix)
+}
+
+// samePath compares two absolute paths the way the filesystem resolves them.
+func samePath(a, b string) bool {
+	if runtime.GOOS == "linux" {
+		return a == b
+	}
+
+	return strings.EqualFold(a, b)
 }
 
 func (l *Local) index(ctx context.Context, path string) error {

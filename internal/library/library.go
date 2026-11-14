@@ -53,12 +53,15 @@ const (
 	FlagSaved
 )
 
-// Library is one browsable instance.
+// Library is one browsable instance. Root is the first watched folder, kept
+// for the describe line; Roots is the full list a scanner walks — a library
+// built by imports holds more than one.
 type Library struct {
 	ID           string       `json:"id"`
 	Kind         Kind         `json:"kind"`
 	Name         string       `json:"name"`
 	Root         string       `json:"root,omitempty"`
+	Roots        []string     `json:"roots,omitempty"`
 	Status       Status       `json:"status"`
 	Message      string       `json:"message,omitempty"`
 	Capabilities []Capability `json:"capabilities"`

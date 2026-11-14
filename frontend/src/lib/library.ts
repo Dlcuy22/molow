@@ -99,6 +99,7 @@ function toInfo(l: GenLibrary): LibraryInfo {
     kind: String(l.kind),
     name: l.name,
     root: l.root ?? "",
+    roots: l.roots ?? [],
     status: String(l.status),
     message: l.message ?? "",
     capabilities: (l.capabilities ?? []).map(String),
@@ -186,14 +187,25 @@ export async function searchLibrary(query: string): Promise<void> {
   }
 }
 
-/** addLibrary opens the folder picker and registers the choice. */
+/** addLibrary opens the folder picker and merges the choice into the selected
+ *  library as one more root — one playlist per import, named after the folder.
+ *  The backend always has at least one library (a fresh install creates the
+ *  default), so an empty selection falls back to the first row. */
 export async function addLibrary(): Promise<LibraryInfo | null> {
   try {
     const path = await PlayerService.PickLibraryFolder();
     if (!path) {
       return null;
     }
-    const info = toInfo(await PlayerService.AddLocalLibrary(path));
+    let target = get(libraryId);
+    if (target === "") {
+      await refreshLibraries();
+      target = get(libraryId);
+      if (target === "") {
+        return null;
+      }
+    }
+    const info = toInfo(await PlayerService.ImportFolder(target, path));
     await refreshLibraries();
     libraryId.set(info.id);
     await Promise.all([loadHome(), loadLibrary()]);

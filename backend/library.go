@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/dlcuy22/molow/internal/artcache"
@@ -22,6 +23,9 @@ import (
 // eventLibrary carries scan progress and completion. The frontend re-reads a
 // feed when it names the library it is showing, rather than polling.
 const eventLibrary = "molo:library"
+
+// defaultLibraryID is the library a fresh install imports into.
+const defaultLibraryID = "local:default"
 
 // LibraryProgress is the scan event payload.
 type LibraryProgress struct {
@@ -69,11 +73,35 @@ func (s *PlayerService) initLibraries() {
 
 		return
 	}
+	// A fresh install gets one empty library to import into: the Add button
+	// merges into the selected library, so something selected must exist.
+	if len(rows) == 0 {
+		row, err := store.AddLibrary(library.Library{
+			ID:   defaultLibraryID,
+			Kind: library.KindLocal,
+			Name: "Library",
+		})
+		if err != nil {
+			s.log.Warn("library: create default", "error", err)
+
+			return
+		}
+		s.log.Info("library: created the default library", "id", row.ID)
+		rows = []library.Library{row}
+	}
 	for _, row := range rows {
 		s.registerLocal(row)
 		// Scan on startup, on a worker: the window must open before a large
-		// folder has been walked.
-		_ = s.RescanLibrary(row.ID)
+		// folder has been walked. A library with no roots has nothing to walk.
+		roots, err := store.Roots(row.ID)
+		if err != nil {
+			s.log.Warn("library: roots", "id", row.ID, "error", err)
+
+			continue
+		}
+		if len(roots) > 0 {
+			_ = s.RescanLibrary(row.ID)
+		}
 	}
 }
 
@@ -124,9 +152,10 @@ func (s *PlayerService) Libraries() ([]library.Library, error) {
 	return out, nil
 }
 
-// AddLocalLibrary registers a folder as a library and starts its first scan.
-// The folder is the identity: adding the same path twice returns the row that
-// already exists rather than a second library.
+// AddLocalLibrary registers a folder as a new library and starts its first
+// scan. The folder is the identity: adding the same path twice returns the row
+// that already exists rather than a second library. To merge a folder into an
+// existing library, ImportFolder is the call.
 func (s *PlayerService) AddLocalLibrary(path string) (library.Library, error) {
 	abs, err := filepath.Abs(strings.TrimSpace(path))
 	if err != nil || abs == "" {
@@ -159,6 +188,11 @@ func (s *PlayerService) AddLocalLibrary(path string) (library.Library, error) {
 	if err != nil {
 		return library.Library{}, err
 	}
+	// The roots table is the scanner's truth; the root column is the describe
+	// line. Both get the folder.
+	if _, err := store.AddRoot(saved.ID, abs); err != nil {
+		return library.Library{}, err
+	}
 	s.registerLocal(saved)
 	_ = s.RescanLibrary(saved.ID)
 
@@ -167,6 +201,103 @@ func (s *PlayerService) AddLocalLibrary(path string) (library.Library, error) {
 	}
 
 	return saved, nil
+}
+
+// ImportFolder adds a folder as one more root of an existing library and
+// starts the scan that indexes it; when the scan lands, the folder's tracks
+// become one playlist named after the folder. Re-adding a folder the library
+// already watches is a no-op, and a folder inside — or containing — a watched
+// root is rejected: a nested root would index the same files twice.
+func (s *PlayerService) ImportFolder(libraryID, path string) (library.Library, error) {
+	abs, err := filepath.Abs(strings.TrimSpace(path))
+	if err != nil || abs == "" {
+		return library.Library{}, fmt.Errorf("library: bad path")
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return library.Library{}, err
+	}
+	if !info.IsDir() {
+		return library.Library{}, fmt.Errorf("library: not a folder: %s", abs)
+	}
+
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return library.Library{}, fmt.Errorf("library: store is not available")
+	}
+	src, ok := s.librarySource(libraryID)
+	if !ok {
+		return library.Library{}, fmt.Errorf("library: unknown id %q", libraryID)
+	}
+	if _, isLocal := src.(*local.Local); !isLocal {
+		return library.Library{}, fmt.Errorf("library: %q is not a local library", libraryID)
+	}
+
+	roots, err := store.Roots(libraryID)
+	if err != nil {
+		return library.Library{}, err
+	}
+	for _, root := range roots {
+		if samePath(abs, root) {
+			// Already watched: nothing new to index, no second playlist.
+			return s.describeLibrary(libraryID)
+		}
+		if insidePath(abs, root) || insidePath(root, abs) {
+			return library.Library{}, fmt.Errorf("library: folder overlaps %q", root)
+		}
+	}
+
+	added, err := store.AddRoot(libraryID, abs)
+	if err != nil {
+		return library.Library{}, err
+	}
+	if !added {
+		// Already watched: nothing new to index, no second playlist.
+		return s.describeLibrary(libraryID)
+	}
+	if err := s.scanLibrary(libraryID, abs); err != nil {
+		return library.Library{}, err
+	}
+
+	return s.describeLibrary(libraryID)
+}
+
+// describeLibrary is the one row the caller sees after a change.
+func (s *PlayerService) describeLibrary(id string) (library.Library, error) {
+	if src, ok := s.librarySource(id); ok {
+		if described, err := src.Describe(s.ctx); err == nil {
+			return described, nil
+		}
+	}
+
+	return library.Library{}, fmt.Errorf("library: unknown id %q", id)
+}
+
+// insidePath reports whether path equals or lives under root, compared the way
+// the filesystem resolves paths: case-sensitively on Linux, insensitively on
+// Windows and macOS.
+func insidePath(path, root string) bool {
+	sep := string(os.PathSeparator)
+	prefix := root + sep
+	if runtime.GOOS == "linux" {
+		return path == root || strings.HasPrefix(path, prefix)
+	}
+	if strings.EqualFold(path, root) {
+		return true
+	}
+
+	return len(path) > len(prefix) && strings.EqualFold(path[:len(prefix)], prefix)
+}
+
+// samePath compares two absolute paths the way the filesystem resolves them.
+func samePath(a, b string) bool {
+	if runtime.GOOS == "linux" {
+		return a == b
+	}
+
+	return strings.EqualFold(a, b)
 }
 
 func (s *PlayerService) RemoveLibrary(id string) error {
@@ -181,9 +312,16 @@ func (s *PlayerService) RemoveLibrary(id string) error {
 	return store.RemoveLibrary(id)
 }
 
-// RescanLibrary rescans one root on a worker. A scan already running is not
-// duplicated.
+// RescanLibrary rescans every watched root on a worker. A scan already running
+// is not duplicated.
 func (s *PlayerService) RescanLibrary(id string) error {
+	return s.scanLibrary(id, "")
+}
+
+// scanLibrary runs one scan on a worker, deduped per library. An importRoot
+// names the folder an import just added: the scan indexes every root, and the
+// refs it indexed under that folder become the import's playlist.
+func (s *PlayerService) scanLibrary(id, importRoot string) error {
 	src, ok := s.librarySource(id)
 	if !ok {
 		return fmt.Errorf("library: unknown id %q", id)
@@ -211,16 +349,41 @@ func (s *PlayerService) RescanLibrary(id string) error {
 			s.libMu.Unlock()
 		}()
 
-		n, err := scanner.Scan(s.ctx)
+		res, err := scanner.ImportScan(s.ctx, importRoot)
 		state := "ready"
 		if err != nil {
 			state = "error"
 			s.log.Warn("library: scan failed", "id", id, "error", err)
 		}
-		s.emit(eventLibrary, LibraryProgress{LibraryID: id, Done: n, Total: n, State: state})
+		s.emit(eventLibrary, LibraryProgress{LibraryID: id, Done: res.Count, Total: res.Count, State: state})
+		if err == nil && importRoot != "" && len(res.Refs) > 0 {
+			s.createImportPlaylist(id, importRoot, res.Refs)
+		}
 	}()
 
 	return nil
+}
+
+// createImportPlaylist is the one-playlist-per-import rule: the folder's
+// tracks, in walk order, under the folder's name. A failure only costs the
+// playlist; the tracks are already in the catalogue.
+func (s *PlayerService) createImportPlaylist(libraryID, root string, refs []string) {
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return
+	}
+
+	playlist, err := store.CreatePlaylist(libraryID, filepath.Base(root))
+	if err != nil {
+		s.log.Warn("library: import playlist", "error", err)
+
+		return
+	}
+	if err := store.AddToPlaylist(playlist.ID, refs); err != nil {
+		s.log.Warn("library: import playlist", "error", err)
+	}
 }
 
 // Liked reports whether a catalogued ref carries a like. An uncatalogued path

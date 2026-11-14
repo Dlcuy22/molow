@@ -73,6 +73,7 @@ export interface LibraryInfo {
   kind: string;
   name: string;
   root: string;
+  roots: string[];
   status: string;
   message: string;
   capabilities: string[];

@@ -158,6 +158,47 @@ func (s *Store) AddLibrary(lib library.Library) (library.Library, error) {
 	return s.Library(lib.ID)
 }
 
+// AddRoot registers one more watched folder. It reports whether the root is
+// new: re-adding a folder the library already watches is a no-op, not an error.
+func (s *Store) AddRoot(libraryID, path string) (bool, error) {
+	res, err := s.db.Exec(
+		`INSERT INTO library_root (library_id, path, added_at)
+		 VALUES (?, ?, ?)
+		 ON CONFLICT(library_id, path) DO NOTHING`,
+		libraryID, path, time.Now().Unix(),
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+
+	return n > 0, err
+}
+
+// Roots lists a library's watched folders in insertion order, which is the
+// chronological one: two roots added in the same second would tie on a
+// timestamp.
+func (s *Store) Roots(libraryID string) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT path FROM library_root WHERE library_id = ? ORDER BY rowid`, libraryID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+
+	return out, rows.Err()
+}
+
 // Library reads one row with its track count.
 func (s *Store) Library(id string) (library.Library, error) {
 	var (
@@ -174,6 +215,11 @@ func (s *Store) Library(id string) (library.Library, error) {
 	}
 	out.Kind = library.Kind(kind)
 	out.Status = library.StatusReady
+	roots, err := s.Roots(id)
+	if err != nil {
+		return library.Library{}, err
+	}
+	out.Roots = roots
 
 	return out, nil
 }
@@ -203,8 +249,20 @@ func (s *Store) Libraries() ([]library.Library, error) {
 		l.Status = library.StatusReady
 		out = append(out, l)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// The roots query runs after the row cursor is done: one connection, and
+	// a nested query while it iterates would wait on itself forever.
+	for i := range out {
+		roots, err := s.Roots(out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Roots = roots
+	}
 
-	return out, rows.Err()
+	return out, nil
 }
 
 // RemoveLibrary deletes a row and, by cascade, its catalogue.

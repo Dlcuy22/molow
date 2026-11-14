@@ -1,7 +1,13 @@
 package sqlite
 
 import (
+	"path/filepath"
 	"testing"
+	"time"
+
+	sqlite3 "github.com/ncruces/go-sqlite3"
+	"github.com/ncruces/go-sqlite3/driver"
+	"github.com/ncruces/go-sqlite3/ext/fts5"
 
 	"github.com/dlcuy22/molow/internal/library"
 )
@@ -231,4 +237,103 @@ func titles(items []library.Track) []string {
 	}
 
 	return out
+}
+
+func TestLibraryRoots(t *testing.T) {
+	s := newTestStore(t)
+
+	if _, err := s.AddLibrary(library.Library{
+		ID: "local:mix", Kind: library.KindLocal, Name: "Mix", Root: "",
+	}); err != nil {
+		t.Fatalf("add library: %v", err)
+	}
+
+	added, err := s.AddRoot("local:mix", `/music`)
+	if err != nil || !added {
+		t.Fatalf("first add: added=%v err=%v", added, err)
+	}
+	added, err = s.AddRoot("local:mix", `/music`)
+	if err != nil {
+		t.Fatalf("re-add: %v", err)
+	}
+	if added {
+		t.Fatal("re-adding the same root reported a new one")
+	}
+	added, err = s.AddRoot("local:mix", `/more`)
+	if err != nil || !added {
+		t.Fatalf("second add: added=%v err=%v", added, err)
+	}
+
+	roots, err := s.Roots("local:mix")
+	if err != nil {
+		t.Fatalf("roots: %v", err)
+	}
+	if len(roots) != 2 || roots[0] != `/music` || roots[1] != `/more` {
+		t.Fatalf("roots = %v, want [/music /more]", roots)
+	}
+	if _, err := s.Roots("local:none"); err != nil {
+		t.Fatalf("roots of an unknown library: %v", err)
+	}
+
+	row, err := s.Library("local:mix")
+	if err != nil {
+		t.Fatalf("library: %v", err)
+	}
+	if len(row.Roots) != 2 {
+		t.Fatalf("read back %d roots, want 2", len(row.Roots))
+	}
+	rows, err := s.Libraries()
+	if err != nil {
+		t.Fatalf("libraries: %v", err)
+	}
+	if len(rows) != 1 || len(rows[0].Roots) != 2 {
+		t.Fatalf("list = %+v, want one library with 2 roots", rows)
+	}
+}
+
+// TestMigrationSeedsTheRoots builds a version-1 database by hand and proves
+// migration 002 turns its root column into the roots row it must become.
+func TestMigrationSeedsTheRoots(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "library.db")
+	dsn := "file:" + filepath.ToSlash(p)
+	db, err := driver.Open(dsn, func(c *sqlite3.Conn) error {
+		return fts5.Register(c)
+	})
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	body, err := migrationFS.ReadFile("migrations/001_init.sql")
+	if err != nil {
+		t.Fatalf("read 001: %v", err)
+	}
+	if _, err := db.Exec(string(body)); err != nil {
+		t.Fatalf("apply 001: %v", err)
+	}
+	now := time.Now().Unix()
+	if _, err := db.Exec(
+		`INSERT INTO library (id, kind, name, root, created_at) VALUES ('local:old', 'local', 'Old', '/music', ?)`,
+		now,
+	); err != nil {
+		t.Fatalf("seed library: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
+		t.Fatalf("pin version: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw: %v", err)
+	}
+
+	s, err := Open(p)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	roots, err := s.Roots("local:old")
+	if err != nil {
+		t.Fatalf("roots: %v", err)
+	}
+	if len(roots) != 1 || roots[0] != "/music" {
+		t.Fatalf("seeded roots = %v, want [/music]", roots)
+	}
 }

@@ -1,12 +1,16 @@
 package backend
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/dlcuy22/molo"
 )
+
+// quietLog keeps the config log lines out of the test output.
+var quietLog = slog.New(slog.DiscardHandler)
 
 // TestAppSettingsDefaultsAreOffAndReference pins the fresh-install state the
 // panel shows before anything is saved: crossfade off, the default duration,
@@ -49,7 +53,7 @@ func TestAppSettingsRoundTrips(t *testing.T) {
 	isolateConfig(t)
 
 	// A fresh install reads the defaults with no file present.
-	if got := loadAppSettings(); got.Playback.Crossfade != defaultAppSettings().Playback.Crossfade {
+	if got := loadAppSettings(quietLog, "loaded"); got.Playback.Crossfade != defaultAppSettings().Playback.Crossfade {
 		t.Fatalf("fresh load = %+v, want the defaults", got.Playback.Crossfade)
 	}
 
@@ -61,11 +65,11 @@ func TestAppSettingsRoundTrips(t *testing.T) {
 		},
 		General: GeneralSettings{VisualizerEnabled: false},
 	}
-	if err := saveAppSettings(want); err != nil {
+	if err := saveAppSettings(quietLog, want); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
-	got := loadAppSettings()
+	got := loadAppSettings(quietLog, "loaded")
 	if got.Playback.Crossfade != want.Playback.Crossfade {
 		t.Fatalf("loaded = %+v, want %+v", got.Playback.Crossfade, want.Playback.Crossfade)
 	}
@@ -99,7 +103,7 @@ func TestLoadAppSettingsNormalizesAnOldSchemaFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := loadAppSettings()
+	got := loadAppSettings(quietLog, "loaded")
 	if got.Playback.Repeat != "off" {
 		t.Fatalf("repeat = %q, want off for an old-schema file", got.Playback.Repeat)
 	}
@@ -138,7 +142,7 @@ func TestLoadAppSettingsNormalizesTheVisualizerStyle(t *testing.T) {
 		if err := os.WriteFile(p, []byte(c.body), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if got := loadAppSettings().General.VisualizerStyle; got != c.want {
+		if got := loadAppSettings(quietLog, "loaded").General.VisualizerStyle; got != c.want {
 			t.Fatalf("%s: style = %q, want %q", c.name, got, c.want)
 		}
 	}
@@ -162,7 +166,7 @@ func TestLoadAppSettingsNormalizesAnUnknownRepeat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := loadAppSettings().Playback.Repeat; got != "off" {
+	if got := loadAppSettings(quietLog, "loaded").Playback.Repeat; got != "off" {
 		t.Fatalf("repeat = %q, want off for an unknown value", got)
 	}
 }
@@ -184,7 +188,7 @@ func TestLoadAppSettingsNormalizesAnUnknownPlayPauseStyle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := loadAppSettings().Playback.PlayPauseStyle; got != "default" {
+	if got := loadAppSettings(quietLog, "loaded").Playback.PlayPauseStyle; got != "default" {
 		t.Fatalf("playPauseStyle = %q, want default for an unknown value", got)
 	}
 }
@@ -205,7 +209,7 @@ func TestLoadAppSettingsToleratesCorruptFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := loadAppSettings(); got.Playback.Crossfade != defaultAppSettings().Playback.Crossfade {
+	if got := loadAppSettings(quietLog, "loaded"); got.Playback.Crossfade != defaultAppSettings().Playback.Crossfade {
 		t.Fatalf("corrupt file did not fall back to defaults: %+v", got.Playback.Crossfade)
 	}
 }
@@ -227,7 +231,7 @@ func TestLoadAppSettingsClampsDuration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := loadAppSettings().Playback.Crossfade.DurationMs; got != molo.MaxCrossfadeMs {
+	if got := loadAppSettings(quietLog, "loaded").Playback.Crossfade.DurationMs; got != molo.MaxCrossfadeMs {
 		t.Fatalf("duration = %d, want the clamp %d", got, molo.MaxCrossfadeMs)
 	}
 }
@@ -259,7 +263,7 @@ func TestLoadAppSettingsClampsVisualizerDelay(t *testing.T) {
 		if err := os.WriteFile(p, []byte(tc.body), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if got := loadAppSettings().General.VisualizerDelayMs; got != tc.want {
+		if got := loadAppSettings(quietLog, "loaded").General.VisualizerDelayMs; got != tc.want {
 			t.Fatalf("%s: delay = %d, want %d", tc.name, got, tc.want)
 		}
 	}
@@ -270,7 +274,7 @@ func TestLoadAppSettingsClampsVisualizerDelay(t *testing.T) {
 func TestSaveAppSettingsIsAtomic(t *testing.T) {
 	isolateConfig(t)
 
-	if err := saveAppSettings(defaultAppSettings()); err != nil {
+	if err := saveAppSettings(quietLog, defaultAppSettings()); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
@@ -321,7 +325,7 @@ func TestSetAppSettingsReachesTheEngine(t *testing.T) {
 	}
 
 	// The document is persisted and reads back with the same values.
-	got := loadAppSettings()
+	got := loadAppSettings(quietLog, "loaded")
 	if !samePlayback(got.Playback, next.Playback) {
 		t.Fatalf("persisted playback = %+v, want %+v", got.Playback, next.Playback)
 	}
@@ -396,7 +400,7 @@ func TestSetAppSettingsKeepsVisualizerOff(t *testing.T) {
 		t.Fatal("SetAppSettings returned visualizer on, want the false the panel sent")
 	}
 
-	persisted := loadAppSettings()
+	persisted := loadAppSettings(quietLog, "loaded")
 	if persisted.General.VisualizerEnabled {
 		t.Fatal("SetAppSettings persisted visualizer on, want false")
 	}
@@ -454,7 +458,7 @@ func TestLoadAppSettingsNormalizesTheLyricsGroup(t *testing.T) {
 	if err := os.WriteFile(p, []byte(`{"version":1,"playback":{}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	lyrics := loadAppSettings().Playback.Lyrics
+	lyrics := loadAppSettings(quietLog, "loaded").Playback.Lyrics
 	if len(lyrics.Providers) != 5 {
 		t.Fatalf("providers = %v, want the five chain names", lyrics.Providers)
 	}
@@ -471,7 +475,7 @@ func TestLoadAppSettingsNormalizesTheLyricsGroup(t *testing.T) {
 	if err := os.WriteFile(p, []byte(`{"version":1,"playback":{"lyrics":{"providers":{"betterlyrics":false,"mystery":true},"saveLocation":"desktop"}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	lyrics = loadAppSettings().Playback.Lyrics
+	lyrics = loadAppSettings(quietLog, "loaded").Playback.Lyrics
 	if lyrics.Providers["betterlyrics"] {
 		t.Fatal("betterlyrics = on, want the saved off state")
 	}
@@ -506,7 +510,7 @@ func TestLyricsTogglePersists(t *testing.T) {
 		t.Fatalf("SetAppSettings: %v", err)
 	}
 
-	lyrics := loadAppSettings().Playback.Lyrics
+	lyrics := loadAppSettings(quietLog, "loaded").Playback.Lyrics
 	if lyrics.Providers["kugou"] {
 		t.Fatal("kugou = on, want the saved off state")
 	}

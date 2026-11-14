@@ -149,24 +149,24 @@ func TestYtmFirstArtistIDSkipsBlanks(t *testing.T) {
 func TestDiscordEnabledRoundTrips(t *testing.T) {
 	isolateConfig(t)
 
-	if loadAppSettings().Discord.Enabled {
+	if loadAppSettings(quietLog, "loaded").Discord.Enabled {
 		t.Fatal("default should be off")
 	}
 
 	def := defaultAppSettings()
 	def.Discord.Enabled = true
-	if err := saveAppSettings(def); err != nil {
+	if err := saveAppSettings(quietLog, def); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if !loadAppSettings().Discord.Enabled {
+	if !loadAppSettings(quietLog, "reloaded").Discord.Enabled {
 		t.Fatal("enabled state did not persist")
 	}
 
 	def.Discord.Enabled = false
-	if err := saveAppSettings(def); err != nil {
+	if err := saveAppSettings(quietLog, def); err != nil {
 		t.Fatalf("save off: %v", err)
 	}
-	if loadAppSettings().Discord.Enabled {
+	if loadAppSettings(quietLog, "reloaded").Discord.Enabled {
 		t.Fatal("disabled state did not persist")
 	}
 }

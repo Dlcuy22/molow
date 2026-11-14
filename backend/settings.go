@@ -22,6 +22,7 @@ package backend
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -167,7 +168,11 @@ func settingsPath() (string, error) {
 // loadAppSettings reads the persisted settings, falling back to the defaults
 // for a missing, unreadable, or malformed file. It never returns an error: a
 // settings file is a convenience, and a bad one must not stop the app.
-func loadAppSettings() AppSettings {
+//
+// verb is the word the log line uses for the read: "loaded" on the startup
+// read, "reloaded" for any later one. The path logged is the absolute path the
+// app actually read.
+func loadAppSettings(log *slog.Logger, verb string) AppSettings {
 	def := defaultAppSettings()
 
 	p, err := settingsPath()
@@ -176,13 +181,18 @@ func loadAppSettings() AppSettings {
 	}
 	raw, err := os.ReadFile(p)
 	if err != nil {
+		log.Info("config: no settings file, using defaults", "path", p)
+
 		return def
 	}
 
 	var s AppSettings
 	if err := json.Unmarshal(raw, &s); err != nil {
+		log.Warn("config: unreadable, using defaults", "path", p, "error", err)
+
 		return def
 	}
+	log.Info("config: "+verb, "path", p)
 
 	return normalizeAppSettings(s, generalFieldPresence(raw))
 }
@@ -349,8 +359,9 @@ func clampCrossfadeMs(ms int) int {
 // saveAppSettings writes the settings document atomically. A write goes to a
 // temporary file in the same directory and is renamed into place, so a reader
 // never sees a partial file and a crash mid-write leaves the previous settings
-// intact.
-func saveAppSettings(s AppSettings) error {
+// intact. The path logged is the absolute path the file landed at; a write
+// failure is returned for the caller to warn about.
+func saveAppSettings(log *slog.Logger, s AppSettings) error {
 	s.Version = settingsVersion
 
 	p, err := settingsPath()
@@ -403,6 +414,7 @@ func saveAppSettings(s AppSettings) error {
 
 		return err
 	}
+	log.Info("config: wrote", "path", p)
 
 	return nil
 }
@@ -454,7 +466,7 @@ func (s *PlayerService) SetAppSettings(next AppSettings) (AppSettings, error) {
 
 	s.applyAppSettingsLocked()
 
-	if err := saveAppSettings(next); err != nil {
+	if err := saveAppSettings(s.log, next); err != nil {
 		s.log.Warn("settings: could not persist", "error", err)
 
 		return next, err

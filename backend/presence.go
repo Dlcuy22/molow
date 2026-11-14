@@ -95,7 +95,7 @@ func (s *PlayerService) persistDiscordEnabled(on bool) error {
 	doc := s.appSettings
 	s.appSettingsMu.Unlock()
 
-	return saveAppSettings(doc)
+	return saveAppSettings(s.log, doc)
 }
 
 // SetDiscordEnabled turns the integration on or off and remembers the choice.

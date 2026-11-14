@@ -211,7 +211,7 @@ func newPlayerService() *PlayerService {
 		ytm:                 ytmIndex,
 		ytmProv:             newYTMProvider(ytmIndex, ytmSeamlessSwap, nil),
 		searchCache:         make(map[string][]YTMResult),
-		appSettings:         loadAppSettings(),
+		appSettings:         loadAppSettings(slog.Default(), "loaded"),
 		ctx:                 ctx,
 		cancel:              cancel,
 		log:                 slog.Default(),

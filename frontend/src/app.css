@@ -388,15 +388,21 @@ body {
  * travel, keyboard steps and assistive technology, but paints it transparent
  * and draws the bar itself. The thumb stays out of the way until the pointer
  * reaches the bar, and the 4 Hz position snapshots are stretched with a
- * linear transition so the fill glides instead of stepping. */
+ * linear transition so the fill glides instead of stepping. The glide scales
+ * a full-width fill instead of resizing it: a width or left transition
+ * re-runs layout for every animation frame while playing, a transform runs
+ * on the compositor. The thumb has no glide for the same reason; it only
+ * shows under the pointer, where a drag already runs with transitions off. */
 .seek-fill {
-  transition: width 300ms linear;
+  width: 100%;
+  transform-origin: 0 50%;
+  transition: transform 300ms linear;
+  will-change: transform;
 }
 .seek-thumb {
   opacity: 0;
   scale: 0.5;
   transition:
-    left 300ms linear,
     opacity 140ms ease,
     scale 140ms ease;
 }

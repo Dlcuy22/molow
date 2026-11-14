@@ -25,6 +25,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/dlcuy22/molo"
 	"github.com/dlcuy22/molow/internal/lyrics"
@@ -85,10 +86,15 @@ type StreamSettings struct{}
 // VisualizerDelayMs is the user's compensation in milliseconds: the visualizer
 // taps the stream upstream of the device and driver latencies, so it leads the
 // ear, and the user dials the remainder in to land the bars with the sound.
+// LogFileEnabled is the General tab's Misc switch that mirrors the app's log
+// to a file, and LogFile is where it lives; an empty value keeps the default
+// molow.log in the config folder.
 type GeneralSettings struct {
 	VisualizerEnabled bool   `json:"visualizerEnabled"`
 	VisualizerStyle   string `json:"visualizerStyle"`
 	VisualizerDelayMs int    `json:"visualizerDelayMs"`
+	LogFileEnabled    bool   `json:"logFileEnabled"`
+	LogFile           string `json:"logFile"`
 }
 
 // DiscordSettings carries the Discord Rich Presence toggle. Enabled is the
@@ -290,6 +296,9 @@ func normalizeAppSettings(s AppSettings, present map[string]bool) AppSettings {
 		s.General.VisualizerDelayMs = def.General.VisualizerDelayMs
 	}
 	s.General.VisualizerDelayMs = clampVisualizerDelayMs(s.General.VisualizerDelayMs)
+	// A pasted path often carries a trailing space from a copy, which would
+	// otherwise name a file that is not the one the user asked for.
+	s.General.LogFile = strings.TrimSpace(s.General.LogFile)
 
 	return s
 }
@@ -465,6 +474,9 @@ func (s *PlayerService) SetAppSettings(next AppSettings) (AppSettings, error) {
 	s.appSettingsMu.Unlock()
 
 	s.applyAppSettingsLocked()
+	// The log file follows the document on the same path the engine settings
+	// do, so a toggle or a new path takes effect on the save itself.
+	s.applyLogFileSettings()
 
 	if err := saveAppSettings(s.log, next); err != nil {
 		s.log.Warn("settings: could not persist", "error", err)

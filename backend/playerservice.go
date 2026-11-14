@@ -221,6 +221,11 @@ func newPlayerService() *PlayerService {
 // ServiceStartup builds the engine and starts the two background pumps. It is
 // the v3 lifecycle hook; there is no OnStartup option in this framework.
 func (s *PlayerService) ServiceStartup(_ context.Context, _ application.ServiceOptions) error {
+	// The log file is armed before anything else runs, so the startup lines
+	// land in it when the user kept the switch on. A failure only costs the
+	// file: the console keeps everything.
+	s.applyLogFileSettings()
+
 	// Register the Lua effects before the player is built, so the chooser and
 	// the effect window see them from the first snapshot. A script failure is
 	// logged and skipped, never fatal: a bad user script must not stop playback.

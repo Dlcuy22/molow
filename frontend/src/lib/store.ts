@@ -114,7 +114,7 @@ export const appSettings = writable<AppSettings>({
     },
   },
   stream: {},
-  general: { visualizerEnabled: true, visualizerStyle: "minimal", visualizerDelayMs: 25 },
+  general: { visualizerEnabled: true, visualizerStyle: "minimal", visualizerDelayMs: 25, logFileEnabled: false, logFile: "" },
   discord: { enabled: false },
 });
 

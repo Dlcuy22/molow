@@ -62,6 +62,9 @@ func Run(assets embed.FS) {
 	// so the lines are collapsed unless MOLOW_DEBUG_TIDY turns it off.
 	tidy := newTidyHandler(logger)
 	slog.SetDefault(slog.New(tidy))
+	// The chain is registered so the log-file setting can rebuild the default
+	// logger around it rather than replacing the console's treatment.
+	registerConsoleLogHandler(tidy)
 	// The held-back record keeps the repeat count of a stream that ends in
 	// repeats, so it is sent on before the process goes away.
 	defer func() { _ = tidy.Flush() }()

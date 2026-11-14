@@ -45,6 +45,12 @@ func TestAppSettingsDefaultsAreOffAndReference(t *testing.T) {
 	if got.General.VisualizerDelayMs != defaultVisualizerDelayMs {
 		t.Fatalf("visualizerDelayMs = %d, want %d", got.General.VisualizerDelayMs, defaultVisualizerDelayMs)
 	}
+	if got.General.LogFileEnabled {
+		t.Fatal("log file should default to off")
+	}
+	if got.General.LogFile != "" {
+		t.Fatalf("log file path = %q, want the empty default", got.General.LogFile)
+	}
 }
 
 // TestAppSettingsRoundTrips proves the panel's edits survive a restart, for
@@ -63,7 +69,11 @@ func TestAppSettingsRoundTrips(t *testing.T) {
 			Repeat:         "one",
 			PlayPauseStyle: "simple",
 		},
-		General: GeneralSettings{VisualizerEnabled: false},
+		General: GeneralSettings{
+			VisualizerEnabled: false,
+			LogFileEnabled:    true,
+			LogFile:           filepath.Join("somewhere", "molow.log"),
+		},
 	}
 	if err := saveAppSettings(quietLog, want); err != nil {
 		t.Fatalf("save: %v", err)
@@ -81,6 +91,11 @@ func TestAppSettingsRoundTrips(t *testing.T) {
 	}
 	if got.General.VisualizerEnabled != want.General.VisualizerEnabled {
 		t.Fatalf("loaded visualizer = %v, want %v", got.General.VisualizerEnabled, want.General.VisualizerEnabled)
+	}
+	if got.General.LogFileEnabled != want.General.LogFileEnabled || got.General.LogFile != want.General.LogFile {
+		t.Fatalf("loaded log file = %v %q, want %v %q",
+			got.General.LogFileEnabled, got.General.LogFile,
+			want.General.LogFileEnabled, want.General.LogFile)
 	}
 }
 

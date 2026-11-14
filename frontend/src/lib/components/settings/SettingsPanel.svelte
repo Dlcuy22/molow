@@ -35,6 +35,7 @@
   const visualizerStyle = $derived($appSettings.general.visualizerStyle ?? "minimal");
   const visualizerStyleValue = $derived(visualizerOn ? visualizerStyle : "off");
   const dynamicScale = $derived(($spectrumConfig.scale ?? "dynamic") !== "fixed");
+  const logFile = $derived($appSettings.general.logFile);
 
   // The Discord status line and toggle read the store the same way the panel
   // read them when they lived in the main window's right column.
@@ -95,6 +96,23 @@
     commands.setAppSettings({
       ...$appSettings,
       general: { ...$appSettings.general, visualizerDelayMs: ms },
+    });
+  }
+
+  // The log file rows persist in the document; the backend arms or disarms
+  // the sink on the save path, so no second call is needed. An empty location
+  // keeps the default molow.log in the config folder.
+  function setLogFileEnabled(enabled: boolean) {
+    commands.setAppSettings({
+      ...$appSettings,
+      general: { ...$appSettings.general, logFileEnabled: enabled },
+    });
+  }
+
+  function setLogFile(path: string) {
+    commands.setAppSettings({
+      ...$appSettings,
+      general: { ...$appSettings.general, logFile: path },
     });
   }
 
@@ -580,6 +598,43 @@
                       {/if}
                     {/each}
                   </div>
+                </div>
+              </div>
+            </SettingGroup>
+
+            <SettingGroup label="Misc" description={null}>
+              <!-- The rows keep their own labels and dividers inside the
+                   group, the same way the Visualizer block does. -->
+              <div class="divide-y divide-line">
+                <SettingRow
+                  label="Enable log file"
+                  description="Mirror the console log to a file on disk. A line lands in both, so the file keeps every repeat the console collapses."
+                >
+                  {#snippet control()}
+                    <Switch
+                      checked={$appSettings.general.logFileEnabled}
+                      label="Enable log file"
+                      onchange={setLogFileEnabled}
+                    />
+                  {/snippet}
+                </SettingRow>
+
+                <div class="py-2.5" class:opacity-40={!$appSettings.general.logFileEnabled}>
+                  <SettingRow
+                    label="Log file location"
+                    description="Full path to the file. Empty keeps molow.log in the config folder."
+                  >
+                    {#snippet control()}
+                      <TextField
+                        label={null}
+                        ariaLabel="Log file location"
+                        value={logFile}
+                        placeholder="Default"
+                        disabled={!$appSettings.general.logFileEnabled}
+                        onchange={setLogFile}
+                      />
+                    {/snippet}
+                  </SettingRow>
                 </div>
               </div>
             </SettingGroup>

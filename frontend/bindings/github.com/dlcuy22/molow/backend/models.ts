@@ -190,11 +190,16 @@ export interface EffectVisualInfo {
  * VisualizerDelayMs is the user's compensation in milliseconds: the visualizer
  * taps the stream upstream of the device and driver latencies, so it leads the
  * ear, and the user dials the remainder in to land the bars with the sound.
+ * LogFileEnabled is the General tab's Misc switch that mirrors the app's log
+ * to a file, and LogFile is where it lives; an empty value keeps the default
+ * molow.log in the config folder.
  */
 export interface GeneralSettings {
     "visualizerEnabled": boolean;
     "visualizerStyle": string;
     "visualizerDelayMs": number;
+    "logFileEnabled": boolean;
+    "logFile": string;
 }
 
 /**

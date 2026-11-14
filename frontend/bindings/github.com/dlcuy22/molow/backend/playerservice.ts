@@ -47,9 +47,10 @@ export function AddEffect(kind: string, impl: string): $CancellablePromise<strin
 }
 
 /**
- * AddLocalLibrary registers a folder as a library and starts its first scan.
- * The folder is the identity: adding the same path twice returns the row that
- * already exists rather than a second library.
+ * AddLocalLibrary registers a folder as a new library and starts its first
+ * scan. The folder is the identity: adding the same path twice returns the row
+ * that already exists rather than a second library. To merge a folder into an
+ * existing library, ImportFolder is the call.
  */
 export function AddLocalLibrary(path: string): $CancellablePromise<library$0.Library> {
     return $Call.ByID(2322056078, path);
@@ -257,6 +258,17 @@ export function ImportEasyEffectsPreset(): $CancellablePromise<$models.PresetImp
  */
 export function ImportEasyEffectsPresetData(data: string): $CancellablePromise<$models.PresetImportResult> {
     return $Call.ByID(2503129151, data);
+}
+
+/**
+ * ImportFolder adds a folder as one more root of an existing library and
+ * starts the scan that indexes it; when the scan lands, the folder's tracks
+ * become one playlist named after the folder. Re-adding a folder the library
+ * already watches is a no-op, and a folder inside — or containing — a watched
+ * root is rejected: a nested root would index the same files twice.
+ */
+export function ImportFolder(libraryID: string, path: string): $CancellablePromise<library$0.Library> {
+    return $Call.ByID(2407316580, libraryID, path);
 }
 
 /**
@@ -499,8 +511,8 @@ export function RemoveLibrary(id: string): $CancellablePromise<void> {
 }
 
 /**
- * RescanLibrary rescans one root on a worker. A scan already running is not
- * duplicated.
+ * RescanLibrary rescans every watched root on a worker. A scan already running
+ * is not duplicated.
  */
 export function RescanLibrary(id: string): $CancellablePromise<void> {
     return $Call.ByID(967501736, id);

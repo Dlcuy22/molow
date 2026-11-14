@@ -77,13 +77,16 @@ export enum Kind {
 };
 
 /**
- * Library is one browsable instance.
+ * Library is one browsable instance. Root is the first watched folder, kept
+ * for the describe line; Roots is the full list a scanner walks — a library
+ * built by imports holds more than one.
  */
 export interface Library {
     "id": string;
     "kind": Kind;
     "name": string;
     "root"?: string;
+    "roots"?: string[] | null;
     "status": Status;
     "message"?: string;
     "capabilities": Capability[] | null;

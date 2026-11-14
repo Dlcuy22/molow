@@ -33,6 +33,7 @@ export type {
     PreviewConfig,
     PreviewState,
     QueueRow,
+    SessionState,
     Snapshot,
     SpectrumConfig,
     StreamSettings,

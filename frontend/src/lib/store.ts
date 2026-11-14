@@ -21,6 +21,7 @@ import type {
   YTMResult,
   DiscordStatus,
   AppSettings,
+  SessionState,
 } from "../../bindings/github.com/dlcuy22/molow/backend/models";
 import type { Param } from "../../bindings/github.com/dlcuy22/molow/internal/spectrum/models";
 import type { EffectKind, EffectPreset, EffectStage } from "./effect-types";
@@ -116,6 +117,16 @@ export const appSettings = writable<AppSettings>({
   stream: {},
   general: { visualizerEnabled: true, visualizerStyle: "minimal", visualizerDelayMs: 25, logLevel: "info", logFileEnabled: false, logFile: "" },
   discord: { enabled: false },
+});
+
+/** sessionState is the machine-written document the settings panel never
+ *  edits: the last audible volume and the sidebar's width. It is read once on
+ *  connect and written through its own debounced calls, so a slider drag does
+ *  not touch the settings file. The default mirrors the Go side. */
+export const sessionState = writable<SessionState>({
+  version: 1,
+  volume: 1,
+  sidebarWidth: 200,
 });
 
 /** queueCoverCache memoises the palette's per-track artwork by cover id, so a
@@ -429,6 +440,7 @@ export function connect(): () => void {
   PlayerService.SpectrumSchema().then((schema) => spectrumSchema.set(schema ?? []));
   PlayerService.PreviewConfig().then(previewConfig.set);
   PlayerService.DiscordStatus().then(discordStatus.set);
+  PlayerService.SessionState().then(sessionState.set);
   PlayerService.AppSettings().then((cfg) => {
     appSettings.set(cfg);
     const current = get(spectrumConfig);
@@ -496,6 +508,13 @@ export const commands = {
   stop: () => invoke(PlayerService.Stop()),
   seek: (ms: number) => invoke(PlayerService.SeekTo(Math.max(0, Math.round(ms)))),
   setVolume: (v: number) => invoke(PlayerService.SetVolume(v)),
+  // setSidebarWidth mirrors the width locally first so the rail tracks the
+  // drag, then persists through the debounced state write. The read side is
+  // SessionState, loaded once on connect.
+  setSidebarWidth: (px: number) => {
+    sessionState.update((s) => ({ ...s, sidebarWidth: px }));
+    PlayerService.SetSidebarWidth(px).catch(() => {});
+  },
   playIndex: (i: number) => invoke(PlayerService.PlayIndex(i)),
   setCodec: (name: string) => invoke(PlayerService.SetCodec(name)),
   setBackend: (name: string) => invoke(PlayerService.SetBackend(name)),

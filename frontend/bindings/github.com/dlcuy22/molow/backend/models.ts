@@ -329,6 +329,20 @@ export interface QueueRow {
 }
 
 /**
+ * SessionState is the state document: values the machine writes while the user
+ * works, unlike the settings document, which only changes when the user edits
+ * a preference. Volume is the master gain the engine last held, stored as the
+ * last audible level so a restart after a muted quit lands on sound rather
+ * than silence. SidebarWidth is the navigation rail's width in pixels. Both
+ * change often, so the document is written on a debounce, not on every step.
+ */
+export interface SessionState {
+    "version": number;
+    "volume": number;
+    "sidebarWidth": number;
+}
+
+/**
  * Snapshot is the whole visible player state in one value, so the frontend has
  * a single subscription and a single source of truth.
  */

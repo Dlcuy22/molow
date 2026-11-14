@@ -9,6 +9,7 @@
     commands,
     player,
     appSettings,
+    sessionState,
     spectrumConfig,
   } from "./lib/store";
   import {
@@ -57,7 +58,18 @@
   const hasQueue = $derived(queue.length > 0);
 
   let tab = $state<"home" | "library">("home");
+  // The sidebar's size is session state, not a panel preference, so a restart
+  // reopens the rail where the user left it. The store's copy is the truth;
+  // the local state follows it and only commits back when the handle lets go.
   let sidebarWidth = $state(200);
+  $effect(() => {
+    sidebarWidth = $sessionState.sidebarWidth;
+  });
+
+  function commitSidebarWidth(w: number) {
+    commands.setSidebarWidth(w);
+  }
+
   let filter = $state("all");
   let searchOpen = $state(false);
   let addOpen = $state(false);
@@ -486,6 +498,7 @@
       libraries={$libraries.map((l) => ({ id: l.id, name: l.name }))}
       activeLibrary={$libraryId}
       onswitch={(id) => void selectLibrary(id)}
+      onwidthcommit={commitSidebarWidth}
       onnav={(next) => {
         tab = next === "library" ? "library" : "home";
         searchOpen = false;

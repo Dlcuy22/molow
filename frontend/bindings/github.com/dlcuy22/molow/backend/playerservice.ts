@@ -537,6 +537,16 @@ export function SeekTo(ms: number): $CancellablePromise<void> {
 }
 
 /**
+ * SessionState reads the session state document: the last audible volume and
+ * the sidebar's width. The frontend reads it once at startup; the values are
+ * normalized, so a service that has not loaded yet answers the defaults rather
+ * than zeros.
+ */
+export function SessionState(): $CancellablePromise<$models.SessionState> {
+    return $Call.ByID(2746967836);
+}
+
+/**
  * SetAlbumPlayerOpen reports whether the album player sheet is showing. The
  * visualizer lives only there, so the pump idles while the sheet is closed
  * instead of producing frames for a pane that is not mounted. The frontend
@@ -629,6 +639,14 @@ export function SetRepeat(mode: string): $CancellablePromise<void> {
  */
 export function SetShuffle(on: boolean): $CancellablePromise<void> {
     return $Call.ByID(1223968224, on);
+}
+
+/**
+ * SetSidebarWidth persists the navigation rail's width. The value is session
+ * state, not a panel preference, so it lives in the state document.
+ */
+export function SetSidebarWidth(px: number): $CancellablePromise<void> {
+    return $Call.ByID(1421535867, px);
 }
 
 /**

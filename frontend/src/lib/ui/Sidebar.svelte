@@ -22,6 +22,7 @@
     onsearch = () => {},
     onswitch = (_id: string) => {},
     onsettings = () => {},
+    onwidthcommit = (_width: number) => {},
   }: {
     active?: "home" | "library" | "search";
     width?: number;
@@ -32,6 +33,7 @@
     onsearch?: () => void;
     onswitch?: (id: string) => void;
     onsettings?: () => void;
+    onwidthcommit?: (width: number) => void;
   } = $props();
 
   let switchOpen = $state(false);
@@ -64,6 +66,11 @@
 
   function endResize() {
     dragging = false;
+    // A drag commit fires once on release, so the settings document is not
+    // rewritten for every pointermove.
+    if (width !== startWidth) {
+      onwidthcommit(width);
+    }
   }
 </script>
 
@@ -182,8 +189,14 @@
     onpointerup={endResize}
     onpointercancel={endResize}
     onkeydown={(e) => {
-      if (e.key === "ArrowLeft") width = Math.max(56, width - 8);
-      if (e.key === "ArrowRight") width = Math.min(280, width + 8);
+      if (e.key === "ArrowLeft") {
+        width = Math.max(56, width - 8);
+        onwidthcommit(width);
+      }
+      if (e.key === "ArrowRight") {
+        width = Math.min(280, width + 8);
+        onwidthcommit(width);
+      }
     }}
   ></button>
 </aside>

@@ -165,6 +165,14 @@ type PlayerService struct {
 	appSettingsMu sync.Mutex
 	appSettings   AppSettings
 
+	// stateMu guards the session state document: the hot values (volume,
+	// sidebar width) the machine writes while the user works. A write is
+	// debounced, so a slider drag costs one save when the drag ends rather
+	// than one per step.
+	stateMu    sync.Mutex
+	state      SessionState
+	stateTimer *time.Timer
+
 	// libMu guards the catalogue handle and the source registry. A scan runs on
 	// its own goroutine, so the map is read while a scan writes progress.
 	libMu    sync.Mutex
@@ -253,6 +261,14 @@ func (s *PlayerService) ServiceStartup(_ context.Context, _ application.ServiceO
 	// only after the panel is opened.
 	s.applyAppSettingsLocked()
 
+	// Restore the session state: the volume goes to the engine before anything
+	// plays, and the width waits for the frontend's read. A missing or bad
+	// document costs nothing; the defaults apply.
+	s.state = loadSessionState(s.logger())
+	if s.state.Volume > 0 {
+		s.player.SetVolume(s.state.Volume)
+	}
+
 	// The preview player is a second instance over the same process-wide oto
 	// context, which oto mixes. It is built here so a failure to construct it
 	// surfaces at startup rather than on the first Ctrl+Alt+P.
@@ -300,6 +316,16 @@ func (s *PlayerService) ServiceStartup(_ context.Context, _ application.ServiceO
 // ServiceShutdown stops the pumps and closes the engine before the framework
 // tears the window down.
 func (s *PlayerService) ServiceShutdown() error {
+	// A debounced state save that has not fired yet is flushed here, so
+	// quitting right after a volume change does not lose it.
+	s.stateMu.Lock()
+	if s.stateTimer != nil {
+		s.stateTimer.Stop()
+		s.stateTimer = nil
+	}
+	s.stateMu.Unlock()
+	s.saveStateNow()
+
 	select {
 	case <-s.closing:
 	default:
@@ -1275,11 +1301,94 @@ func (s *PlayerService) OpenFolder() error {
 
 // SetVolume sets the master gain in [0, 1].
 func (s *PlayerService) SetVolume(v float64) error {
-	return s.command(func() error {
+	if err := s.command(func() error {
 		s.player.SetVolume(clamp01(v))
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	s.recordVolume(clamp01(v))
+
+	return nil
+}
+
+// recordVolume keeps the last audible level for the state document. A zero is
+// mute or a drag to silence, not a level worth restoring, so a restart after a
+// muted quit lands on sound instead of silence.
+func (s *PlayerService) recordVolume(v float64) {
+	if v <= 0 {
+		return
+	}
+
+	s.stateMu.Lock()
+	changed := s.state.Volume != v
+	if changed {
+		s.state.Volume = v
+	}
+	s.stateMu.Unlock()
+	if changed {
+		s.scheduleStateSave()
+	}
+}
+
+// SessionState reads the session state document: the last audible volume and
+// the sidebar's width. The frontend reads it once at startup; the values are
+// normalized, so a service that has not loaded yet answers the defaults rather
+// than zeros.
+func (s *PlayerService) SessionState() SessionState {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+
+	return normalizeSessionState(s.state)
+}
+
+// SetSidebarWidth persists the navigation rail's width. The value is session
+// state, not a panel preference, so it lives in the state document.
+func (s *PlayerService) SetSidebarWidth(px int) error {
+	s.stateMu.Lock()
+	changed := s.state.SidebarWidth != px
+	if changed {
+		s.state.SidebarWidth = clampSidebarWidth(px)
+	}
+	s.stateMu.Unlock()
+	if changed {
+		s.scheduleStateSave()
+	}
+
+	return nil
+}
+
+// stateSaveDelay is the debounce window: the last change in a burst writes the
+// document once, half a second after the burst ends.
+const stateSaveDelay = 500 * time.Millisecond
+
+// scheduleStateSave restarts the debounce timer, so a burst of volume steps or
+// drag steps writes the document once when the burst ends.
+func (s *PlayerService) scheduleStateSave() {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+
+	if s.stateTimer == nil {
+		s.stateTimer = time.AfterFunc(stateSaveDelay, s.saveStateNow)
+
+		return
+	}
+	s.stateTimer.Reset(stateSaveDelay)
+}
+
+// saveStateNow writes the state document with the values it holds at call
+// time. The debounce callback and the shutdown flush both land here, and both
+// leave no timer standing: the next change schedules a fresh one.
+func (s *PlayerService) saveStateNow() {
+	s.stateMu.Lock()
+	snapshot := s.state
+	s.stateTimer = nil
+	s.stateMu.Unlock()
+
+	if err := saveSessionState(snapshot); err != nil {
+		s.logger().Warn("state: could not write", "error", err)
+	}
 }
 
 // TogglePause flips between playing and paused. With nothing playing it starts

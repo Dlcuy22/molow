@@ -74,6 +74,7 @@ export interface LibraryInfo {
   name: string;
   root: string;
   roots: string[];
+  logoCovers: string[];
   status: string;
   message: string;
   capabilities: string[];

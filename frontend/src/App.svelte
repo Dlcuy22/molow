@@ -29,6 +29,7 @@
     loadAccents,
     loadLyrics,
     addLibrary,
+    createLibrary,
   } from "./lib/library";
   import type { Album, Lyrics, Track } from "./lib/types";
   import { percent } from "./lib/format";
@@ -495,9 +496,14 @@
       bind:width={sidebarWidth}
       active={tab}
       playlists={$playlistRows}
-      libraries={$libraries.map((l) => ({ id: l.id, name: l.name }))}
+      libraries={$libraries.map((l) => ({
+        id: l.id,
+        name: l.name,
+        logoCovers: l.logoCovers,
+      }))}
       activeLibrary={$libraryId}
       onswitch={(id) => void selectLibrary(id)}
+      onnewlibrary={() => void createLibrary()}
       onwidthcommit={commitSidebarWidth}
       onnav={(next) => {
         tab = next === "library" ? "library" : "home";

@@ -100,6 +100,7 @@ function toInfo(l: GenLibrary): LibraryInfo {
     name: l.name,
     root: l.root ?? "",
     roots: l.roots ?? [],
+    logoCovers: l.logoCovers ?? [],
     status: String(l.status),
     message: l.message ?? "",
     capabilities: (l.capabilities ?? []).map(String),
@@ -206,6 +207,26 @@ export async function addLibrary(): Promise<LibraryInfo | null> {
       }
     }
     const info = toInfo(await PlayerService.ImportFolder(target, path));
+    await refreshLibraries();
+    libraryId.set(info.id);
+    await Promise.all([loadHome(), loadLibrary()]);
+
+    return info;
+  } catch {
+    return null;
+  }
+}
+
+/** createLibrary picks a folder and registers it as its own library, the way
+ *  the sidebar's new-library button means it. Merging into the open library is
+ *  addLibrary's job. */
+export async function createLibrary(): Promise<LibraryInfo | null> {
+  try {
+    const path = await PlayerService.PickLibraryFolder();
+    if (!path) {
+      return null;
+    }
+    const info = toInfo(await PlayerService.AddLocalLibrary(path));
     await refreshLibraries();
     libraryId.set(info.id);
     await Promise.all([loadHome(), loadLibrary()]);

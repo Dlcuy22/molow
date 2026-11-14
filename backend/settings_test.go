@@ -51,6 +51,9 @@ func TestAppSettingsDefaultsAreOffAndReference(t *testing.T) {
 	if got.General.LogFile != "" {
 		t.Fatalf("log file path = %q, want the empty default", got.General.LogFile)
 	}
+	if got.General.LogLevel != "info" {
+		t.Fatalf("log level = %q, want info", got.General.LogLevel)
+	}
 }
 
 // TestAppSettingsRoundTrips proves the panel's edits survive a restart, for
@@ -71,6 +74,7 @@ func TestAppSettingsRoundTrips(t *testing.T) {
 		},
 		General: GeneralSettings{
 			VisualizerEnabled: false,
+			LogLevel:          "debug",
 			LogFileEnabled:    true,
 			LogFile:           filepath.Join("somewhere", "molow.log"),
 		},
@@ -96,6 +100,9 @@ func TestAppSettingsRoundTrips(t *testing.T) {
 		t.Fatalf("loaded log file = %v %q, want %v %q",
 			got.General.LogFileEnabled, got.General.LogFile,
 			want.General.LogFileEnabled, want.General.LogFile)
+	}
+	if got.General.LogLevel != want.General.LogLevel {
+		t.Fatalf("loaded log level = %q, want %q", got.General.LogLevel, want.General.LogLevel)
 	}
 }
 

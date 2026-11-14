@@ -86,13 +86,15 @@ type StreamSettings struct{}
 // VisualizerDelayMs is the user's compensation in milliseconds: the visualizer
 // taps the stream upstream of the device and driver latencies, so it leads the
 // ear, and the user dials the remainder in to land the bars with the sound.
-// LogFileEnabled is the General tab's Misc switch that mirrors the app's log
-// to a file, and LogFile is where it lives; an empty value keeps the default
-// molow.log in the config folder.
+// LogLevel is the panel's "info" or "debug", the debug spelling being what a
+// MOLOW_DEBUG run shows. LogFileEnabled is the Misc switch that mirrors the
+// app's log to a file, and LogFile is where it lives; an empty value keeps the
+// default molow.log in the config folder.
 type GeneralSettings struct {
 	VisualizerEnabled bool   `json:"visualizerEnabled"`
 	VisualizerStyle   string `json:"visualizerStyle"`
 	VisualizerDelayMs int    `json:"visualizerDelayMs"`
+	LogLevel          string `json:"logLevel"`
 	LogFileEnabled    bool   `json:"logFileEnabled"`
 	LogFile           string `json:"logFile"`
 }
@@ -135,6 +137,7 @@ func defaultAppSettings() AppSettings {
 		General: GeneralSettings{
 			VisualizerEnabled: true,
 			VisualizerStyle:   "minimal",
+			LogLevel:          "info",
 			// A small compensation by default: even a plain wired setup plays
 			// a few tens of milliseconds after the tap, so 25 ms lands the bars
 			// with the sound out of the box and the user only raises it for a
@@ -296,6 +299,13 @@ func normalizeAppSettings(s AppSettings, present map[string]bool) AppSettings {
 		s.General.VisualizerDelayMs = def.General.VisualizerDelayMs
 	}
 	s.General.VisualizerDelayMs = clampVisualizerDelayMs(s.General.VisualizerDelayMs)
+	// The level is the two names the panel offers; anything else is info,
+	// which is what the app shipped logging at.
+	switch s.General.LogLevel {
+	case "info", "debug":
+	default:
+		s.General.LogLevel = "info"
+	}
 	// A pasted path often carries a trailing space from a copy, which would
 	// otherwise name a file that is not the one the user asked for.
 	s.General.LogFile = strings.TrimSpace(s.General.LogFile)
@@ -475,8 +485,8 @@ func (s *PlayerService) SetAppSettings(next AppSettings) (AppSettings, error) {
 
 	s.applyAppSettingsLocked()
 	// The log file follows the document on the same path the engine settings
-	// do, so a toggle or a new path takes effect on the save itself.
-	s.applyLogFileSettings()
+	// do, so a toggle, a level or a new path takes effect on the save itself.
+	s.applyLogSettings()
 
 	if err := saveAppSettings(s.log, next); err != nil {
 		s.log.Warn("settings: could not persist", "error", err)

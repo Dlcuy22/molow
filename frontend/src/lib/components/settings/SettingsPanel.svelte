@@ -116,6 +116,15 @@
     });
   }
 
+  // The level moves the console and the log file together on the save path,
+  // so a Debug choice reads like a MOLOW_DEBUG run without the env.
+  function setLogLevel(level: string) {
+    commands.setAppSettings({
+      ...$appSettings,
+      general: { ...$appSettings.general, logLevel: level },
+    });
+  }
+
   // Reset to the default tab each time the panel opens, so it does not reopen
   // on a tab the user left it on.
   let wasOpen = false;
@@ -606,6 +615,24 @@
               <!-- The rows keep their own labels and dividers inside the
                    group, the same way the Visualizer block does. -->
               <div class="divide-y divide-line">
+                <SettingRow
+                  label="Log level"
+                  description="Debug shows every level, the same as a MOLOW_DEBUG run. Info is the steady state."
+                >
+                  {#snippet control()}
+                    <Picker
+                      label={null}
+                      ariaLabel="Log level"
+                      value={$appSettings.general.logLevel}
+                      options={[
+                        { value: "info", label: "Info" },
+                        { value: "debug", label: "Debug" },
+                      ]}
+                      onchange={setLogLevel}
+                    />
+                  {/snippet}
+                </SettingRow>
+
                 <SettingRow
                   label="Enable log file"
                   description="Mirror the console log to a file on disk. A line lands in both, so the file keeps every repeat the console collapses."

@@ -4,11 +4,8 @@ import (
 	"embed"
 	"log/slog"
 	"os"
-	"time"
 
 	"github.com/dlcuy22/molo/priority"
-	"github.com/lmittmann/tint"
-	"github.com/mattn/go-isatty"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -43,28 +40,15 @@ func Run(assets embed.FS) {
 	// never pops a console window.
 	consoleAttached = attachConsole()
 
-	level := slog.LevelInfo
-	// If MOLOW_DEBUG is set, a log below INFO shows up in the output.
-	if os.Getenv("MOLOW_DEBUG") != "" {
-		level = slog.LevelDebug
-	}
-	// A terminal gets the tinted handler so the lines stay readable; a piped
-	// or redirected stderr keeps the ANSI codes out of whatever collects it.
-	// The time format follows the wails CLI's logger, so a dev session reads
-	// as one style.
-	tty := isatty.IsTerminal(os.Stderr.Fd())
-	logger := tint.NewTextHandler(os.Stderr, &tint.Options{
-		Level:      level,
-		NoColor:    !tty || os.Getenv("NO_COLOR") != "",
-		TimeFormat: time.Kitchen,
-	})
-	// The desktop's steady state re-emits the same record every few seconds,
-	// so the lines are collapsed unless MOLOW_DEBUG_TIDY turns it off.
-	tidy := newTidyHandler(logger)
+	// The console starts at the environment's level; the settings document
+	// can move it once the service is up, and ServiceStartup re-applies the
+	// sinks then. A terminal gets the tinted handler so the lines stay
+	// readable; a piped or redirected stderr keeps the ANSI codes out of
+	// whatever collects it.
+	level := resolveLogLevel("")
+	tidy := consoleHandler(level)
 	slog.SetDefault(slog.New(tidy))
-	// The chain is registered so the log-file setting can rebuild the default
-	// logger around it rather than replacing the console's treatment.
-	registerConsoleLogHandler(tidy)
+	registerConsoleLogHandler(tidy, level)
 	// The held-back record keeps the repeat count of a stream that ends in
 	// repeats, so it is sent on before the process goes away.
 	defer func() { _ = tidy.Flush() }()

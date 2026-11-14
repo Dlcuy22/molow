@@ -98,5 +98,5 @@ type Result struct {
 // hang, and knowing the page is the only way to tell a stalled Google flow from a
 // window that never loaded at all.
 func (s *Session) CurrentURL() string {
-	return s.currentURL()
+	return s.CurrentURL()
 }

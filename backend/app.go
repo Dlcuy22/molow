@@ -126,7 +126,7 @@ func Run(assets embed.FS) {
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             mainWindowName,
 		Title:            appName,
-		Width:            1180,
+		Width:            1280,
 		Height:           720,
 		MinWidth:         820,
 		MinHeight:        560,

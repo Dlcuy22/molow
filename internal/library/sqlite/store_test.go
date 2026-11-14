@@ -291,6 +291,34 @@ func TestLibraryRoots(t *testing.T) {
 	}
 }
 
+// TestLibraryLogoCovers pins the card's artwork: distinct covers only, the
+// most recently added first, and an empty library returns nothing.
+func TestLibraryLogoCovers(t *testing.T) {
+	s := newTestStore(t)
+	seed(t, s)
+
+	covers, err := s.LibraryLogoCovers("local:test", 4)
+	if err != nil {
+		t.Fatalf("logo covers: %v", err)
+	}
+	// The seed's rows share one added_at second, so the pin is the id
+	// tie-break: two distinct covers, alphabetical within the tie.
+	if len(covers) != 2 {
+		t.Fatalf("covers = %v, want the two distinct album covers", covers)
+	}
+	if covers[0] != "cover-Alpha" || covers[1] != "cover-Beta" {
+		t.Fatalf("covers = %v, want [cover-Alpha cover-Beta]", covers)
+	}
+
+	none, err := s.LibraryLogoCovers("local:none", 4)
+	if err != nil {
+		t.Fatalf("covers of an unknown library: %v", err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("unknown library returned %v, want none", none)
+	}
+}
+
 // TestMigrationSeedsTheRoots builds a version-1 database by hand and proves
 // migration 002 turns its root column into the roots row it must become.
 func TestMigrationSeedsTheRoots(t *testing.T) {

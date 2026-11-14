@@ -199,6 +199,35 @@ func (s *Store) Roots(libraryID string) ([]string, error) {
 	return out, rows.Err()
 }
 
+// LibraryLogoCovers returns up to n distinct cover ids, the most recently
+// added first (ties by id, so the order is total). A library's albums share
+// one cover, so the distinct keeps one album from filling the sidebar card's
+// whole 2x2 grid.
+func (s *Store) LibraryLogoCovers(libraryID string, n int) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT cover_id FROM track
+		 WHERE library_id = ? AND cover_id <> ''
+		 GROUP BY cover_id
+		 ORDER BY MAX(added_at) DESC, cover_id
+		 LIMIT ?`, libraryID, n,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+
+	return out, rows.Err()
+}
+
 // Library reads one row with its track count.
 func (s *Store) Library(id string) (library.Library, error) {
 	var (
@@ -220,6 +249,11 @@ func (s *Store) Library(id string) (library.Library, error) {
 		return library.Library{}, err
 	}
 	out.Roots = roots
+	covers, err := s.LibraryLogoCovers(id, 4)
+	if err != nil {
+		return library.Library{}, err
+	}
+	out.LogoCovers = covers
 
 	return out, nil
 }
@@ -252,14 +286,20 @@ func (s *Store) Libraries() ([]library.Library, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// The roots query runs after the row cursor is done: one connection, and
-	// a nested query while it iterates would wait on itself forever.
+	// The roots and covers queries run after the row cursor is done: one
+	// connection, and a nested query while it iterates would wait on itself
+	// forever.
 	for i := range out {
 		roots, err := s.Roots(out[i].ID)
 		if err != nil {
 			return nil, err
 		}
 		out[i].Roots = roots
+		covers, err := s.LibraryLogoCovers(out[i].ID, 4)
+		if err != nil {
+			return nil, err
+		}
+		out[i].LogoCovers = covers
 	}
 
 	return out, nil

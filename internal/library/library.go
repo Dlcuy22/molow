@@ -55,7 +55,9 @@ const (
 
 // Library is one browsable instance. Root is the first watched folder, kept
 // for the describe line; Roots is the full list a scanner walks — a library
-// built by imports holds more than one.
+// built by imports holds more than one. LogoCovers are the four most recently
+// added distinct covers, the sidebar card's 2x2 artwork; empty when the
+// library has none.
 type Library struct {
 	ID           string       `json:"id"`
 	Kind         Kind         `json:"kind"`
@@ -66,6 +68,7 @@ type Library struct {
 	Message      string       `json:"message,omitempty"`
 	Capabilities []Capability `json:"capabilities"`
 	TrackCount   int          `json:"trackCount"`
+	LogoCovers   []string     `json:"logoCovers,omitempty"`
 }
 
 // Track is one playable entry. Ref is what the engine plays.

@@ -79,7 +79,9 @@ export enum Kind {
 /**
  * Library is one browsable instance. Root is the first watched folder, kept
  * for the describe line; Roots is the full list a scanner walks — a library
- * built by imports holds more than one.
+ * built by imports holds more than one. LogoCovers are the four most recently
+ * added distinct covers, the sidebar card's 2x2 artwork; empty when the
+ * library has none.
  */
 export interface Library {
     "id": string;
@@ -91,6 +93,7 @@ export interface Library {
     "message"?: string;
     "capabilities": Capability[] | null;
     "trackCount": number;
+    "logoCovers"?: string[] | null;
 }
 
 /**

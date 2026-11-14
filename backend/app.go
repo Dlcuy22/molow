@@ -36,22 +36,29 @@ const (
 func Run(assets embed.FS) {
 	// Attach to the launching terminal, if there is one, before the logger is
 	// built so slog captures the console's handles. A GUI launch with no parent
-	// console leaves the debug pump off and allocates nothing, so a double-click
-	// never pops a console window.
-	consoleAttached = attachConsole()
+	// console leaves stderr pointing nowhere and allocates nothing, so a
+	// double-click never pops a console window.
+	attachConsole()
 
-	// The console starts at the environment's level; the settings document
-	// can move it once the service is up, and ServiceStartup re-applies the
-	// sinks then. A terminal gets the tinted handler so the lines stay
-	// readable; a piped or redirected stderr keeps the ANSI codes out of
-	// whatever collects it.
-	level := resolveLogLevel("")
+	// The settings document is read once here to arm the log sinks from it,
+	// so the config lifecycle lines, the priority report and everything a dev
+	// console shows land in the file the same way they land on stderr. The
+	// service reads the document again when it is built; a small file read
+	// twice costs nothing.
+	seed := loadAppSettings(slog.New(slog.DiscardHandler), "loaded")
+
+	// A terminal gets the tinted handler so the lines stay readable; a piped
+	// or redirected stderr keeps the ANSI codes out of whatever collects it.
+	level := resolveLogLevel(seed.General.LogLevel)
 	tidy := consoleHandler(level)
-	slog.SetDefault(slog.New(tidy))
+	installLogRedirect(tidy)
 	registerConsoleLogHandler(tidy, level)
 	// The held-back record keeps the repeat count of a stream that ends in
 	// repeats, so it is sent on before the process goes away.
 	defer func() { _ = tidy.Flush() }()
+	if err := applyLog(level, seed.General.LogFileEnabled, seed.General.LogFile); err != nil {
+		slog.Warn("log file: could not arm", "error", err)
+	}
 
 	// Raise scheduling priority before the engine builds its audio thread, so
 	// the thread inherits it. The report names the platform and the scheduling
@@ -78,6 +85,12 @@ func Run(assets embed.FS) {
 	app := application.New(application.Options{
 		Name:        appName,
 		Description: appDescription,
+		// Wails' own lines (build info, platform info, the asset server's
+		// requests) go through the app's sinks, so the console and the log
+		// file see them like any other record. The redirect keeps them
+		// following level moves, and the floor keeps wails' own debug
+		// chatter out of a debug run, which is for the app's diagnostics.
+		Logger: slog.New(wailsLogHandler{base: slog.Default().Handler()}),
 		Services: []application.Service{
 			application.NewService(service),
 		},

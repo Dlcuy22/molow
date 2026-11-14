@@ -7,30 +7,19 @@ import (
 	"github.com/dlcuy22/molo"
 )
 
-// consoleAttached records whether main attached the process to a terminal. It
-// is set once, before the logger is built, and read when the service starts the
-// debug pump.
-var consoleAttached bool
-
-// startConsole starts the debug pump when the process has a terminal. It does
-// nothing when there is none, which is the normal double-clicked GUI case: no
-// console is allocated and the consumer-gated stream is never attached.
-func (s *PlayerService) startConsole() {
-	if !consoleAttached {
-		return
-	}
-
-	// Attaching the console is what also makes these slog lines visible: the
-	// default handler writes to os.Stderr, and attachConsole has pointed that
-	// at the terminal.
+// startDebugPump mirrors the engine's debug stream into the app's sinks. The
+// stream is consumer-gated, so this call is what turns it on, and it drops its
+// oldest record when the logger falls behind, so a slow writer never stalls
+// the engine. It runs on every launch: a terminal run watches the lines on
+// stderr, and a GUI launch gets them in the log file. The pump once started
+// only with a console attached, which is what left state and track changes
+// out of the file on a double-clicked build.
+func (s *PlayerService) startDebugPump() {
 	s.wg.Add(1)
 	go s.pumpDebug()
 }
 
-// pumpDebug reads the debug stream until shutdown. The stream is
-// consumer-gated, so this call is what turns it on, and it drops its oldest
-// record when the logger falls behind, so a slow writer never stalls the
-// engine.
+// pumpDebug reads the debug stream until shutdown.
 func (s *PlayerService) pumpDebug() {
 	defer s.wg.Done()
 

@@ -2,11 +2,15 @@ package backend
 
 import (
 	"bytes"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/dlcuy22/molo"
 )
 
 // TestLogFileArmsAndCaptures pins the sink: arming creates the file, a record
@@ -110,6 +114,147 @@ func TestLogFileKeepsEveryRepeat(t *testing.T) {
 	}
 	if got := strings.Count(string(raw), "log file: same record"); got != 3 {
 		t.Fatalf("repeats = %d, want 3 uncollapsed lines", got)
+	}
+}
+
+// TestLogRedirectKeepsCapturedLoggersLive pins the stale-logger fix: a logger
+// captured before an apply follows the new sinks, which is what the service's
+// own s.log does across a settings save.
+func TestLogRedirectKeepsCapturedLoggersLive(t *testing.T) {
+	isolateConfig(t)
+
+	previous := slog.Default()
+	t.Cleanup(func() {
+		logRedirect.Store(nil)
+		registerConsoleLogHandler(nil, slog.LevelInfo)
+		_ = applyLog(slog.LevelInfo, false, "")
+		slog.SetDefault(previous)
+	})
+
+	var console bytes.Buffer
+	tidy := newTidyHandler(slog.NewTextHandler(&console, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	registerConsoleLogHandler(tidy, slog.LevelInfo)
+	installLogRedirect(tidy)
+
+	// What the service captures at construction, before the file exists.
+	captured := slog.Default()
+
+	p := filepath.Join(t.TempDir(), "molow.log")
+	if err := applyLog(slog.LevelInfo, true, p); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	captured.Info("log file: captured line")
+
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(raw), "log file: captured line") {
+		t.Fatalf("a captured logger went stale: %q", raw)
+	}
+}
+
+// TestWailsLogFloorsDebug pins the wails floor: a debug run keeps the app's
+// debug records but wails' own debug lines (its per-request chatter) stay
+// out, while its info lines flow like any other record.
+func TestWailsLogFloorsDebug(t *testing.T) {
+	isolateConfig(t)
+
+	previous := slog.Default()
+	t.Cleanup(func() {
+		logRedirect.Store(nil)
+		registerConsoleLogHandler(nil, slog.LevelInfo)
+		_ = applyLog(slog.LevelInfo, false, "")
+		slog.SetDefault(previous)
+	})
+
+	installLogRedirect(slog.DiscardHandler)
+	p := filepath.Join(t.TempDir(), "molow.log")
+	if err := applyLog(slog.LevelDebug, true, p); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	wails := slog.New(wailsLogHandler{base: slog.Default().Handler()})
+	wails.Debug("handleWebViewRequest: Processing request")
+	wails.Info("Build Info")
+	slog.Debug("discordrpc: activity set")
+
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	body := string(raw)
+	if strings.Contains(body, "handleWebViewRequest") {
+		t.Fatal("a wails debug record reached the file")
+	}
+	if !strings.Contains(body, "Build Info") {
+		t.Fatal("a wails info record was dropped")
+	}
+	if !strings.Contains(body, "discordrpc: activity set") {
+		t.Fatal("an app debug record was dropped")
+	}
+}
+
+// TestStartDebugPumpRunsUnconditionally pins the double-click fix: the pump
+// starts with no console attached, so the engine's state and track records
+// reach the log file on a GUI launch, not only a terminal run.
+func TestStartDebugPumpRunsUnconditionally(t *testing.T) {
+	isolateConfig(t)
+
+	previous := slog.Default()
+	t.Cleanup(func() {
+		logRedirect.Store(nil)
+		registerConsoleLogHandler(nil, slog.LevelInfo)
+		_ = applyLog(slog.LevelInfo, false, "")
+		slog.SetDefault(previous)
+	})
+
+	installLogRedirect(slog.DiscardHandler)
+	p := filepath.Join(t.TempDir(), "molow.log")
+	if err := applyLog(slog.LevelInfo, true, p); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	ch := make(chan molo.DebugEvent, 1)
+	ch <- molo.DebugEvent{Kind: molo.DebugState, Message: "idle -> playing"}
+
+	f := newFakePlayer()
+	f.debugCh = ch
+	svc := &PlayerService{player: f, closing: make(chan struct{})}
+	// A GUI launch: no console was attached, and the pump starts anyway.
+	svc.startDebugPump()
+
+	if err := waitFor(t, func() error {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(string(raw), "idle -> playing") {
+			return fmt.Errorf("the engine record did not reach the file: %q", raw)
+		}
+
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	close(svc.closing)
+	svc.wg.Wait()
+}
+
+// waitFor polls probe until it returns nil or the deadline passes, so a
+// background pump has its turn to write.
+func waitFor(t *testing.T, probe func() error) error {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if err := probe(); err == nil {
+			return nil
+		} else if time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

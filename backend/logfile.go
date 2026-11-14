@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lmittmann/tint"
@@ -62,6 +63,107 @@ func registerConsoleLogHandler(console slog.Handler, level slog.Level) {
 	logSink.console = console
 	logSink.level = level
 	logSink.mu.Unlock()
+}
+
+// logRedirect is the logger the app installs as its default. applyLog swaps
+// the chain it forwards to, so a logger captured before a settings change
+// keeps following the current sinks instead of going stale.
+var logRedirect atomic.Pointer[redirectHandler]
+
+// installLogRedirect points the default logger at a redirect over sink, once.
+func installLogRedirect(sink slog.Handler) {
+	h := &redirectHandler{}
+	h.base.Store(&sink)
+	h.rebuild()
+	logRedirect.Store(h)
+	slog.SetDefault(slog.New(h))
+}
+
+// redirectHandler forwards every record to the sink chain applyLog last
+// installed, re-applying the attrs and groups a Logger attached to it. The
+// service and the components it hands a logger to capture slog.Default()
+// once; the redirect is what keeps those captures live.
+type redirectHandler struct {
+	base   atomic.Pointer[slog.Handler]
+	attrs  []slog.Attr
+	groups []string
+	cur    atomic.Pointer[slog.Handler]
+}
+
+func (h *redirectHandler) set(sink slog.Handler) {
+	h.base.Store(&sink)
+	h.rebuild()
+}
+
+func (h *redirectHandler) rebuild() {
+	next := *h.base.Load()
+	for _, g := range h.groups {
+		next = next.WithGroup(g)
+	}
+	if len(h.attrs) > 0 {
+		next = next.WithAttrs(h.attrs)
+	}
+	h.cur.Store(&next)
+}
+
+func (h *redirectHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return (*h.cur.Load()).Enabled(ctx, level)
+}
+
+func (h *redirectHandler) Handle(ctx context.Context, r slog.Record) error {
+	return (*h.cur.Load()).Handle(ctx, r)
+}
+
+func (h *redirectHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	merged := make([]slog.Attr, 0, len(h.attrs)+len(attrs))
+	merged = append(merged, h.attrs...)
+	merged = append(merged, attrs...)
+
+	return h.derive(merged, h.groups)
+}
+
+func (h *redirectHandler) WithGroup(name string) slog.Handler {
+	groups := make([]string, 0, len(h.groups)+1)
+	groups = append(groups, h.groups...)
+	groups = append(groups, name)
+
+	return h.derive(h.attrs, groups)
+}
+
+func (h *redirectHandler) derive(attrs []slog.Attr, groups []string) *redirectHandler {
+	n := &redirectHandler{attrs: attrs, groups: groups}
+	n.base.Store(h.base.Load())
+	n.rebuild()
+
+	return n
+}
+
+// wailsLogHandler forwards wails' internal records to the app's sinks but
+// floors them at info. A debug run is the app's diagnostics: wails' own debug
+// lines (per-request, per-binding chatter) would bury them, while its info
+// lines still follow the level like any other record.
+type wailsLogHandler struct {
+	base slog.Handler
+}
+
+func (w wailsLogHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return level >= slog.LevelInfo && w.base.Enabled(ctx, level)
+}
+
+func (w wailsLogHandler) Handle(ctx context.Context, r slog.Record) error {
+	if r.Level < slog.LevelInfo {
+		return nil
+	}
+
+	return w.base.Handle(ctx, r)
+}
+
+func (w wailsLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return wailsLogHandler{base: w.base.WithAttrs(attrs)}
+}
+
+func (w wailsLogHandler) WithGroup(name string) slog.Handler {
+	return wailsLogHandler{base: w.base.WithGroup(name)}
 }
 
 // logFilePath resolves the file the sink writes to: the user's path, made
@@ -135,6 +237,14 @@ func setDefaultLocked() {
 	case logSink.armed && logSink.fileHandler != nil:
 		next = logSink.fileHandler
 	default:
+		return
+	}
+	// The app's default logger is the redirect, so a swap moves the sinks
+	// under every logger the app captured; tests without a redirect fall
+	// back to a plain SetDefault.
+	if r := logRedirect.Load(); r != nil {
+		r.set(next)
+
 		return
 	}
 	slog.SetDefault(slog.New(next))

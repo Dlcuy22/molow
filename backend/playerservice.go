@@ -289,10 +289,10 @@ func (s *PlayerService) ServiceStartup(_ context.Context, _ application.ServiceO
 	// failure leaves browsing empty and playback untouched.
 	s.initLibraries()
 
-	// Mirror the engine's debug stream to the terminal when the app was
-	// launched from one, so the desktop build can be watched without a second
-	// window. A GUI launch with no terminal leaves this off.
-	s.startConsole()
+	// Mirror the engine's debug stream into the app's sinks, so state and
+	// track changes land wherever the logs go — a terminal on stderr, and the
+	// log file beside them on a double-clicked build.
+	s.startDebugPump()
 
 	return nil
 }

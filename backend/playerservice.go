@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -42,14 +43,6 @@ const (
 	// so a gain-reduction needle moves without the full chain snapshot.
 	eventEffectMeters = "molo:effect-meters"
 )
-
-// spectrumInterval is the visualizer analysis period: ~60 Hz. The runner
-// slides its 8192-sample window by the wall-clock time since the previous
-// frame, so each analysis advances ~800 new samples with heavy window overlap:
-// consecutive spectra correlate and the motion reads as continuous with no
-// follower lagging it, regardless of how coarsely the tap below delivers the
-// audio.
-const spectrumInterval = 16 * time.Millisecond
 
 // positionInterval is the snapshot refresh period. The engine reports discrete
 // changes as events; the position is continuous, so a poll is what keeps the
@@ -126,6 +119,10 @@ type PlayerService struct {
 	// costs no CPU. The runner is kept, not rebuilt, so switching back on
 	// resumes from the live tap on the next tick.
 	spectrumEnabled bool
+	// rateChanged wakes the spectrum tick when the configured rate moves, so
+	// the ticker reschedules without rebuilding the runner. Buffered so a
+	// reconfigure racing the pump never blocks.
+	rateChanged chan struct{}
 
 	// spectrumLast is the last emitted frame and spectrumLastSilent whether it
 	// read as silence, so the pump can skip a frame that carries nothing new.
@@ -194,6 +191,7 @@ func newPlayerService() *PlayerService {
 		ctx:             ctx,
 		cancel:          cancel,
 		log:             slog.Default(),
+		rateChanged:     make(chan struct{}, 1),
 	}
 }
 
@@ -402,17 +400,34 @@ func (s *PlayerService) publishEffectMeters() {
 func (s *PlayerService) pumpSpectrum() {
 	defer s.wg.Done()
 
-	ticker := time.NewTicker(spectrumInterval)
+	ticker := time.NewTicker(s.spectrumPeriod())
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-s.closing:
 			return
+		case <-s.rateChanged:
+			// The rate is a CPU dial, not a shape: reschedule the tick and
+			// keep the runner's live window, so the switch is seamless.
+			ticker.Reset(s.spectrumPeriod())
 		case <-ticker.C:
 			s.publishSpectrum()
 		}
 	}
+}
+
+// spectrumPeriod is the visualizer analysis period. The runner slides its
+// 8192-sample window by the wall-clock time since the previous frame, so each
+// analysis advances ~800 new samples at 60 Hz with heavy window overlap:
+// consecutive spectra correlate and the motion reads as continuous with no
+// follower lagging it, regardless of how coarsely the tap below delivers the
+// audio. The rate only trades detail for CPU.
+func (s *PlayerService) spectrumPeriod() time.Duration {
+	s.spectrumMu.Lock()
+	defer s.spectrumMu.Unlock()
+
+	return time.Second / time.Duration(s.spectrumCfg.Rate)
 }
 
 // publishSpectrum computes one frame and emits it as a plain slice of levels.
@@ -975,7 +990,7 @@ func (s *PlayerService) SpectrumConfig() SpectrumConfig {
 	enabled := s.spectrumEnabled
 	s.spectrumMu.Unlock()
 
-	return SpectrumConfig{Bars: cfg.Bars, MinHz: int(cfg.MinHz), MaxHz: int(cfg.MaxHz), FFT: cfg.FFT, Scale: cfg.Scale, Enabled: enabled}
+	return SpectrumConfig{Bars: cfg.Bars, MinHz: int(cfg.MinHz), MaxHz: int(cfg.MaxHz), FFT: cfg.FFT, Scale: cfg.Scale, Rate: cfg.Rate, Enabled: enabled}
 }
 
 // ConfigureSpectrum replaces the visualizer shape. The frame is rebuilt, so the
@@ -996,6 +1011,11 @@ func (s *PlayerService) ConfigureSpectrum(cfg SpectrumConfig) error {
 	if cfg.FFT > 0 {
 		next.FFT = cfg.FFT
 	}
+	// An off-list rate keeps the default: the slider only offers the stops, so
+	// anything else is not a value the panel can produce.
+	if slices.Contains(spectrum.ChoiceRates, cfg.Rate) {
+		next.Rate = cfg.Rate
+	}
 	switch cfg.Scale {
 	case spectrum.ScaleFixed:
 		next.Scale = spectrum.ScaleFixed
@@ -1015,7 +1035,16 @@ func (s *PlayerService) ConfigureSpectrum(cfg SpectrumConfig) error {
 
 	s.spectrumMu.Lock()
 	wasEnabled := s.spectrumEnabled
-	shapeChanged := s.spectrumCfg != next
+	// Rate is a CPU dial, not a shape: it only reschedules the tick, so it is
+	// zeroed out of the shape comparison and reported separately. A rate
+	// change must not rebuild the runner — that would discard the live
+	// window and lag the display for a change the transform cannot even see.
+	shape := next
+	shape.Rate = 0
+	current := s.spectrumCfg
+	current.Rate = 0
+	shapeChanged := current != shape
+	rateChanged := s.spectrumCfg.Rate != next.Rate
 	haveRunner := s.runner != nil
 	s.spectrumCfg = next
 	s.spectrumEnabled = cfg.Enabled
@@ -1026,6 +1055,13 @@ func (s *PlayerService) ConfigureSpectrum(cfg SpectrumConfig) error {
 		s.spectrumLastSilent = false
 	}
 	s.spectrumMu.Unlock()
+
+	if rateChanged {
+		select {
+		case s.rateChanged <- struct{}{}:
+		default:
+		}
+	}
 
 	// Only a shape change rebuilds the transform. A pure enable toggle keeps
 	// the runner and its live window, so switching back on resumes with no
@@ -1389,6 +1425,9 @@ type SpectrumConfig struct {
 	// -100..0 dBFS window). Empty means dynamic, so a caller that predates the
 	// field keeps the dynamic default.
 	Scale string `json:"scale"`
+	// Rate is the pump's pace in frames per second. Zero means the shipped
+	// default, like FFT: a pump cannot tick zero times a second.
+	Rate int `json:"rate"`
 	// Enabled gates the analysis pump. Off, the tick still fires but the
 	// transform is skipped, so a hidden visualizer costs no CPU. The service
 	// starts enabled.

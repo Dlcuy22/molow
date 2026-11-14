@@ -71,6 +71,7 @@ export const spectrumConfig = writable<SpectrumConfig>({
   maxHz: 20000,
   fft: 8192,
   scale: "dynamic",
+  rate: 60,
   enabled: true,
 });
 export const spectrumSchema = writable<Param[]>([]);

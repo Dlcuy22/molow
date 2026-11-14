@@ -1,6 +1,11 @@
 package backend
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"github.com/dlcuy22/molow/internal/spectrum"
+)
 
 // spectrumService builds a service with the engine stubbed, because
 // ConfigureSpectrum publishes a snapshot and the real facade has no player here.
@@ -200,5 +205,48 @@ func TestSpectrumConfigRoundTripsTheScale(t *testing.T) {
 	}
 	if got := svc.SpectrumConfig().Scale; got != "dynamic" {
 		t.Fatalf("Scale = %q, want dynamic", got)
+	}
+}
+
+// TestSpectrumConfigRoundTripsTheRate covers the frame-rate slider's path: what
+// the UI reads back is what it sent, and a zero keeps the shipped default so a
+// caller that predates the field is unchanged.
+func TestSpectrumConfigRoundTripsTheRate(t *testing.T) {
+	svc := spectrumService(t)
+
+	if err := svc.ConfigureSpectrum(SpectrumConfig{Bars: 150, MinHz: 20, MaxHz: 20000, Rate: 180}); err != nil {
+		t.Fatalf("ConfigureSpectrum: %v", err)
+	}
+	if got := svc.SpectrumConfig().Rate; got != 180 {
+		t.Fatalf("SpectrumConfig().Rate = %d, want 180", got)
+	}
+
+	if err := svc.ConfigureSpectrum(SpectrumConfig{Bars: 150, MinHz: 20, MaxHz: 20000}); err != nil {
+		t.Fatalf("ConfigureSpectrum: %v", err)
+	}
+	if got := svc.SpectrumConfig().Rate; got != spectrum.DefaultConfig().Rate {
+		t.Fatalf("Rate = %d, want the shipped default %d", got, spectrum.DefaultConfig().Rate)
+	}
+}
+
+// TestSpectrumRateChangeKeepsTheRunner pins that the rate is not part of the
+// shape: changing it reschedules the tick instead of rebuilding the runner,
+// which would discard the live window and lag the display.
+func TestSpectrumRateChangeKeepsTheRunner(t *testing.T) {
+	svc := spectrumService(t)
+	svc.tap = &countingTap{}
+	if err := svc.rebuildRunner(); err != nil {
+		t.Fatalf("rebuildRunner: %v", err)
+	}
+	before := svc.runner
+
+	if err := svc.ConfigureSpectrum(SpectrumConfig{Bars: 150, MinHz: 20, MaxHz: 20000, Rate: 120}); err != nil {
+		t.Fatalf("ConfigureSpectrum: %v", err)
+	}
+	if svc.runner != before {
+		t.Fatal("a rate change rebuilt the runner")
+	}
+	if got := svc.spectrumPeriod(); got != time.Second/120 {
+		t.Fatalf("spectrumPeriod = %v, want %v", got, time.Second/120)
 	}
 }

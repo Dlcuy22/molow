@@ -58,6 +58,7 @@
     if (p.key === "fft") return cfg.fft;
     if (p.key === "minHz") return cfg.minHz;
     if (p.key === "maxHz") return cfg.maxHz;
+    if (p.key === "rate") return cfg.rate;
 
     return p.default;
   }
@@ -81,6 +82,7 @@
     if (p.key === "fft") patch.fft = value;
     if (p.key === "minHz") patch.minHz = value;
     if (p.key === "maxHz") patch.maxHz = value;
+    if (p.key === "rate") patch.rate = value;
     setSpectrum(patch);
   }
 
@@ -548,6 +550,21 @@
                           disabled={!$spectrumConfig.enabled}
                           options={(p.choices ?? []).map((c) => ({ value: String(c), label: fftLabel(c) }))}
                           onchange={(v) => onSpectrumParam(p, Number(v))}
+                        />
+                      {:else if p.kind === "steps"}
+                        <!-- Steps are deliberate non-uniform stops (the rate
+                             dial: 30, 60, 120, 180), so the slider runs over
+                             list indexes and the index picks the value the
+                             engine gets. -->
+                        <Slider
+                          label={p.label}
+                          value={Math.max(0, (p.choices ?? []).indexOf(spectrumValue(p)))}
+                          min={0}
+                          max={(p.choices ?? []).length - 1}
+                          step={1}
+                          disabled={!$spectrumConfig.enabled}
+                          format={(i) => `${(p.choices ?? [])[i] ?? p.default} Hz`}
+                          onchange={(i) => onSpectrumParam(p, (p.choices ?? [])[i] ?? p.default)}
                         />
                       {:else}
                         <Slider

@@ -406,6 +406,12 @@ export interface SpectrumConfig {
     "scale": string;
 
     /**
+     * Rate is the pump's pace in frames per second. Zero means the shipped
+     * default, like FFT: a pump cannot tick zero times a second.
+     */
+    "rate": number;
+
+    /**
      * Enabled gates the analysis pump. Off, the tick still fires but the
      * transform is skipped, so a hidden visualizer costs no CPU. The service
      * starts enabled.

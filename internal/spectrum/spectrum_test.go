@@ -431,7 +431,7 @@ func TestEmptyFramesHoldBeforeDrain(t *testing.T) {
 		t.Fatal("settled display reads empty, the hold has nothing to hold")
 	}
 
-	for i := range holdEmptyTicks {
+	for i := range r.holdTicks() {
 		for b, v := range r.Frame() {
 			if v != settled[b] {
 				t.Fatalf("empty frame %d moved bar %d: %v != %v", i, b, v, settled[b])
@@ -487,7 +487,7 @@ func TestSustainedDroughtFallsSmoothly(t *testing.T) {
 	if settled == 0 {
 		t.Fatal("settled display reads empty, nothing to fall")
 	}
-	for range holdEmptyTicks {
+	for range r.holdTicks() {
 		r.Frame()
 	}
 	r.Frame()
@@ -497,6 +497,55 @@ func TestSustainedDroughtFallsSmoothly(t *testing.T) {
 	}
 	if first < settled*0.85 {
 		t.Fatalf("first fall dropped to %.3f of %.3f, want a gentle decay", first, settled)
+	}
+}
+
+// TestRateKeepsThePauseMotionWallTimeConstant pins the rate dial's contract:
+// the drought dynamics are tuned at 60 Hz and rescaled per frame, so the pause
+// decay over the same wall time is the same at any rate. A rate that changed
+// the fall would make 180 Hz feel like a different player with nothing else
+// touched.
+func TestRateKeepsThePauseMotionWallTimeConstant(t *testing.T) {
+	run := func(rate int) float64 {
+		tap := &sliceTap{samples: tone(1000, 2048), chunk: 1024}
+		r := tap.runner(t, Config{Bars: 64, FFT: 2048, Rate: rate})
+		if got := r.Config().Rate; got != rate {
+			t.Fatalf("rate %d did not survive New: %d", rate, got)
+		}
+		tap.feed(r, 2048*12, 1024)
+		// One second of drought — rate ticks at every offered rate, and past
+		// every rate's hold.
+		for range rate {
+			r.Frame()
+		}
+		peak := 0.0
+		for _, v := range r.Bands() {
+			if v > peak {
+				peak = v
+			}
+		}
+
+		return peak
+	}
+
+	sixty := run(60)
+	for _, rate := range []int{30, 120, 180} {
+		if got := run(rate); math.Abs(got-sixty) > 1e-9*sixty {
+			t.Fatalf("rate %d fell to %.12f, 60 Hz fell to %.12f", rate, got, sixty)
+		}
+	}
+}
+
+// TestRateFallsBackToTheDefault checks an off-list rate — a hand-edited
+// document, not a value the slider can produce — falls back to the shipped
+// pace, the way an off-list transform does.
+func TestRateFallsBackToTheDefault(t *testing.T) {
+	r, err := New(silence{}, Config{Rate: 90})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if got := r.Config().Rate; got != DefaultConfig().Rate {
+		t.Fatalf("off-list rate survived as %d, want the default %d", got, DefaultConfig().Rate)
 	}
 }
 
@@ -693,17 +742,17 @@ func TestNewCapsBarsToBins(t *testing.T) {
 	}
 }
 
-// TestSchemaStaysConsistent pins the numbers the UI shows: the shipped points
-// and range, and a low cut that defaults below the high cut.
+// TestSchemaStaysConsistent pins the numbers the UI shows: the shipped points,
+// range and pace, and a low cut that defaults below the high cut.
 func TestSchemaStaysConsistent(t *testing.T) {
 	params := Schema()
-	if len(params) != 4 {
-		t.Fatalf("schema has %d params, want 4", len(params))
+	if len(params) != 5 {
+		t.Fatalf("schema has %d params, want 5", len(params))
 	}
 	byKey := map[string]Param{}
 	for _, p := range params {
 		byKey[p.Key] = p
-		if p.Kind == "choice" {
+		if p.Kind == "choice" || p.Kind == "steps" {
 			if len(p.Choices) == 0 {
 				t.Errorf("%s: a choice must offer a non-empty set", p.Key)
 			}
@@ -729,6 +778,9 @@ func TestSchemaStaysConsistent(t *testing.T) {
 	}
 	if byKey["minHz"].Default != 20 || byKey["maxHz"].Default != 20000 {
 		t.Errorf("default range = %v..%v, want 20..20000", byKey["minHz"].Default, byKey["maxHz"].Default)
+	}
+	if byKey["rate"].Default != 60 {
+		t.Errorf("default rate = %v, want 60", byKey["rate"].Default)
 	}
 }
 

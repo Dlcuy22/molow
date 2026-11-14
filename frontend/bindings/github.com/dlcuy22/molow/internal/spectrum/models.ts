@@ -8,14 +8,16 @@
  * 
  * A choice carries Choices and leaves Min, Max and Step at zero: a dropdown has
  * no continuous range, so the range fields would only describe a span the
- * control cannot actually take.
+ * control cannot actually take. A steps kind carries Choices too, but renders
+ * as a slider over list indexes rather than a dropdown: the stops are
+ * deliberately non-uniform, which a uniform range input cannot express.
  */
 export interface Param {
     "key": string;
     "label": string;
 
     /**
-     * "int" | "float" | "choice"
+     * "int" | "float" | "choice" | "steps"
      */
     "kind": string;
     "min": number;
@@ -24,9 +26,10 @@ export interface Param {
     "default": number;
 
     /**
-     * Choices is the allowed set for Kind "choice", ascending. Radix-2 needs a
-     * power of two, so the transform size cannot be a slider: every step
-     * between two powers of two would be rejected.
+     * Choices is the allowed set for Kind "choice" and "steps", ascending.
+     * Radix-2 needs a power of two, so the transform size cannot be a slider:
+     * every step between two powers of two would be rejected. The rate stops
+     * are non-uniform (30, 60, 120, 180), so they are a slider over indexes.
      */
     "choices"?: number[] | null;
 }

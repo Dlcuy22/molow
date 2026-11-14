@@ -54,7 +54,8 @@ type Config struct {
 	// fixedFloorDB..0 dBFS, the absolute reading a studio analyzer shows.
 	Scale string
 
-	// Release is the per-frame decay of the peak follower in [0, 1). It is what
+	// Release is the peak follower's per-frame decay at the 60 Hz pump, in
+	// [0, 1); the runner rescales it to the configured rate. It is what
 	// makes the scale dynamic: the display re-ranges to the loudest recent
 	// content instead of sitting at a fixed, mostly-empty level. It decays
 	// slowly so a transient does not pump the whole display's scale, which is
@@ -72,6 +73,12 @@ type Config struct {
 	// Zero means no compensation: the shipped default is a small value that
 	// accounts for a wired output chain.
 	DelayMs int
+
+	// Rate is how many frames per second the pump asks for. It is a CPU dial,
+	// not a shape: the transform does not care how often it runs, so the pump
+	// reschedules itself around it and the runner keeps its live window.
+	// Zero means the shipped default.
+	Rate int
 }
 
 // ScaleDynamic follows the recent peak, so the display re-ranges with the
@@ -86,7 +93,8 @@ const (
 const fixedFloorDB = -100
 
 // DefaultConfig is the visualization the product ships with: 150 bars over the
-// full audible range at the engine's canonical rate, on the dynamic scale.
+// full audible range at the engine's canonical rate, on the dynamic scale, at
+// the 60 Hz pump the frame dynamics are tuned to.
 func DefaultConfig() Config {
 	return Config{
 		Bars:       150,
@@ -97,6 +105,7 @@ func DefaultConfig() Config {
 		RangeDB:    60,
 		Scale:      ScaleDynamic,
 		Release:    0.92,
+		Rate:       60,
 	}
 }
 
@@ -106,19 +115,22 @@ func DefaultConfig() Config {
 //
 // A choice carries Choices and leaves Min, Max and Step at zero: a dropdown has
 // no continuous range, so the range fields would only describe a span the
-// control cannot actually take.
+// control cannot actually take. A steps kind carries Choices too, but renders
+// as a slider over list indexes rather than a dropdown: the stops are
+// deliberately non-uniform, which a uniform range input cannot express.
 type Param struct {
 	Key     string  `json:"key"`
 	Label   string  `json:"label"`
-	Kind    string  `json:"kind"` // "int" | "float" | "choice"
+	Kind    string  `json:"kind"` // "int" | "float" | "choice" | "steps"
 	Min     float64 `json:"min"`
 	Max     float64 `json:"max"`
 	Step    float64 `json:"step"`
 	Default float64 `json:"default"`
 
-	// Choices is the allowed set for Kind "choice", ascending. Radix-2 needs a
-	// power of two, so the transform size cannot be a slider: every step
-	// between two powers of two would be rejected.
+	// Choices is the allowed set for Kind "choice" and "steps", ascending.
+	// Radix-2 needs a power of two, so the transform size cannot be a slider:
+	// every step between two powers of two would be rejected. The rate stops
+	// are non-uniform (30, 60, 120, 180), so they are a slider over indexes.
 	Choices []int `json:"choices,omitempty"`
 }
 
@@ -127,14 +139,23 @@ type Param struct {
 // sits past 20 kHz while the transform cost keeps climbing.
 var ChoiceFFTSizes = []int{1024, 2048, 4096, 8192, 16384}
 
+// ChoiceRates are the pump rates the frame-rate dial offers, in Hz. 60 is the
+// shipped pace; 30 halves the pipeline's cost for a smaller display, and the
+// higher stops smooth the motion on high-refresh monitors at linearly more
+// CPU.
+var ChoiceRates = []int{30, 60, 120, 180}
+
 // Schema describes the visualizer controls. The frequency range is expressed in
-// whole Hz, so the UI shows a plain number rather than a fraction.
+// whole Hz, so the UI shows a plain number rather than a fraction. The rate is
+// a steps slider: its stops are non-uniform, so a uniform range input cannot
+// express them.
 func Schema() []Param {
 	return []Param{
 		{Key: "bars", Label: "Points", Kind: "int", Min: 16, Max: 256, Step: 1, Default: 150},
 		{Key: "fft", Label: "Resolution", Kind: "choice", Choices: ChoiceFFTSizes, Default: float64(DefaultConfig().FFT)},
 		{Key: "minHz", Label: "Low cut", Kind: "int", Min: 10, Max: 500, Step: 1, Default: 20},
 		{Key: "maxHz", Label: "High cut", Kind: "int", Min: 2000, Max: 20000, Step: 100, Default: 20000},
+		{Key: "rate", Label: "Frame rate", Kind: "steps", Choices: ChoiceRates, Default: float64(DefaultConfig().Rate)},
 	}
 }
 
@@ -265,28 +286,39 @@ func withDefaults(cfg Config) Config {
 	if cfg.DelayMs < 0 {
 		cfg.DelayMs = 0
 	}
+	// An off-list rate falls back to the default like the transform: the
+	// slider only offers the stops, so anything else is a hand-written call.
+	if !slices.Contains(ChoiceRates, cfg.Rate) {
+		cfg.Rate = def.Rate
+	}
 
 	return cfg
 }
 
-// holdEmptyTicks is how many consecutive empty frames the display holds
-// before it starts falling. "Empty" already means the tap has gone dry past
-// the jitter cushion, so the hold only covers the pump landing between device
-// pulls: at the ~60 Hz pump six ticks is about one pull. It has to stay short,
-// because every held tick is a tick the bars are frozen after the music has
-// stopped; half a second reads as a stalled display, not a pause.
+// The frame dynamics below are tuned at the shipped 60 Hz pump and stay
+// rate-invariant through the *PerTick accessors that follow: each one
+// re-expresses a 60 Hz figure as the per-frame amount that produces the same
+// motion per second at the configured rate.
+
+// holdEmptyTicks is how many consecutive empty frames the display holds at
+// the 60 Hz pump before it starts falling. "Empty" already means the tap has
+// gone dry past the jitter cushion, so the hold only covers the pump landing
+// between device pulls: six ticks there is about one pull. It has to stay
+// short in wall time, because every held tick is a tick the bars are frozen
+// after the music has stopped; half a second reads as a stalled display, not
+// a pause.
 const holdEmptyTicks = 6
 
-// drainFactor is the per-tick retention once a sustained drought has proven
-// playback really stopped. At the ~60 Hz pump it carries the bars to the floor
-// over about half a second, so a pause settles instead of snapping off.
+// drainFactor is the per-tick retention at 60 Hz once a sustained drought has
+// proven playback really stopped. It carries the bars to the floor over about
+// half a second, so a pause settles instead of snapping off.
 const drainFactor = 0.92
 
 // peakRise is how far the scale follower moves toward a new maximum in one
-// frame. It answers the two failure modes at once: near 1.0 a single transient
-// rescales the whole display by itself (breathing), near 0.0 the scale trails
-// loud onsets and bars pin at the ceiling (sluggish). Two thirds lands a loud
-// onset within a couple of frames at the 60 Hz pump.
+// frame at the 60 Hz pump. It answers the two failure modes at once: near
+// 1.0 a single transient rescales the whole display by itself (breathing),
+// near 0.0 the scale trails loud onsets and bars pin at the ceiling
+// (sluggish). Two thirds lands a loud onset within a couple of frames there.
 const peakRise = 0.65
 
 // maxStep caps one Frame's window advance, so a stalled or hidden pump cannot
@@ -304,6 +336,24 @@ const targetLagDivisor = 10
 // otherwise let the backlog grow to the whole tap ring and the display lag with
 // it; dropping the oldest keeps the lag bounded.
 const maxLagDivisor = 4
+
+// holdTicks is the empty-frame hold at the configured rate. The hold covers
+// about one device pull of wall time, so it scales with the pump: twice the
+// rate holds twice as many ticks.
+func (r *Runner) holdTicks() int { return max(1, r.cfg.Rate*holdEmptyTicks/60) }
+
+// drainPerTick is the per-frame retention during a drought, compounded from
+// the 60 Hz figure so the fall's speed stays constant in wall time.
+func (r *Runner) drainPerTick() float64 { return math.Pow(drainFactor, 60/float64(r.cfg.Rate)) }
+
+// risePerTick is how far the scale follower eases toward a new maximum in one
+// frame, compounded from the 60 Hz figure so a loud onset lands within the
+// same couple of ticks of wall time at any rate.
+func (r *Runner) risePerTick() float64 { return 1 - math.Pow(1-peakRise, float64(r.cfg.Rate)/60) }
+
+// releasePerTick is the peak follower's per-frame decay, compounded from the
+// 60 Hz Release figure so the scale's fall speed stays constant in wall time.
+func (r *Runner) releasePerTick() float64 { return math.Pow(r.cfg.Release, 60/float64(r.cfg.Rate)) }
 
 // Bands returns the current smoothed frame, one value per bar in [0, 1]. It is
 // the same slice Frame writes, so a caller that keeps it must copy.
@@ -352,11 +402,12 @@ func (r *Runner) Frame() []float64 {
 	// the display bit for bit through the hold window, then fall, so a real
 	// stop clears the bars instead of leaving the last frame frozen.
 	r.emptyTicks++
-	if r.emptyTicks <= holdEmptyTicks {
+	if r.emptyTicks <= r.holdTicks() {
 		return r.out
 	}
+	drain := r.drainPerTick()
 	for b := range r.out {
-		r.out[b] *= drainFactor
+		r.out[b] *= drain
 	}
 
 	return r.out
@@ -582,9 +633,10 @@ func (r *Runner) trackPeak() {
 		// jumped to it at once; easing up most of the way in a couple of
 		// frames keeps the response immediate without letting one drum hit
 		// rescale everything by itself.
-		r.peak += (peak - r.peak) * peakRise
+		r.peak += (peak - r.peak) * r.risePerTick()
 	} else {
-		r.peak = r.peak*r.cfg.Release + peak*(1-r.cfg.Release)
+		rel := r.releasePerTick()
+		r.peak = r.peak*rel + peak*(1-rel)
 	}
 }
 

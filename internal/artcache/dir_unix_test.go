@@ -19,7 +19,7 @@ func TestDirFollowsXDGCacheOnLinux(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dir: %v", err)
 	}
-	want := filepath.Join(root, "molo", "art")
+	want := filepath.Join(root, "molow", "art")
 	if dir != want {
 		t.Fatalf("Dir = %q, want %q", dir, want)
 	}

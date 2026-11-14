@@ -39,7 +39,7 @@ func TestLyricsTargetFollowsTheSaveLocation(t *testing.T) {
 	}
 
 	// A reference always lands as <videoId>.lrc in the default cache folder.
-	want := filepath.Join(root, "molo", "lyrics", "video-1.lrc")
+	want := filepath.Join(root, "molow", "lyrics", "video-1.lrc")
 	if got := svc.lyricsTarget(media, "video-1", meta); got != want {
 		t.Fatalf("reference target = %q, want %q", got, want)
 	}
@@ -245,7 +245,7 @@ func TestReadLyricsFromTheCacheFolder(t *testing.T) {
 	svc := newPlayerService()
 	svc.player = newFakePlayer()
 
-	if err := lyrics.Write(filepath.Join(root, "molo", "lyrics", "video-1.lrc"), "[00:01.00]そら\n[00:02.00]かぜ\n"); err != nil {
+	if err := lyrics.Write(filepath.Join(root, "molow", "lyrics", "video-1.lrc"), "[00:01.00]そら\n[00:02.00]かぜ\n"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -253,13 +253,13 @@ func TestReadLyricsFromTheCacheFolder(t *testing.T) {
 	if err != nil || doc == nil {
 		t.Fatalf("doc %+v err %v", doc, err)
 	}
-	if doc.Source != filepath.Join(root, "molo", "lyrics", "video-1.lrc") {
+	if doc.Source != filepath.Join(root, "molow", "lyrics", "video-1.lrc") {
 		t.Fatalf("source = %q", doc.Source)
 	}
 	if doc.Lines[0].Text != "そら" {
 		t.Fatalf("lines: %+v", doc.Lines)
 	}
-	if _, err := os.Stat(filepath.Join(root, "molo", "lyrics")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "molow", "lyrics")); err != nil {
 		t.Fatalf("default cache folder not created: %v", err)
 	}
 }

@@ -133,5 +133,5 @@ func userEffectsDir() (string, error) {
 		return "", err
 	}
 
-	return filepath.Join(base, "molo", "effects"), nil
+	return filepath.Join(base, "molow", "effects"), nil
 }

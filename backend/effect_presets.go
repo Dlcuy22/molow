@@ -91,7 +91,7 @@ func newPresetStore() (*presetStore, error) {
 		return nil, err
 	}
 
-	return &presetStore{dir: filepath.Join(base, "molo", "presets", "equalizer")}, nil
+	return &presetStore{dir: filepath.Join(base, "molow", "presets", "equalizer")}, nil
 }
 
 // EffectPresets lists the built-ins followed by the user's presets. An effect

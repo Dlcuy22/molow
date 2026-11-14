@@ -262,7 +262,7 @@ func (s *PlayerService) lyricsDir() (dir string) {
 		return cfg.Folder
 	}
 	if base, err := os.UserConfigDir(); err == nil {
-		dir = filepath.Join(base, "molo", "lyrics")
+		dir = filepath.Join(base, "molow", "lyrics")
 	}
 	if dir != "" {
 		_ = os.MkdirAll(dir, 0o755)

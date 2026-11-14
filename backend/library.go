@@ -38,7 +38,7 @@ func libraryDBPath() (string, error) {
 		return "", err
 	}
 
-	return filepath.Join(base, "molo", "library.db"), nil
+	return filepath.Join(base, "molow", "library.db"), nil
 }
 
 // initLibraries opens the catalogue and registers the stored roots. A failure

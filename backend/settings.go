@@ -161,7 +161,7 @@ func settingsPath() (string, error) {
 		return "", err
 	}
 
-	return filepath.Join(base, "molo", "settings.json"), nil
+	return filepath.Join(base, "molow", "settings.json"), nil
 }
 
 // loadAppSettings reads the persisted settings, falling back to the defaults

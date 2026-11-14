@@ -18,16 +18,16 @@ import (
 
 // subdir is the folder under the platform cache root. One name for both the
 // XDG path and the temp fallback keeps a stale cache easy to find and delete.
-const subdir = "molo-art"
+const subdir = "molow-art"
 
 // Dir returns the directory the cache lives in, creating it on first use. On
-// Linux it is the XDG cache directory ($XDG_CACHE_HOME/molo/art, defaulting to
-// ~/.cache/molo/art); on Windows it is the temporary directory.
+// Linux it is the XDG cache directory ($XDG_CACHE_HOME/molow/art, defaulting to
+// ~/.cache/molow/art); on Windows it is the temporary directory.
 func Dir() (string, error) {
 	dir := fallbackDir()
 	if runtime.GOOS != "windows" {
 		if base, err := os.UserCacheDir(); err == nil {
-			dir = filepath.Join(base, "molo", "art")
+			dir = filepath.Join(base, "molow", "art")
 		}
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {

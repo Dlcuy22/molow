@@ -230,7 +230,7 @@ func TestLyricsChainFallsThroughToTheSheetTier(t *testing.T) {
 	}
 
 	// The tier is session memory only: nothing lands in the sidecar store.
-	if _, err := os.Stat(filepath.Join(root, "molo", "lyrics", "abc123.lrc")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(root, "molow", "lyrics", "abc123.lrc")); !os.IsNotExist(err) {
 		t.Fatalf("catalogue sheet must not be written as a sidecar: stat err %v", err)
 	}
 }

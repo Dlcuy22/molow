@@ -14,8 +14,7 @@ import (
 // sidecar on disk keeps the provider's text, so a local sheet is never
 // rewritten for a display decision.
 func TestLyricsMarksStayOutOfTheSidecar(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	root := isolateConfig(t)
 
 	svc := newPlayerService()
 	fake := newFakePlayer()

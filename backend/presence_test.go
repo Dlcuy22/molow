@@ -147,7 +147,7 @@ func TestYtmFirstArtistIDSkipsBlanks(t *testing.T) {
 // TestDiscordEnabledRoundTrips pins the persistence: the choice survives a
 // restart, and a fresh install defaults to off.
 func TestDiscordEnabledRoundTrips(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateConfig(t)
 
 	if loadDiscordEnabled() {
 		t.Fatal("default should be off")

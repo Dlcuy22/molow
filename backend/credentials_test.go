@@ -3,6 +3,7 @@ package backend
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -11,12 +12,15 @@ import (
 )
 
 // isolateConfig points the config directory at a temporary home, so a test can
-// never touch the real credentials file.
+// never touch the real credentials file. On Windows os.UserConfigDir reads
+// %AppData% and ignores XDG_CONFIG_HOME, so both have to be moved or a desktop
+// run would resolve to the real %AppData%\molo and rewrite the user's files.
 func isolateConfig(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
+	t.Setenv("AppData", dir)
 	return dir
 }
 
@@ -41,8 +45,13 @@ func TestSaveCredentialsIsPrivateAndAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("mode = %o, want 600", perm)
+	// Windows has no POSIX mode bits: a writable file always stats 0666 and
+	// the real protection comes from the profile's ACLs, so the mode is only
+	// asserted where the platform can honour it.
+	if runtime.GOOS != "windows" {
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("mode = %o, want 600", perm)
+		}
 	}
 
 	// A leftover temporary file would mean the write was not atomic, and it would

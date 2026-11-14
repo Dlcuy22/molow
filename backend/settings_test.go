@@ -46,7 +46,7 @@ func TestAppSettingsDefaultsAreOffAndReference(t *testing.T) {
 // TestAppSettingsRoundTrips proves the panel's edits survive a restart, for
 // every field including the repeat mode and the visualizer switch.
 func TestAppSettingsRoundTrips(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateConfig(t)
 
 	// A fresh install reads the defaults with no file present.
 	if got := loadAppSettings(); got.Playback.Crossfade != defaultAppSettings().Playback.Crossfade {
@@ -84,8 +84,7 @@ func TestAppSettingsRoundTrips(t *testing.T) {
 // repeat and the visualizer existed comes back with repeat off and the
 // visualizer on, which is the current behaviour rather than a wedged panel.
 func TestLoadAppSettingsNormalizesAnOldSchemaFile(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	isolateConfig(t)
 
 	p, err := settingsPath()
 	if err != nil {
@@ -116,8 +115,7 @@ func TestLoadAppSettingsNormalizesAnOldSchemaFile(t *testing.T) {
 // known layout survives, while an unknown one or a missing one falls back to
 // minimal. Off is not a style; it lives in the enabled flag.
 func TestLoadAppSettingsNormalizesTheVisualizerStyle(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	isolateConfig(t)
 
 	p, err := settingsPath()
 	if err != nil {
@@ -150,8 +148,7 @@ func TestLoadAppSettingsNormalizesTheVisualizerStyle(t *testing.T) {
 // string is corrected on read, so the panel and the engine never see a value
 // the engine would reject.
 func TestLoadAppSettingsNormalizesAnUnknownRepeat(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	isolateConfig(t)
 
 	p, err := settingsPath()
 	if err != nil {
@@ -173,8 +170,7 @@ func TestLoadAppSettingsNormalizesAnUnknownRepeat(t *testing.T) {
 // TestLoadAppSettingsNormalizesAnUnknownPlayPauseStyle proves the style falls
 // back to the default disc, so the panel always has a valid option selected.
 func TestLoadAppSettingsNormalizesAnUnknownPlayPauseStyle(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	isolateConfig(t)
 
 	p, err := settingsPath()
 	if err != nil {
@@ -196,8 +192,7 @@ func TestLoadAppSettingsNormalizesAnUnknownPlayPauseStyle(t *testing.T) {
 // TestLoadAppSettingsToleratesCorruptFile keeps a hand-broken file from stopping
 // the app: the defaults are used instead of an error.
 func TestLoadAppSettingsToleratesCorruptFile(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	isolateConfig(t)
 
 	p, err := settingsPath()
 	if err != nil {
@@ -218,8 +213,7 @@ func TestLoadAppSettingsToleratesCorruptFile(t *testing.T) {
 // TestLoadAppSettingsClampsDuration proves a hand-edited out-of-range duration
 // is corrected on read, so the panel and the engine never see a bad value.
 func TestLoadAppSettingsClampsDuration(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	isolateConfig(t)
 
 	p, err := settingsPath()
 	if err != nil {
@@ -243,8 +237,7 @@ func TestLoadAppSettingsClampsDuration(t *testing.T) {
 // negative one falls to no compensation, and a file that predates the field
 // gets the shipped default rather than zero (absent is not "explicitly none").
 func TestLoadAppSettingsClampsVisualizerDelay(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	isolateConfig(t)
 
 	p, err := settingsPath()
 	if err != nil {
@@ -275,8 +268,7 @@ func TestLoadAppSettingsClampsVisualizerDelay(t *testing.T) {
 // TestSaveAppSettingsIsAtomic proves the temp-file dance leaves no partial file
 // behind: after a save the directory holds the settings file and no stray temp.
 func TestSaveAppSettingsIsAtomic(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	isolateConfig(t)
 
 	if err := saveAppSettings(defaultAppSettings()); err != nil {
 		t.Fatalf("save: %v", err)
@@ -304,7 +296,7 @@ func TestSaveAppSettingsIsAtomic(t *testing.T) {
 // playback settings to the engine, not just to the file: the crossfade and the
 // repeat mode are pushed through, and the document is persisted.
 func TestSetAppSettingsReachesTheEngine(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateConfig(t)
 
 	svc := newPlayerService()
 	fp := newFakePlayer()
@@ -360,7 +352,7 @@ func samePlayback(a, b PlaybackSettings) bool {
 // visualizer's Enabled: a non-default shape set beforehand must survive, since
 // ConfigureSpectrum otherwise rebuilds from the shipped defaults.
 func TestSetAppSettingsKeepsVisualizerShape(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateConfig(t)
 
 	svc := newPlayerService()
 	svc.player = newFakePlayer()
@@ -389,7 +381,7 @@ func TestSetAppSettingsKeepsVisualizerShape(t *testing.T) {
 // the visualizer: a panel sending false must come back false and persist false,
 // where the load path's "absent means on" rule must not apply.
 func TestSetAppSettingsKeepsVisualizerOff(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateConfig(t)
 
 	svc := newPlayerService()
 	svc.player = newFakePlayer()
@@ -413,7 +405,7 @@ func TestSetAppSettingsKeepsVisualizerOff(t *testing.T) {
 // TestSetAppSettingsReturnsTheNormalizedDocument proves a clamped value is
 // echoed back rather than silently stored, so a caller can mirror the truth.
 func TestSetAppSettingsReturnsTheNormalizedDocument(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateConfig(t)
 
 	svc := newPlayerService()
 	svc.player = newFakePlayer()
@@ -449,8 +441,7 @@ func TestCrossfadeMappingsRoundTrip(t *testing.T) {
 // lyric group gets the all-on defaults, unknown provider names are dropped and
 // only the two save locations are kept.
 func TestLoadAppSettingsNormalizesTheLyricsGroup(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	isolateConfig(t)
 
 	p, err := settingsPath()
 	if err != nil {
@@ -503,8 +494,7 @@ func TestLoadAppSettingsNormalizesTheLyricsGroup(t *testing.T) {
 // TestLyricsTogglePersists proves a written providers map reads back: one
 // provider off survives the save.
 func TestLyricsTogglePersists(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	isolateConfig(t)
 
 	svc := newPlayerService()
 	svc.player = newFakePlayer()

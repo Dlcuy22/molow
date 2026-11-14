@@ -201,8 +201,7 @@ func TestLyricsWaitsForTheChain(t *testing.T) {
 // across the providers leaves the catalogue sheet as the joined result, served
 // with the same event and state as any fetched sheet.
 func TestLyricsChainFallsThroughToTheSheetTier(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	root := isolateConfig(t)
 
 	svc := newPlayerService()
 	svc.player = newFakePlayer()

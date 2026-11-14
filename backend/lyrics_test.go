@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -19,8 +20,7 @@ import (
 // tests.
 
 func TestLyricsTargetFollowsTheSaveLocation(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	root := isolateConfig(t)
 
 	svc := newPlayerService()
 	svc.player = newFakePlayer()
@@ -46,8 +46,7 @@ func TestLyricsTargetFollowsTheSaveLocation(t *testing.T) {
 }
 
 func TestLyricsTargetRoundTripsForAnUnlabeledRip(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	root := isolateConfig(t)
 
 	svc := newPlayerService()
 	svc.player = newFakePlayer()
@@ -75,8 +74,7 @@ func TestLyricsTargetRoundTripsForAnUnlabeledRip(t *testing.T) {
 }
 
 func TestSyncLyricsShortCircuitsOnDisk(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	root := isolateConfig(t)
 
 	svc := newPlayerService()
 	svc.player = newFakePlayer()
@@ -113,8 +111,7 @@ func TestSyncLyricsShortCircuitsOnDisk(t *testing.T) {
 // track re-reported on every tick gets one disk look. Without it the trail
 // shows the "already on disk" line once per tick.
 func TestSyncLyricsRepeatedTicksCostOneDiskLook(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	root := isolateConfig(t)
 
 	svc := newPlayerService()
 	svc.player = newFakePlayer()
@@ -149,8 +146,7 @@ func TestSyncLyricsRepeatedTicksCostOneDiskLook(t *testing.T) {
 // disk" line names the lyric file that answered, not the track that triggered
 // the check.
 func TestSyncLyricsDiskHitLogsTheSidecar(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	root := isolateConfig(t)
 
 	svc := newPlayerService()
 	svc.player = newFakePlayer()
@@ -166,10 +162,12 @@ func TestSyncLyricsDiskHitLogsTheSidecar(t *testing.T) {
 
 	svc.syncLyrics(Snapshot{Path: media, Title: "Billie Jean", Duration: 100000})
 
-	if got := trail.String(); !strings.Contains(got, sidecar) {
+	// slog quotes the value and escapes the separators, so on Windows the
+	// rendered line carries doubled backslashes; compare the quoted form.
+	if got := trail.String(); !strings.Contains(got, strconv.Quote(sidecar)) {
 		t.Fatalf("log line does not name %q:\n%s", sidecar, got)
 	}
-	if strings.Contains(trail.String(), media) {
+	if strings.Contains(trail.String(), strconv.Quote(media)) {
 		t.Fatalf("log line names the track, not the sidecar:\n%s", trail.String())
 	}
 }
@@ -179,8 +177,7 @@ func TestSyncLyricsDiskHitLogsTheSidecar(t *testing.T) {
 // own, so the previous track's sheet must not survive in done. A join after
 // the short-circuit used to serve it as the new track's lyrics.
 func TestSyncLyricsDiskHitClearsTheStaleSheet(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	root := isolateConfig(t)
 
 	svc := newPlayerService()
 	svc.player = newFakePlayer()
@@ -225,8 +222,7 @@ func TestSyncLyricsDiskHitClearsTheStaleSheet(t *testing.T) {
 }
 
 func TestSyncLyricsSkipsTheUntaggedTrack(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	isolateConfig(t)
 
 	svc := newPlayerService()
 	svc.player = newFakePlayer()
@@ -244,8 +240,7 @@ func TestSyncLyricsSkipsTheUntaggedTrack(t *testing.T) {
 }
 
 func TestReadLyricsFromTheCacheFolder(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	root := isolateConfig(t)
 
 	svc := newPlayerService()
 	svc.player = newFakePlayer()
@@ -270,8 +265,7 @@ func TestReadLyricsFromTheCacheFolder(t *testing.T) {
 }
 
 func TestLyricsJoinMissWithoutAJob(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	isolateConfig(t)
 
 	svc := newPlayerService()
 	svc.player = newFakePlayer()

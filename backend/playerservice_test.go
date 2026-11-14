@@ -343,7 +343,7 @@ func TestSuppressSpectrumSkipsRepeats(t *testing.T) {
 // and a save of the document applies it on the spot through
 // applyAppSettingsLocked's spectrum reconfiguration.
 func TestVisualizerDelayReachesTheRunner(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateConfig(t)
 
 	svc := newPlayerService()
 	svc.player = newFakePlayer()

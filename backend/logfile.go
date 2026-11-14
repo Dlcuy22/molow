@@ -7,6 +7,7 @@ package backend
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/lmittmann/tint"
 	"github.com/mattn/go-isatty"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // logSink holds the console chain, the level it was built at, and, once armed,
@@ -203,6 +205,27 @@ func applyLog(level slog.Level, enabled bool, path string) error {
 	slog.Info("log file: writing", "path", p)
 
 	return nil
+}
+
+// PickLogFileFolder shows the native folder picker for the log file. The file
+// keeps its molow.log name in the chosen folder; a custom name is typed into
+// the field instead. It queues nothing; storage happens through SetAppSettings.
+func (s *PlayerService) PickLogFileFolder() (string, error) {
+	app := application.Get()
+	if app == nil {
+		return "", fmt.Errorf("no application")
+	}
+
+	dir, err := app.Dialog.OpenFile().
+		SetTitle("Choose a log folder").
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		PromptForSingleSelection()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(dir, "molow.log"), nil
 }
 
 // applyLogSettings applies the level and the log file from the settings

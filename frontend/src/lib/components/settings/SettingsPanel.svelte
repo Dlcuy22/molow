@@ -116,6 +116,20 @@
     });
   }
 
+  // browseLogFileFolder opens the native picker and stores the choice with
+  // the default file name; a custom name is typed instead. Cancelling
+  // changes nothing.
+  async function browseLogFileFolder() {
+    try {
+      const path = await PlayerService.PickLogFileFolder();
+      if (path) {
+        setLogFile(path);
+      }
+    } catch {
+      // Cancelled: no setting to write.
+    }
+  }
+
   // The level moves the console and the log file together on the save path,
   // so a Debug choice reads like a MOLOW_DEBUG run without the env.
   function setLogLevel(level: string) {
@@ -652,14 +666,21 @@
                     description="Full path to the file. Empty keeps molow.log in the config folder."
                   >
                     {#snippet control()}
-                      <TextField
-                        label={null}
-                        ariaLabel="Log file location"
-                        value={logFile}
-                        placeholder="Default"
-                        disabled={!$appSettings.general.logFileEnabled}
-                        onchange={setLogFile}
-                      />
+                      <div class="flex items-end gap-1.5">
+                        <TextField
+                          label={null}
+                          ariaLabel="Log file location"
+                          value={logFile}
+                          placeholder="Default"
+                          disabled={!$appSettings.general.logFileEnabled}
+                          onchange={setLogFile}
+                        />
+                        <Button
+                          label="Browse"
+                          disabled={!$appSettings.general.logFileEnabled}
+                          onclick={browseLogFileFolder}
+                        />
+                      </div>
                     {/snippet}
                   </SettingRow>
                 </div>

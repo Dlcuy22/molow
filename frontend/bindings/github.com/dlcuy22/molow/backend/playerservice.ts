@@ -383,6 +383,15 @@ export function PickLibraryFolder(): $CancellablePromise<string> {
 }
 
 /**
+ * PickLogFileFolder shows the native folder picker for the log file. The file
+ * keeps its molow.log name in the chosen folder; a custom name is typed into
+ * the field instead. It queues nothing; storage happens through SetAppSettings.
+ */
+export function PickLogFileFolder(): $CancellablePromise<string> {
+    return $Call.ByID(1394290076);
+}
+
+/**
  * PickLyricsFolder shows the native folder picker for the YouTube Music lyric
  * cache. It queues nothing; storage happens through SetAppSettings.
  */

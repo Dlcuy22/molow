@@ -100,7 +100,7 @@ export const discordStatus = writable<DiscordStatus>({ enabled: false, connected
  *  read once on connect and written back whole through SetAppSettings, so the
  *  store and the file always describe the same document. The default mirrors
  *  the Go side: crossfade off at the default duration, repeat off, visualizer
- *  on. */
+ *  on, Discord presence off. */
 export const appSettings = writable<AppSettings>({
   version: 1,
   playback: {
@@ -115,6 +115,7 @@ export const appSettings = writable<AppSettings>({
   },
   stream: {},
   general: { visualizerEnabled: true, visualizerStyle: "minimal", visualizerDelayMs: 25 },
+  discord: { enabled: false },
 });
 
 /** queueCoverCache memoises the palette's per-track artwork by cover id, so a
@@ -531,6 +532,9 @@ export const commands = {
   artistAvatar: (artistID: string) => PlayerService.ArtistAvatar(artistID),
   // setDiscordEnabled flips Rich Presence. The status is re-read after the
   // call so the panel shows the true connection state rather than a guess.
+  // The settings document is re-read too: the backend records the toggle in
+  // its Discord group, and a stale store copy would write the old value back
+  // on the next whole-document save.
   setDiscordEnabled: async (on: boolean): Promise<void> => {
     try {
       await PlayerService.SetDiscordEnabled(on);
@@ -538,6 +542,7 @@ export const commands = {
       player.update((s) => ({ ...s, error: errorText(err) }));
     }
     PlayerService.DiscordStatus().then(discordStatus.set);
+    PlayerService.AppSettings().then(appSettings.set);
   },
   // The preview calls are plain too: a preview is an audition, so a rejected
   // one should quietly do nothing rather than take over the error line. The

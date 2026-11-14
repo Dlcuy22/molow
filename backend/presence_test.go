@@ -145,23 +145,28 @@ func TestYtmFirstArtistIDSkipsBlanks(t *testing.T) {
 }
 
 // TestDiscordEnabledRoundTrips pins the persistence: the choice survives a
-// restart, and a fresh install defaults to off.
+// restart through the settings document, and a fresh install defaults to off.
 func TestDiscordEnabledRoundTrips(t *testing.T) {
 	isolateConfig(t)
 
-	if loadDiscordEnabled() {
+	if loadAppSettings().Discord.Enabled {
 		t.Fatal("default should be off")
 	}
-	if err := saveDiscordEnabled(true); err != nil {
+
+	def := defaultAppSettings()
+	def.Discord.Enabled = true
+	if err := saveAppSettings(def); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if !loadDiscordEnabled() {
+	if !loadAppSettings().Discord.Enabled {
 		t.Fatal("enabled state did not persist")
 	}
-	if err := saveDiscordEnabled(false); err != nil {
+
+	def.Discord.Enabled = false
+	if err := saveAppSettings(def); err != nil {
 		t.Fatalf("save off: %v", err)
 	}
-	if loadDiscordEnabled() {
+	if loadAppSettings().Discord.Enabled {
 		t.Fatal("disabled state did not persist")
 	}
 }

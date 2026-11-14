@@ -15,9 +15,6 @@ package backend
 
 import (
 	"context"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -73,67 +70,32 @@ type presenceState struct {
 	wg sync.WaitGroup
 }
 
-// discordConfigPath is where the on/off choice is remembered. It follows the
-// platform config convention, landing beside the effects directory.
-func discordConfigPath() (string, error) {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-
-	return filepath.Join(base, "molo", "discord.json"), nil
-}
-
-// loadDiscordEnabled reads the remembered choice. A missing or unreadable file
-// means "off", so a first run never surprises the user with a presence.
-func loadDiscordEnabled() bool {
-	p, err := discordConfigPath()
-	if err != nil {
-		return false
-	}
-	raw, err := os.ReadFile(p)
-	if err != nil {
-		return false
-	}
-	var cfg struct {
-		Enabled bool `json:"enabled"`
-	}
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return false
-	}
-
-	return cfg.Enabled
-}
-
-// saveDiscordEnabled remembers the choice. It is best effort: a write failure
-// only means the setting does not survive a restart.
-func saveDiscordEnabled(enabled bool) error {
-	p, err := discordConfigPath()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return err
-	}
-	raw, err := json.Marshal(struct {
-		Enabled bool `json:"enabled"`
-	}{enabled})
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(p, raw, 0o644)
-}
-
-// initDiscord restores the remembered choice at startup. It runs after the
-// engine exists, so turning presence on can immediately describe what is
-// already playing.
+// initDiscord restores the remembered choice at startup. The toggle lives in
+// the settings document, so the read is the document the service already
+// holds. It runs after the engine exists, so turning presence on can
+// immediately describe what is already playing.
 func (s *PlayerService) initDiscord() {
-	if loadDiscordEnabled() {
+	s.appSettingsMu.Lock()
+	on := s.appSettings.Discord.Enabled
+	s.appSettingsMu.Unlock()
+
+	if on {
 		if err := s.SetDiscordEnabled(true); err != nil {
 			s.log.Warn("discord: could not restore enabled state", "error", err)
 		}
 	}
+}
+
+// persistDiscordEnabled records the choice in the settings document, so the
+// toggle survives a restart like every other panel setting. It returns the
+// write error so the caller can warn in its own words.
+func (s *PlayerService) persistDiscordEnabled(on bool) error {
+	s.appSettingsMu.Lock()
+	s.appSettings.Discord.Enabled = on
+	doc := s.appSettings
+	s.appSettingsMu.Unlock()
+
+	return saveAppSettings(doc)
 }
 
 // SetDiscordEnabled turns the integration on or off and remembers the choice.
@@ -154,7 +116,7 @@ func (s *PlayerService) SetDiscordEnabled(on bool) error {
 		if mgr != nil {
 			mgr.Stop()
 		}
-		if err := saveDiscordEnabled(false); err != nil {
+		if err := s.persistDiscordEnabled(false); err != nil {
 			s.log.Warn("discord: could not persist disabled state", "error", err)
 		}
 		s.log.Info("discord: presence disabled")
@@ -185,7 +147,7 @@ func (s *PlayerService) SetDiscordEnabled(on bool) error {
 	s.presence.mu.Unlock()
 
 	mgr.Start()
-	if err := saveDiscordEnabled(true); err != nil {
+	if err := s.persistDiscordEnabled(true); err != nil {
 		s.log.Warn("discord: could not persist enabled state", "error", err)
 	}
 	s.log.Info("discord: presence enabled")

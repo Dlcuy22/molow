@@ -12,6 +12,7 @@ export type {
     AuthStatus,
     CodecOption,
     CrossfadeSettings,
+    DiscordSettings,
     DiscordStatus,
     EffectChainInfo,
     EffectKindInfo,

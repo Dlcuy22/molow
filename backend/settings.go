@@ -6,11 +6,13 @@
 // panel never touches the filesystem, and this file never touches the DOM.
 //
 // The store is a plain JSON file under the platform config directory, beside
-// the Discord choice and the user's effect scripts. JSON is the right size for
-// a handful of scalar settings: no dependency, human-readable, and easy to
-// repair by hand. The write is atomic (a temp file and a rename), which is the
-// same discipline the waveform cache uses, so a crash mid-write cannot leave a
-// half-written file that a later read would reject.
+// the user's effect scripts. The document carries the whole panel plus the
+// Discord toggle, so one file holds every choice that survives a restart.
+// JSON is the right size for a handful of scalar settings: no dependency,
+// human-readable, and easy to repair by hand. The write is atomic (a temp file
+// and a rename), which is the same discipline the waveform cache uses, so a
+// crash mid-write cannot leave a half-written file that a later read would
+// reject.
 //
 // The read is forgiving on purpose: a missing, unreadable, or corrupt file is
 // not an error, it is "no settings yet", and the defaults are used. A settings
@@ -33,14 +35,15 @@ import (
 const settingsVersion = 1
 
 // AppSettings is the persisted settings document. It is the whole file: a
-// version tag and the settings grouped by the panel's tabs. Only Playback has
-// content today; the other groups are reserved so a later tab adds a field
-// without changing the file's shape.
+// version tag, the settings grouped by the panel's tabs, and the Discord
+// toggle alongside them. Only Playback has content today; the other groups are
+// reserved so a later tab adds a field without changing the file's shape.
 type AppSettings struct {
 	Version  int              `json:"version"`
 	Playback PlaybackSettings `json:"playback"`
 	Stream   StreamSettings   `json:"stream"`
 	General  GeneralSettings  `json:"general"`
+	Discord  DiscordSettings  `json:"discord"`
 }
 
 // PlaybackSettings is the Playback tab. Crossfade is the track overlap; Repeat
@@ -87,6 +90,13 @@ type GeneralSettings struct {
 	VisualizerDelayMs int    `json:"visualizerDelayMs"`
 }
 
+// DiscordSettings carries the Discord Rich Presence toggle. Enabled is the
+// persisted choice; whether the IPC socket is open is runtime state and is
+// reported through DiscordStatus instead.
+type DiscordSettings struct {
+	Enabled bool `json:"enabled"`
+}
+
 // CrossfadeSettings mirrors the engine's crossfade settings. It is restated
 // rather than reusing molo.CrossfadeSettings directly so the JSON field names
 // are the panel's contract and a change to the engine's Go field names cannot
@@ -100,7 +110,8 @@ type CrossfadeSettings struct {
 // defaultAppSettings is the state a fresh install starts from. Crossfade is off
 // and takes the engine's reference values, so an untouched install behaves as
 // it did before the feature existed. The visualizer defaults to on, which is the
-// pump's own starting state.
+// pump's own starting state. Discord presence defaults to off, so a fresh
+// install never publishes presence.
 func defaultAppSettings() AppSettings {
 	return AppSettings{
 		Version: settingsVersion,
@@ -143,7 +154,7 @@ func defaultLyricsSettings() LyricsSettings {
 }
 
 // settingsPath is where the settings document lives. It follows the platform
-// config convention, landing beside the Discord choice and the effects folder.
+// config convention, landing beside the effects folder.
 func settingsPath() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {
@@ -380,8 +391,8 @@ func saveAppSettings(s AppSettings) error {
 
 		return err
 	}
-	// Match the sibling discord.json's mode: a settings file is readable by the
-	// user, not secret. CreateTemp makes 0600, so the mode is set explicitly.
+	// A settings file is readable by the user, not secret, and CreateTemp
+	// makes 0600, so the mode is set explicitly.
 	if err := os.Chmod(name, 0o644); err != nil {
 		os.Remove(name)
 

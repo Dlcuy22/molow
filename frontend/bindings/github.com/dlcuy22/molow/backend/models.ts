@@ -15,15 +15,16 @@ export interface AccountInfo {
 
 /**
  * AppSettings is the persisted settings document. It is the whole file: a
- * version tag and the settings grouped by the panel's tabs. Only Playback has
- * content today; the other groups are reserved so a later tab adds a field
- * without changing the file's shape.
+ * version tag, the settings grouped by the panel's tabs, and the Discord
+ * toggle alongside them. Only Playback has content today; the other groups are
+ * reserved so a later tab adds a field without changing the file's shape.
  */
 export interface AppSettings {
     "version": number;
     "playback": PlaybackSettings;
     "stream": StreamSettings;
     "general": GeneralSettings;
+    "discord": DiscordSettings;
 }
 
 /**
@@ -62,6 +63,15 @@ export interface CrossfadeSettings {
     "enabled": boolean;
     "durationMs": number;
     "skipSameAlbum": boolean;
+}
+
+/**
+ * DiscordSettings carries the Discord Rich Presence toggle. Enabled is the
+ * persisted choice; whether the IPC socket is open is runtime state and is
+ * reported through DiscordStatus instead.
+ */
+export interface DiscordSettings {
+    "enabled": boolean;
 }
 
 /**

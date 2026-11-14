@@ -630,8 +630,21 @@
                    group, the same way the Visualizer block does. -->
               <div class="divide-y divide-line">
                 <SettingRow
+                  label="Enable log file"
+                  description={null}
+                >
+                  {#snippet control()}
+                    <Switch
+                      checked={$appSettings.general.logFileEnabled}
+                      label="Enable log file"
+                      onchange={setLogFileEnabled}
+                    />
+                  {/snippet}
+                </SettingRow>
+
+                <SettingRow
                   label="Log level"
-                  description="Debug shows every level, the same as a MOLOW_DEBUG run. Info is the steady state."
+                  description={null}
                 >
                   {#snippet control()}
                     <Picker
@@ -647,23 +660,10 @@
                   {/snippet}
                 </SettingRow>
 
-                <SettingRow
-                  label="Enable log file"
-                  description="Mirror the console log to a file on disk. A line lands in both, so the file keeps every repeat the console collapses."
-                >
-                  {#snippet control()}
-                    <Switch
-                      checked={$appSettings.general.logFileEnabled}
-                      label="Enable log file"
-                      onchange={setLogFileEnabled}
-                    />
-                  {/snippet}
-                </SettingRow>
-
                 <div class="py-2.5" class:opacity-40={!$appSettings.general.logFileEnabled}>
                   <SettingRow
                     label="Log file location"
-                    description="Full path to the file. Empty keeps molow.log in the config folder."
+                    description="Where log file is written, Default is in app config"
                   >
                     {#snippet control()}
                       <div class="flex items-end gap-1.5">

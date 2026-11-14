@@ -139,6 +139,33 @@
     });
   }
 
+  // The clear empties the file in place, so it never goes away. The freed
+  // size answers like the lyrics cache clear does. Each press is its own
+  // answer, so it gets its own card.
+  async function clearLogFile() {
+    try {
+      const { files, bytes } = await PlayerService.ClearLogFile();
+      showToast({
+        key: "log-file",
+        kind: "message",
+        stack: true,
+        label:
+          files === 0
+            ? "Log file is already empty"
+            : `Log cleared, ${cacheSize(bytes)} freed`,
+        icon: Check,
+      });
+    } catch {
+      showToast({
+        key: "log-file",
+        kind: "message",
+        stack: true,
+        label: "Could not clear the log file",
+        icon: WarningCircle,
+      });
+    }
+  }
+
   // Reset to the default tab each time the panel opens, so it does not reopen
   // on a tab the user left it on.
   let wasOpen = false;
@@ -684,6 +711,20 @@
                     {/snippet}
                   </SettingRow>
                 </div>
+
+                <SettingRow
+                  label="Clear log file"
+                  description="Empty the log file on disk"
+                >
+                  {#snippet control()}
+                    <Button
+                      label="Clear"
+                      busyLabel="Clearing"
+                      disabled={!$appSettings.general.logFileEnabled}
+                      onclick={clearLogFile}
+                    />
+                  {/snippet}
+                </SettingRow>
               </div>
             </SettingGroup>
           </div>

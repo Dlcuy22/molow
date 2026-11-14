@@ -338,6 +338,54 @@ func (s *PlayerService) PickLogFileFolder() (string, error) {
 	return filepath.Join(dir, "molow.log"), nil
 }
 
+// LogFileClear reports what ClearLogFile freed: the log file's size when one
+// existed.
+type LogFileClear struct {
+	Files int   `json:"files"`
+	Bytes int64 `json:"bytes"`
+}
+
+// ClearLogFile empties the log file in place, so a press starts the log over
+// at zero and the file never goes away. Windows refuses to delete a file a
+// handle is open on, so the clear truncates instead of removing it. The
+// truncation opens its own handle because the sink's was opened append-only,
+// which Windows does not allow to resize. A missing file reports already
+// empty.
+func (s *PlayerService) ClearLogFile() (LogFileClear, error) {
+	removed := LogFileClear{}
+
+	s.appSettingsMu.Lock()
+	path := s.appSettings.General.LogFile
+	s.appSettingsMu.Unlock()
+
+	p, err := logFilePath(path)
+	if err != nil {
+		return removed, err
+	}
+
+	info, err := os.Stat(p)
+	if os.IsNotExist(err) {
+		return removed, nil
+	}
+	if err != nil {
+		return removed, err
+	}
+	removed.Files = 1
+	removed.Bytes = info.Size()
+	if err := os.Truncate(p, 0); err != nil {
+		return removed, err
+	}
+
+	logSink.mu.Lock()
+	armed := logSink.armed && logSink.path == p
+	logSink.mu.Unlock()
+	if armed {
+		slog.Info("log file: cleared", "bytes", removed.Bytes)
+	}
+
+	return removed, nil
+}
+
 // applyLogSettings applies the level and the log file from the settings
 // document. It runs at startup and on every save, so both follow the panel
 // without a restart; a failure only costs the file, never the console.

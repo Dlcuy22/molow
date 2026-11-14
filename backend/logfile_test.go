@@ -258,6 +258,66 @@ func waitFor(t *testing.T, probe func() error) error {
 	}
 }
 
+// TestClearLogFileTruncatesInPlace pins the clear: the file is emptied by
+// path while the sink keeps its append handle, the old records are gone, and
+// the next record starts at offset zero.
+func TestClearLogFileTruncatesInPlace(t *testing.T) {
+	isolateConfig(t)
+
+	previous := slog.Default()
+	t.Cleanup(func() {
+		logRedirect.Store(nil)
+		registerConsoleLogHandler(nil, slog.LevelInfo)
+		_ = applyLog(slog.LevelInfo, false, "")
+		slog.SetDefault(previous)
+	})
+
+	installLogRedirect(slog.DiscardHandler)
+	if err := applyLog(slog.LevelInfo, true, ""); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	slog.Info("log file: before clear")
+	slog.Info("log file: before clear two")
+
+	svc := &PlayerService{closing: make(chan struct{})}
+	got, err := svc.ClearLogFile()
+	if err != nil {
+		t.Fatalf("ClearLogFile: %v", err)
+	}
+	if got.Files != 1 || got.Bytes == 0 {
+		t.Fatalf("clear reported %d files and %d bytes, want 1 and a size", got.Files, got.Bytes)
+	}
+
+	slog.Info("log file: after clear")
+
+	raw, err := os.ReadFile(logSink.path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	body := string(raw)
+	if strings.Contains(body, "before clear") {
+		t.Fatal("the clear left old records behind")
+	}
+	if !strings.Contains(body, "log file: cleared") || !strings.Contains(body, "after clear") {
+		t.Fatalf("the truncated file stopped taking records: %q", body)
+	}
+}
+
+// TestClearLogFileOnAMissingFileIsEmpty pins the disabled case: with the file
+// gone from disk the clear reports nothing removed instead of an error.
+func TestClearLogFileOnAMissingFileIsEmpty(t *testing.T) {
+	isolateConfig(t)
+
+	svc := &PlayerService{closing: make(chan struct{})}
+	got, err := svc.ClearLogFile()
+	if err != nil {
+		t.Fatalf("ClearLogFile: %v", err)
+	}
+	if got.Files != 0 || got.Bytes != 0 {
+		t.Fatalf("clear reported %d files and %d bytes on a missing file", got.Files, got.Bytes)
+	}
+}
+
 // TestResolveLogLevel pins the mapping: the panel's debug, and MOLOW_DEBUG
 // over any choice, are the two ways to reach debug level.
 func TestResolveLogLevel(t *testing.T) {

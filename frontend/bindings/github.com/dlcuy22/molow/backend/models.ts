@@ -215,6 +215,15 @@ export interface LibraryProgress {
 }
 
 /**
+ * LogFileClear reports what ClearLogFile freed: the log file's size when one
+ * existed.
+ */
+export interface LogFileClear {
+    "files": number;
+    "bytes": number;
+}
+
+/**
  * LyricsCacheClear reports what ClearLyricsCache removed: the sidecar count
  * and their total size in bytes.
  */

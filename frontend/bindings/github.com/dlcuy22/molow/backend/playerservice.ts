@@ -125,6 +125,18 @@ export function AuthStatus(): $CancellablePromise<$models.AuthStatus> {
 }
 
 /**
+ * ClearLogFile empties the log file in place, so a press starts the log over
+ * at zero and the file never goes away. Windows refuses to delete a file a
+ * handle is open on, so the clear truncates instead of removing it. The
+ * truncation opens its own handle because the sink's was opened append-only,
+ * which Windows does not allow to resize. A missing file reports already
+ * empty.
+ */
+export function ClearLogFile(): $CancellablePromise<$models.LogFileClear> {
+    return $Call.ByID(296024562);
+}
+
+/**
  * ClearLyricsCache deletes the sidecars in the YouTube Music lyrics folder, so
  * the next play fetches them again. Only .lrc files directly inside the folder
  * go: the folder can be user-chosen, and a nested folder or an unrelated file

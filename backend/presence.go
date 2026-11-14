@@ -40,7 +40,7 @@ const (
 	// YouTube Music's watch URL, for the "listen" button on a remote track.
 	ytmWatchURL = "https://music.youtube.com/watch?v="
 	// The project home, for the second button.
-	projectURL = "https://github.com/dlcuy22/molo"
+	projectURL = "https://github.com/dlcuy22/molow"
 )
 
 // DiscordStatus is the settings UI's read of the integration: whether the user
@@ -275,11 +275,11 @@ func presenceTrack(snap Snapshot, largeImage, smallImage string) discordrpc.Trac
 		id := ytmID(snap.Path)
 		info.Buttons = []discordrpc.Button{
 			{Label: "Listen on YouTube Music", URL: ytmWatchURL + id},
-			{Label: "Visit molo", URL: projectURL},
+			{Label: "Visit molow", URL: projectURL},
 		}
 	} else {
 		info.Buttons = []discordrpc.Button{
-			{Label: "Visit molo", URL: projectURL},
+			{Label: "Visit molow", URL: projectURL},
 		}
 	}
 

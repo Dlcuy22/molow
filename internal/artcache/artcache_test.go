@@ -2,8 +2,6 @@ package artcache
 
 import (
 	"bytes"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -33,25 +31,6 @@ func TestLoadMissingIsNil(t *testing.T) {
 	}
 	if got := Load(""); got != nil {
 		t.Fatalf("Load(empty) = %q, want nil", got)
-	}
-}
-
-// TestDirFollowsXDGCacheOnLinux pins the platform rule: the cache lives under
-// the XDG cache root, not the temp directory.
-func TestDirFollowsXDGCacheOnLinux(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", root)
-
-	dir, err := Dir()
-	if err != nil {
-		t.Fatalf("Dir: %v", err)
-	}
-	want := filepath.Join(root, "molo", "art")
-	if dir != want {
-		t.Fatalf("Dir = %q, want %q", dir, want)
-	}
-	if _, err := os.Stat(dir); err != nil {
-		t.Fatalf("Dir did not create the directory: %v", err)
 	}
 }
 

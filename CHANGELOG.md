@@ -9,6 +9,55 @@ without a deprecation cycle.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-14
+
+### Added
+
+- A frame-rate dial for the visualizer: 30, 60, 120 or 180 frames a second,
+  drawn as a slider over its stops. Changing the rate reschedules the analysis
+  pump without rebuilding the transform, so the display keeps its live window,
+  and the pause and scale motion stay the same in wall time at any rate.
+- A visualizer delay setting: the strip renders ahead of what the speakers
+  output by the analysis window's lead, so a small delay (25 ms by default)
+  lines the bars up with the sound.
+- Arrow keybinds: Right and Left nudge the seek position, Up and Down step the
+  volume.
+- A one-shot action reports itself through a toast: saving an effect preset,
+  clearing the fetched lyric cache, and the like confirm what they did.
+- A way to clear the fetched lyric cache from the Lyrics group, so sheets
+  gathered from a provider can be fetched again from scratch.
+- The debug console tints its levels, collapses repeated lines and matches the
+  Wails CLI's timestamp style, so a `MOLOW_DEBUG` run reads like the rest of
+  the toolchain.
+
+### Changed
+
+- The pumps idle when nothing is drawing: a minimised main window or a closed
+  album player stops the spectrum pump, a closed effects window stops the
+  effect meters, and an unmounted display no longer costs the transform, the
+  bridge and the repaint. Measured on Windows, an idle tree drops from about
+  11 % CPU to about 3 %.
+- The seek bar's fill glides as a compositor transform instead of a width
+  transition, so playing no longer re-runs layout for every animation frame.
+- The settings panel groups its controls into section-labelled groups.
+- The toast cards were reworked: each message is its own card, stacked with
+  its own id and lifetime.
+- The packaging metadata is rebranded to molow.
+- The thin scrollbar takes its colour through `scrollbar-color` instead of a
+  custom-painted thumb.
+- The sliders no longer paint their focus ring; a control's own state carries
+  the feedback.
+- The main window opens 100 px wider.
+- Icons import from their deep paths, which trims the bundle the webview has
+  to load.
+
+### Fixed
+
+- A YouTube Music stream refusal rotates the stored session instead of failing
+  the track, so an expired cookie set recovers on the next play.
+- A shared artist tail no longer matches every track in the folder: lyric
+  sidecars resolve against the track's own stem first.
+
 ## [0.4.0] - 2026-11-11
 
 ### Added

@@ -468,6 +468,16 @@ export interface StreamSettings {
 }
 
 /**
+ * YTMImport is the outcome of one YouTube Music import: how many tracks landed
+ * in the library, and the playlist row when the hit was a playlist.
+ */
+export interface YTMImport {
+    "playlistId"?: string;
+    "name": string;
+    "tracks": number;
+}
+
+/**
  * YTMResult is one search hit, flattened for the frontend. Kind is the label a
  * row shows; only a song is playable today, and a row says so rather than
  * offering a control that does nothing.

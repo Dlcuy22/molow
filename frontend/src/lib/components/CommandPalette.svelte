@@ -4,6 +4,7 @@
   import MusicNote from "phosphor-svelte/lib/MusicNote";
   import Pause from "phosphor-svelte/lib/Pause";
   import { commands, previewConfig, queueCover, searchYTM, ytmCover } from "../store";
+  import { importYTM, libraries, libraryId } from "../library";
   import { matchQueue, hasTags, isPlaylistKind, playlistIDFromQuery, ytmKindLabel, ytmPlaylistResult, ytmResultRow, ytmSubtitle } from "../search";
   import { formatTime, isRemoteRef, subtitle } from "../format";
   import type {
@@ -25,6 +26,7 @@
     queue,
     preview,
     startPreview,
+    intent = "queue",
     onclose,
   }: {
     open: boolean;
@@ -32,10 +34,18 @@
     queue: QueueRow[];
     preview: PreviewState;
     startPreview: boolean;
+    /** intent is the entry point's verb. The queue and the ordinary YouTube
+     *  search queue; the "+" menu's import opens the same palette to add the
+     *  highlighted hit to the open library instead. */
+    intent?: "queue" | "import";
     onclose: () => void;
   } = $props();
 
   const isYTM = $derived(source === "ytm");
+  // importMode is the palette's mode, not its source: the import entry point is
+  // the YouTube search, so a stale intent on another source is ignored.
+  const importMode = $derived(intent === "import" && isYTM);
+  const targetLibrary = $derived($libraries.find((l) => l.id === $libraryId)?.name ?? "");
 
   let query = $state("");
   let cursor = $state(0);
@@ -62,6 +72,9 @@
   // and can take a moment, so the palette says so and refuses a second start
   // rather than queueing the same playlist twice.
   let adding = $state(false);
+  // importing marks an import in flight, for the same reason: an album or a
+  // playlist is a catalogue walk, and a second Enter must not start it twice.
+  let importing = $state(false);
 
   // covers maps a row's identity to its artwork data URL, filled in only for
   // the rows the observer has seen on screen. An identity with no entry draws
@@ -129,6 +142,12 @@
   /** isSelectable reports whether Enter can act on a row. */
   function isSelectable(row: PaletteRow): boolean {
     if (row.ytm) {
+      // Import mode adds a song or a whole playlist to the library. An album
+      // would need an album loader the catalogue client does not have yet, so
+      // it is not offered there rather than failing after the click.
+      if (importMode && row.ytm.kind === "Album") {
+        return false;
+      }
       // A playlist or album hit is an "add to queue" action, so it is
       // selectable when it carries an id; a song is selectable when it can
       // actually play.
@@ -205,6 +224,7 @@
       settingsOpen = false;
       previewMode = source === "queue" && startPreview;
       adding = false;
+      importing = false;
       // Adopt the source this open started in, so the source-change effect
       // below does not read the open itself as a switch and disarm the preview
       // armed above (Ctrl+Alt+P after the palette was last used for YouTube).
@@ -494,6 +514,25 @@
       previewMode = false;
       commands.previewStop();
     }
+    if (importMode) {
+      // Import mode has one verb, so Shift+Enter means the same thing: there is
+      // no queue to append to in a library import.
+      if (!row.ytm || importing || !isSelectable(row)) {
+        return;
+      }
+      importing = true;
+      importYTM(row.ytm)
+        .then((ok) => {
+          // A failure is already a toast with the reason; the hits stay up so
+          // the row can be tried again.
+          if (ok) onclose();
+        })
+        .finally(() => {
+          importing = false;
+        });
+
+      return;
+    }
     if (row.ytm) {
       if (!isSelectable(row)) {
         return;
@@ -657,7 +696,11 @@
       class="mt-[8vh] flex max-h-[70vh] w-full max-w-xl flex-col overflow-hidden rounded-[6px] border border-line bg-surface"
       role="dialog"
       aria-modal="true"
-      aria-label={isYTM ? "Search YouTube Music" : "Search the queue"}
+      aria-label={importMode
+        ? "Import YouTube Music into the library"
+        : isYTM
+          ? "Search YouTube Music"
+          : "Search the queue"}
       tabindex="-1"
       onkeydown={onKeydown}
     >
@@ -722,6 +765,17 @@
           </button>
         {/if}
       </div>
+
+      {#if importMode}
+        <!-- The mode is stated once, above the list, because the same Enter
+             does something else here than it does in the queue palette. -->
+        <div class="flex items-center gap-2 border-b border-line bg-selected/40 px-3 py-1.5 text-[11px] text-muted">
+          <span class="text-fg">Import</span>
+          <span class="truncate">
+            {targetLibrary === "" ? "Select a library first" : `into ${targetLibrary}`}
+          </span>
+        </div>
+      {/if}
 
       {#if previewMode}
         <!-- The mode is a session, so its state is stated once here rather than
@@ -869,7 +923,13 @@
               role="option"
               aria-selected={i === cursor}
               aria-disabled={isSelectable(row) ? undefined : true}
-              class="flex cursor-pointer items-center gap-2 px-3 py-2"
+              title={importMode && row.ytm?.kind === "Album"
+                ? "Albums can't be imported yet, pick a song or a playlist"
+                : undefined}
+              class="flex items-center gap-2 px-3 py-2"
+              class:cursor-pointer={isSelectable(row)}
+              class:cursor-default={!isSelectable(row)}
+              class:opacity-50={!isSelectable(row)}
               class:bg-selected={i === cursor}
               data-cover-id={row.coverId}
               data-cover-path={row.path}
@@ -959,7 +1019,17 @@
 
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-3 py-2 text-[11px] text-muted">
         <span><kbd class="font-sans text-fg">↑</kbd> <kbd class="font-sans text-fg">↓</kbd> to move</span>
-        {#if isYTM}
+        {#if importMode}
+          <!-- One verb per mode: the footer spells out what Enter does here,
+               because the same key queues in the ordinary search. -->
+          {#if importing}
+            <span role="status">Adding…</span>
+          {:else if cursorIsPlaylist}
+            <span><kbd class="font-sans text-fg">Enter</kbd> to add the playlist</span>
+          {:else}
+            <span><kbd class="font-sans text-fg">Enter</kbd> to add the song</span>
+          {/if}
+        {:else if isYTM}
           <!-- Enter queues the track after the current one rather than
                replacing the queue, so a search never throws away what is
                playing. Shift+Enter is the plain "queue it for later". A
@@ -979,7 +1049,7 @@
             <span><kbd class="font-sans text-fg">Ctrl Alt L</kbd> loop</span>
           {/if}
         {/if}
-        {#if isYTM && ytmOtherKinds > 0}
+        {#if isYTM && !importMode && ytmOtherKinds > 0}
           <!-- Say once why some rows cannot be played, rather than repeating a
                reason on every one of them. -->
           <span>{ytmOtherKinds} not playable</span>

@@ -600,15 +600,16 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 }
 
 // playlist walks a playlist's pages, flattening each into the rows the service
-// caches and queues. The walk is bounded so a runaway continuation cannot spin:
-// it stops at the track cap, or at the page cap if the catalogue keeps handing
-// back tokens. A nil continuation ends it, so a single-page playlist costs one
-// request.
+// caches and queues, and reports the catalogue's own title for the list. The
+// walk is bounded so a runaway continuation cannot spin: it stops at the track
+// cap, or at the page cap if the catalogue keeps handing back tokens. A nil
+// continuation ends it, so a single-page playlist costs one request.
 //
 // A mix id ("RD…") is walked the same way, but its pages come from the
 // watch-next queue: the browse endpoint refuses the type.
-func (p *ytmProvider) playlist(ctx context.Context, id string) ([]YTMResult, error) {
+func (p *ytmProvider) playlist(ctx context.Context, id string) ([]YTMResult, string, error) {
 	var out []YTMResult
+	name := ""
 	seen := make(map[string]struct{})
 	var cont *ytm.BuiltInContinuation
 	calls := p.calls()
@@ -620,10 +621,15 @@ func (p *ytmProvider) playlist(ctx context.Context, id string) ([]YTMResult, err
 	for page := 0; page < ytmPlaylistMaxPages; page++ {
 		pl, err := load(ctx, id, cont)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		if pl == nil {
 			break
+		}
+		// The first page names the list. A continuation page repeats it, and a
+		// mix may name a different station per page, so only the first counts.
+		if name == "" {
+			name = strings.TrimSpace(pl.Name)
 		}
 		for _, r := range ytmPlaylistResults(pl) {
 			if _, ok := seen[r.VideoID]; ok {
@@ -632,7 +638,7 @@ func (p *ytmProvider) playlist(ctx context.Context, id string) ([]YTMResult, err
 			seen[r.VideoID] = struct{}{}
 			out = append(out, r)
 			if len(out) >= ytmPlaylistMaxTracks {
-				return out, nil
+				return out, name, nil
 			}
 		}
 		if pl.Continuation == nil {
@@ -641,7 +647,7 @@ func (p *ytmProvider) playlist(ctx context.Context, id string) ([]YTMResult, err
 		cont = pl.Continuation
 	}
 
-	return out, nil
+	return out, name, nil
 }
 
 // trackFor merges the catalogue metadata already cached for a reference with

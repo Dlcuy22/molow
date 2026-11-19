@@ -247,6 +247,141 @@ func TestMarkMissingHidesRef(t *testing.T) {
 	}
 }
 
+// TestRemoteTrackKeepsItsRef pins the remote half of the catalogue: a row with
+// no file is listed by a kind-prefixed ref, resolves from that ref, likes from
+// it, and survives a scan's missing pass, which only walks track_file.
+func TestRemoteTrackKeepsItsRef(t *testing.T) {
+	s := newTestStore(t)
+	seed(t, s)
+
+	row := TrackRow{
+		NativeID: "vid123", Title: "Remote", Artist: "Artist", Album: "Beta",
+		DurationMs: 200000, CoverID: "cover-Beta",
+	}
+	if _, err := s.UpsertRemoteTrack("local:test", library.KindYTM, row); err != nil {
+		t.Fatalf("upsert remote: %v", err)
+	}
+	row.Title = "Remote (Remastered)"
+	if _, err := s.UpsertRemoteTrack("local:test", library.KindYTM, row); err != nil {
+		t.Fatalf("re-upsert remote: %v", err)
+	}
+	if n := count(t, s, `SELECT COUNT(*) FROM track WHERE native_id = 'vid123'`); n != 1 {
+		t.Fatalf("importing the same hit twice made %d rows, want 1", n)
+	}
+
+	ref := library.RemoteRef(library.KindYTM, "vid123")
+	tr, ok, err := s.TrackByRef(ref)
+	if err != nil || !ok {
+		t.Fatalf("resolve %q: ok=%v err=%v", ref, ok, err)
+	}
+	if tr.Kind != library.KindYTM || tr.Ref != ref || tr.Flags&library.FlagPlayable == 0 {
+		t.Fatalf("remote row = %+v", tr)
+	}
+	if tr.Title != "Remote (Remastered)" {
+		t.Fatalf("re-import did not refresh the row: %q", tr.Title)
+	}
+
+	if err := s.SetLiked(ref, true); err != nil {
+		t.Fatalf("like: %v", err)
+	}
+	if tr, ok, _ = s.TrackByRef(ref); !ok || !tr.Liked {
+		t.Fatal("remote row did not keep its like")
+	}
+
+	// The missing pass works on track_file, so a row without one is untouched.
+	if err := s.MarkMissing("local:test", 1<<40); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := s.TrackByRef(ref); !ok {
+		t.Fatal("a scan lost the remote row")
+	}
+}
+
+// TestRemotePlaylistKeepsItsEntries covers an imported YouTube Music playlist:
+// the row remembers its remote id, and its entries are remote refs in order.
+func TestRemotePlaylistKeepsItsEntries(t *testing.T) {
+	s := newTestStore(t)
+	seed(t, s)
+
+	ids := []string{"vid1", "vid2"}
+	refs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		refs = append(refs, library.RemoteRef(library.KindYTM, id))
+		if _, err := s.UpsertRemoteTrack("local:test", library.KindYTM, TrackRow{
+			NativeID: id, Title: id, Album: "Beta",
+		}); err != nil {
+			t.Fatalf("upsert %s: %v", id, err)
+		}
+	}
+
+	playlist, err := s.CreatePlaylistWithRemote("local:test", "Imported", "PL123")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := s.AddToPlaylist(playlist.ID, refs); err != nil {
+		t.Fatalf("entries: %v", err)
+	}
+
+	lists, err := s.Playlists("local:test")
+	if err != nil || len(lists) != 1 {
+		t.Fatalf("playlists: %v %v", lists, err)
+	}
+	if lists[0].RemoteID != "PL123" || lists[0].TrackCount != len(refs) {
+		t.Fatalf("playlist = %+v", lists[0])
+	}
+	tracks, err := s.PlaylistTracks(playlist.ID, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tracks) != len(refs) || tracks[0].Ref != refs[0] || tracks[1].Ref != refs[1] {
+		t.Fatalf("entries = %+v", tracks)
+	}
+}
+
+// TestRemoteRefMeansTheEarliestRow pins the tie-break. The engine only ever
+// sees a ref, so when two libraries hold the same provider id the ref means the
+// row that imported it first, and a like lands on that row.
+func TestRemoteRefMeansTheEarliestRow(t *testing.T) {
+	s := newTestStore(t)
+	seed(t, s)
+	if _, err := s.AddLibrary(library.Library{
+		ID: "local:other", Kind: library.KindLocal, Name: "Other",
+	}); err != nil {
+		t.Fatalf("add library: %v", err)
+	}
+
+	for i, lib := range []string{"local:test", "local:other"} {
+		if _, err := s.UpsertRemoteTrack(lib, library.KindYTM, TrackRow{
+			NativeID: "vidX", Title: []string{"First", "Second"}[i],
+		}); err != nil {
+			t.Fatalf("upsert into %s: %v", lib, err)
+		}
+	}
+
+	ref := library.RemoteRef(library.KindYTM, "vidX")
+	tr, ok, err := s.TrackByRef(ref)
+	if err != nil || !ok {
+		t.Fatalf("resolve: ok=%v err=%v", ok, err)
+	}
+	if tr.LibraryID != "local:test" || tr.Title != "First" {
+		t.Fatalf("ref resolved to %+v", tr)
+	}
+
+	if err := s.SetLiked(ref, true); err != nil {
+		t.Fatalf("like: %v", err)
+	}
+	var n int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM like l JOIN track t ON t.id = l.track_id
+		 WHERE t.library_id = 'local:other' AND t.native_id = 'vidX'`,
+	).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatal("the like landed on the second library's row")
+	}
+}
+
 func count(t *testing.T, s *Store, query string) int {
 	t.Helper()
 	var n int

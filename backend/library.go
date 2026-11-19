@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/dlcuy22/molow/internal/artcache"
 	"github.com/dlcuy22/molow/internal/color"
@@ -436,6 +437,188 @@ func (s *PlayerService) createImportPlaylist(libraryID, root string, refs []stri
 	if err := store.AddToPlaylist(playlist.ID, refs); err != nil {
 		s.log.Warn("library: import playlist", "error", err)
 	}
+}
+
+// YTMImport is the outcome of one YouTube Music import: how many tracks landed
+// in the library, and the playlist row when the hit was a playlist.
+type YTMImport struct {
+	PlaylistID string `json:"playlistId,omitempty"`
+	Name       string `json:"name"`
+	Tracks     int    `json:"tracks"`
+}
+
+// ytmCoverWorkers bounds the artwork fetches one import keeps in flight. Each
+// cover is a round trip, so a playlist import would otherwise spend most of its
+// time waiting on one request at a time.
+const ytmCoverWorkers = 6
+
+// ImportYTM copies a YouTube Music hit into a library's catalogue. The hit is
+// the row the palette listed: a song becomes one track, and a playlist becomes
+// a playlist row carrying its remote id plus its entries. Everything is an
+// ordinary catalogue row afterwards, so browsing, liking and playback need no
+// special case.
+//
+// The hit carries the metadata the search already showed, so a song costs no
+// second request; a playlist is one catalogue walk, bounded the same way
+// queueing one is.
+func (s *PlayerService) ImportYTM(libraryID string, hit YTMResult) (YTMImport, error) {
+	src, ok := s.librarySource(libraryID)
+	if !ok {
+		return YTMImport{}, fmt.Errorf("library: unknown id %q", libraryID)
+	}
+	dst, ok := src.(*local.Local)
+	if !ok {
+		return YTMImport{}, fmt.Errorf("library: %q cannot import YouTube Music", libraryID)
+	}
+	if strings.TrimSpace(hit.VideoID) == "" {
+		return YTMImport{}, fmt.Errorf("ytm: %q has no id", hit.Title)
+	}
+
+	name := strings.TrimSpace(hit.Title)
+
+	// ytm-go has no album loader: an album browse id is walked by the playlist
+	// parser, whose album layout makes it panic. Saying so is better than
+	// landing half an album or a list of one.
+	if hit.Kind == "Album" {
+		return YTMImport{}, fmt.Errorf("ytm: albums cannot be imported yet")
+	}
+
+	if hit.Kind != "Playlist" {
+		if !hit.Playable {
+			return YTMImport{}, fmt.Errorf("ytm: %q is not a track", hit.Title)
+		}
+		if _, err := s.catalogYTM(dst, hit, s.storeYTMCover(hit.Thumbnail)); err != nil {
+			return YTMImport{}, err
+		}
+
+		return YTMImport{Name: name, Tracks: 1}, nil
+	}
+
+	rows, name, err := s.ytmProv.playlist(s.ctx, ytmPlaylistID(hit.VideoID))
+	if err != nil {
+		return YTMImport{}, err
+	}
+	// The catalogue's own title wins when it has one: a playlist pasted as an
+	// id or a URL reaches here with the palette's placeholder label, and the
+	// row should carry the list's real name.
+	if name == "" {
+		name = strings.TrimSpace(hit.Title)
+	}
+	covers := s.storeYTMCovers(rows)
+	refs := make([]string, 0, len(rows))
+	for i, row := range rows {
+		ref, err := s.catalogYTM(dst, row, covers[i])
+		if err != nil {
+			return YTMImport{}, err
+		}
+		refs = append(refs, ref)
+	}
+	if len(refs) == 0 {
+		return YTMImport{}, fmt.Errorf("ytm: %q has no tracks", name)
+	}
+	if name == "" {
+		name = "YouTube Music playlist"
+	}
+	playlist, err := dst.CreateRemotePlaylist(name, hit.VideoID)
+	if err != nil {
+		return YTMImport{}, err
+	}
+	if err := dst.AddToPlaylist(s.ctx, playlist.ID, refs); err != nil {
+		return YTMImport{}, err
+	}
+
+	return YTMImport{PlaylistID: playlist.ID, Name: name, Tracks: len(refs)}, nil
+}
+
+// storeYTMCover fetches one thumbnail into the art cache and returns its cover id. A
+// row without art, or a fetch that fails, returns "": the art is decorative, the
+// track is not.
+func (s *PlayerService) storeYTMCover(url string) string {
+	if url == "" {
+		return ""
+	}
+	data := s.ytmProv.thumbFor(s.ctx, url)
+	if len(data) == 0 {
+		return ""
+	}
+	id := cover.ID(data)
+	_ = artcache.Store(id, data)
+
+	return id
+}
+
+// storeYTMCovers fetches the artwork for a batch of rows, several at a time, and
+// returns it in row order. Tracks from one album share a thumbnail, so each
+// distinct URL is fetched once and its cover is shared by every row that names
+// it: a playlist of one album costs one request, not one per track.
+func (s *PlayerService) storeYTMCovers(rows []YTMResult) []string {
+	urls := make([]string, len(rows))
+	slot := make(map[string]int, len(rows))
+	distinct := make([]string, 0, len(rows))
+	for i, row := range rows {
+		if row.Thumbnail == "" {
+			continue
+		}
+		urls[i] = row.Thumbnail
+		if _, ok := slot[row.Thumbnail]; !ok {
+			slot[row.Thumbnail] = len(distinct)
+			distinct = append(distinct, row.Thumbnail)
+		}
+	}
+
+	covers := make([]string, len(distinct))
+	work := make(chan int)
+	var wg sync.WaitGroup
+	for i := 0; i < ytmCoverWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range work {
+				covers[i] = s.storeYTMCover(distinct[i])
+			}
+		}()
+	}
+	for i := range distinct {
+		work <- i
+	}
+	close(work)
+	wg.Wait()
+
+	out := make([]string, len(rows))
+	for i, url := range urls {
+		if url != "" {
+			out[i] = covers[slot[url]]
+		}
+	}
+
+	return out
+}
+
+// catalogYTM writes one search or playlist row into a library and returns its
+// ref. The artwork is passed in, so a bulk import can fetch the covers in
+// parallel and keep them in the cache beside the row: a library card or an album
+// tile can then draw a cover the player never opened.
+func (s *PlayerService) catalogYTM(dst *local.Local, row YTMResult, coverID string) (string, error) {
+	// Index the metadata too, so a queue row built from this ref shows the real
+	// title, artist and art instead of the reference string.
+	s.ytm.put(ytmTrack{
+		ID:           row.VideoID,
+		Title:        row.Title,
+		Artist:       row.Artist,
+		Album:        row.Album,
+		DurationMs:   row.DurationMs,
+		ThumbnailURL: row.Thumbnail,
+		ArtistID:     row.ArtistID,
+	})
+
+	return dst.ImportRemote(library.KindYTM, sqlite.TrackRow{
+		NativeID:   row.VideoID,
+		Title:      row.Title,
+		Artist:     row.Artist,
+		Album:      row.Album,
+		DurationMs: row.DurationMs,
+		CoverID:    coverID,
+	})
 }
 
 // Liked reports whether a catalogued ref carries a like. An uncatalogued path

@@ -1029,7 +1029,7 @@ func (s *PlayerService) AddYTMPlaylist(input string) error {
 		return fmt.Errorf("ytm: no playlist id in %q", input)
 	}
 
-	results, err := s.ytmProv.playlist(s.ctx, id)
+	results, _, err := s.ytmProv.playlist(s.ctx, id)
 	if err != nil {
 		return err
 	}

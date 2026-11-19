@@ -113,6 +113,7 @@ export interface Playlist {
     "libraryId": string;
     "name": string;
     "description"?: string;
+    "remoteId"?: string;
     "trackCount": number;
 }
 
@@ -161,11 +162,14 @@ export enum Status {
 };
 
 /**
- * Track is one playable entry. Ref is what the engine plays.
+ * Track is one playable entry. Ref is what the engine plays. Kind names where
+ * the row came from: a local row is played by its file path, a remote one by
+ * RemoteRef.
  */
 export interface Track {
     "ref": string;
     "libraryId": string;
+    "kind": Kind;
     "nativeId": string;
     "title": string;
     "artist": string;

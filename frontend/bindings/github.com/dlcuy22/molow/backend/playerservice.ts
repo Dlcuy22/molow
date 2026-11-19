@@ -61,11 +61,13 @@ export function AddToPlaylist(libraryID: string, playlistID: string, refs: strin
 }
 
 /**
- * AddYTMPlaylist resolves a YouTube Music playlist or album and adds its tracks
- * to the queue in catalogue order. The input is the share URL a listener copies
- * ("...?list=PL..."), a browse id, or a bare id. The catalogue metadata of every
- * track is cached as it is resolved, so a queue row shows its real title and art
- * before anything is played; the queue itself holds only "ytm:<videoId>"
+ * AddYTMPlaylist resolves a YouTube Music playlist, mix or album and adds its
+ * tracks to the queue in catalogue order. The input is the share URL a listener
+ * copies ("...?list=PL..." or "...?list=RD..."), a browse id, or a bare id. A
+ * mix is fetched from the watch-next queue, a playlist and an album from the
+ * browse endpoint, and both arrive as the same list. The catalogue metadata of
+ * every track is cached as it is resolved, so a queue row shows its real title
+ * and art before anything is played; the queue itself holds only "ytm:<videoId>"
  * references, which is all the engine ever sees.
  * 
  * When the queue is empty the playlist starts playing; an existing queue is
@@ -264,11 +266,27 @@ export function ImportEasyEffectsPresetData(data: string): $CancellablePromise<$
  * ImportFolder adds a folder as one more root of an existing library and
  * starts the scan that indexes it; when the scan lands, the folder's tracks
  * become one playlist named after the folder. Re-adding a folder the library
- * already watches is a no-op, and a folder inside — or containing — a watched
- * root is rejected: a nested root would index the same files twice.
+ * already watches is a no-op. A folder inside — or containing — another
+ * library's root is refused, because a file path can belong to one library
+ * only, and a folder nested in the target's own root would index files twice.
  */
 export function ImportFolder(libraryID: string, path: string): $CancellablePromise<library$0.Library> {
     return $Call.ByID(2407316580, libraryID, path);
+}
+
+/**
+ * ImportYTM copies a YouTube Music hit into a library's catalogue. The hit is
+ * the row the palette listed: a song becomes one track, and a playlist becomes
+ * a playlist row carrying its remote id plus its entries. Everything is an
+ * ordinary catalogue row afterwards, so browsing, liking and playback need no
+ * special case.
+ * 
+ * The hit carries the metadata the search already showed, so a song costs no
+ * second request; a playlist is one catalogue walk, bounded the same way
+ * queueing one is.
+ */
+export function ImportYTM(libraryID: string, hit: $models.YTMResult): $CancellablePromise<$models.YTMImport> {
+    return $Call.ByID(2718073968, libraryID, hit);
 }
 
 /**

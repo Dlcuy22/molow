@@ -249,6 +249,24 @@ func (l *Local) CreatePlaylist(_ context.Context, name string) (library.Playlist
 	return l.store.CreatePlaylist(l.lib.ID, name)
 }
 
+// CreateRemotePlaylist adds a playlist that mirrors a list on a provider, such
+// as an imported YouTube Music playlist. Its entries follow through
+// AddToPlaylist like any other.
+func (l *Local) CreateRemotePlaylist(name, remoteID string) (library.Playlist, error) {
+	return l.store.CreatePlaylistWithRemote(l.lib.ID, name, remoteID)
+}
+
+// ImportRemote writes a track that has no file into this library's catalogue
+// and returns the ref the engine plays it by. A remote row is invisible to the
+// scanner, so this is the only way such a row enters the catalogue.
+func (l *Local) ImportRemote(kind library.Kind, t sqlite.TrackRow) (string, error) {
+	if _, err := l.store.UpsertRemoteTrack(l.lib.ID, kind, t); err != nil {
+		return "", err
+	}
+
+	return library.RemoteRef(kind, t.NativeID), nil
+}
+
 func (l *Local) AddToPlaylist(_ context.Context, id string, refs []string) error {
 	return l.store.AddToPlaylist(id, refs)
 }

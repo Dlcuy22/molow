@@ -478,6 +478,43 @@ func updateTrack(tx *sql.Tx, id int64, t TrackRow, now int64) error {
 	return err
 }
 
+// UpsertRemoteTrack writes a track that has no file behind it, such as a
+// YouTube Music hit. A remote row has no track_file entry, which is what keeps
+// a scan from seeing it: MarkMissing only ever touches files.
+//
+// The identity is (library, native id), the same uniqueness the scanner uses,
+// so importing the same hit twice refreshes one row instead of duplicating it.
+func (s *Store) UpsertRemoteTrack(libraryID string, kind library.Kind, t TrackRow) (int64, error) {
+	now := time.Now().Unix()
+	_, err := s.db.Exec(
+		`INSERT INTO track
+		 (library_id, kind, native_id, title, artist, album, album_artist, genre,
+		  year, track_no, disc_no, duration_ms, cover_id, added_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(library_id, native_id) DO UPDATE SET
+		  kind = excluded.kind, title = excluded.title, artist = excluded.artist,
+		  album = excluded.album, album_artist = excluded.album_artist,
+		  genre = excluded.genre, year = excluded.year, track_no = excluded.track_no,
+		  disc_no = excluded.disc_no, duration_ms = excluded.duration_ms,
+		  cover_id = excluded.cover_id, updated_at = excluded.updated_at`,
+		libraryID, string(kind), t.NativeID, t.Title, t.Artist, t.Album,
+		t.AlbumArtist, t.Genre, t.Year, t.TrackNo, t.DiscNo, t.DurationMs,
+		t.CoverID, now, now,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	// On a conflict LastInsertId is not the updated row, so read the id back by
+	// the identity the insert just wrote.
+	var id int64
+	err = s.db.QueryRow(
+		`SELECT id FROM track WHERE library_id = ? AND native_id = ?`, libraryID, t.NativeID,
+	).Scan(&id)
+
+	return id, err
+}
+
 // MarkMissing flags every file row a scan did not see.
 func (s *Store) MarkMissing(libraryID string, scanStart int64) error {
 	_, err := s.db.Exec(

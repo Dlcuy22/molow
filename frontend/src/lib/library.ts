@@ -4,8 +4,10 @@
 
 import { get, writable } from "svelte/store";
 import { Events } from "@wailsio/runtime";
+import CheckCircle from "phosphor-svelte/lib/CheckCircle";
 import WarningCircle from "phosphor-svelte/lib/WarningCircle";
 import { PlayerService } from "../../bindings/github.com/dlcuy22/molow/backend";
+import type { YTMResult } from "../../bindings/github.com/dlcuy22/molow/backend/models";
 import type {
   Album as GenAlbum,
   Artist as GenArtist,
@@ -192,13 +194,13 @@ export async function searchLibrary(query: string): Promise<void> {
 
 /** libraryErrorText unwraps the message a library binding rejects with. The
  *  binding rejects with a plain string, so both shapes are read, and the
- *  "library:" prefix is the package's, not the user's. */
-function libraryErrorText(err: unknown): string {
+ *  "library:" / "ytm:" prefix is the package's, not the user's. */
+function libraryErrorText(err: unknown, fallback = "Could not add that folder"): string {
   const raw =
     typeof err === "string" ? err : err instanceof Error ? err.message : "";
-  const text = raw.replace(/^library:\s*/, "").trim();
+  const text = raw.replace(/^(?:library|ytm):\s*/, "").trim();
   if (text === "") {
-    return "Could not add that folder";
+    return fallback;
   }
 
   return text.charAt(0).toUpperCase() + text.slice(1);
@@ -266,6 +268,48 @@ export async function createLibrary(): Promise<LibraryInfo | null> {
     });
 
     return null;
+  }
+}
+
+/** importYTM copies a YouTube Music hit into the open library: one track for a
+ *  song, its tracks for an album, a playlist row with its entries for a
+ *  playlist. The feeds reload before the palette closes, so the rows are on
+ *  screen by the time it is gone. A failure keeps the palette open and says
+ *  why; the hit is still there to try again. */
+export async function importYTM(hit: YTMResult): Promise<boolean> {
+  const id = get(libraryId);
+  if (id === "") {
+    showToast({
+      key: "library-import",
+      kind: "message",
+      label: "Select a library before importing.",
+      icon: WarningCircle,
+    });
+
+    return false;
+  }
+  try {
+    const res = await PlayerService.ImportYTM(id, hit);
+    const name = get(libraries).find((l) => l.id === id)?.name ?? "the library";
+    const songs = res.tracks === 1 ? "1 song" : `${res.tracks} songs`;
+    showToast({
+      key: "library-import",
+      kind: "message",
+      label: res.playlistId ? `${res.name}: ${songs}` : `${songs} added to ${name}`,
+      icon: CheckCircle,
+    });
+    await Promise.all([refreshLibraries(), loadHome(), loadLibrary()]);
+
+    return true;
+  } catch (err) {
+    showToast({
+      key: "library-import",
+      kind: "message",
+      label: libraryErrorText(err, "Could not import that track"),
+      icon: WarningCircle,
+    });
+
+    return false;
   }
 }
 

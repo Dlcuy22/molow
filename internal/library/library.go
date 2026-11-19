@@ -71,10 +71,13 @@ type Library struct {
 	LogoCovers   []string     `json:"logoCovers,omitempty"`
 }
 
-// Track is one playable entry. Ref is what the engine plays.
+// Track is one playable entry. Ref is what the engine plays. Kind names where
+// the row came from: a local row is played by its file path, a remote one by
+// RemoteRef.
 type Track struct {
 	Ref         string `json:"ref"`
 	LibraryID   string `json:"libraryId"`
+	Kind        Kind   `json:"kind"`
 	NativeID    string `json:"nativeId"`
 	Title       string `json:"title"`
 	Artist      string `json:"artist"`
@@ -120,7 +123,16 @@ type Playlist struct {
 	LibraryID   string `json:"libraryId"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	RemoteID    string `json:"remoteId,omitempty"`
 	TrackCount  int    `json:"trackCount"`
+}
+
+// RemoteRef is the playable reference of a track that has no file: the kind
+// names the provider the engine routes to, and the native id is the provider's
+// identity. The catalogue derives the same string from the row, so a stored
+// ref and a listed one cannot drift.
+func RemoteRef(kind Kind, nativeID string) string {
+	return string(kind) + ":" + nativeID
 }
 
 // Shelf is one horizontal row of a page. Layout says how to draw it; kind says

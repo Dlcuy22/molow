@@ -10,34 +10,41 @@ import (
 	"github.com/dlcuy22/molow/internal/library"
 )
 
-// trackColumns is the one projection every track query uses. The ref is derived
-// from track_file, so a moved file resolves to its new path without touching a
-// stored ref. A missing file has no ref, which the caller treats as unplayable.
+// refSQL derives a row's playable ref. A local track is played by its file
+// path, which track_file owns so a moved file resolves to its new path without
+// touching a stored ref; a missing file has no ref, which the caller treats as
+// unplayable. A remote row is played by its kind and the provider's own id,
+// which is exactly library.RemoteRef, and the two kinds are listed explicitly
+// so a new one has to be taught to remoteID as well: a ref this query invents
+// but the resolver cannot read would fail at play time instead of at review.
+const refSQL = `CASE t.kind
+	WHEN 'local' THEN COALESCE((SELECT f.path FROM track_file f
+	                            WHERE f.track_id = t.id AND f.missing = 0
+	                            ORDER BY f.path LIMIT 1), '')
+	WHEN 'ytm' THEN 'ytm:' || t.native_id
+	ELSE ''
+END`
+
+// trackColumns is the one projection every track query uses.
 const trackColumns = `
-	t.library_id, t.native_id, t.title, t.artist, t.album, t.album_artist,
+	t.library_id, t.kind, t.native_id, t.title, t.artist, t.album, t.album_artist,
 	t.genre, t.year, t.track_no, t.disc_no, t.duration_ms, t.cover_id,
-	COALESCE((SELECT f.path FROM track_file f
-	          WHERE f.track_id = t.id AND f.missing = 0
-	          ORDER BY f.path LIMIT 1), '') AS ref,
+	` + refSQL + ` AS ref,
 	(l.track_id IS NOT NULL) AS liked`
 
 const trackFrom = ` FROM track t LEFT JOIN like l ON l.track_id = t.id`
 
 func scanTrack(rows *sql.Rows) (library.Track, error) {
-	var (
-		t    library.Track
-		kind string
-	)
+	var t library.Track
 	err := rows.Scan(
-		&t.LibraryID, &t.NativeID, &t.Title, &t.Artist, &t.Album, &t.AlbumArtist,
-		&t.Genre, &t.Year, &t.TrackNo, &t.DiscNo, &t.DurationMs, &t.CoverID,
-		&t.Ref, &t.Liked,
+		&t.LibraryID, &t.Kind, &t.NativeID, &t.Title, &t.Artist, &t.Album,
+		&t.AlbumArtist, &t.Genre, &t.Year, &t.TrackNo, &t.DiscNo, &t.DurationMs,
+		&t.CoverID, &t.Ref, &t.Liked,
 	)
 	t.Flags = library.FlagPlayable
 	if t.Ref == "" {
 		t.Flags = 0
 	}
-	_ = kind
 
 	return t, err
 }
@@ -221,15 +228,66 @@ func (s *Store) Search(libraryID, query string, limit int) ([]library.Track, err
 	return out, err
 }
 
+// remoteID reports the provider id when ref is a remote reference, which is
+// how a ref names a row that has no file. A local ref is a path, and a Windows
+// path carries a colon of its own, so the scheme is matched by its prefix
+// rather than by splitting on the first colon.
+func remoteID(ref string) (library.Kind, string, bool) {
+	kind, id, ok := strings.Cut(ref, ":")
+	if !ok || kind != string(library.KindYTM) || id == "" {
+		return "", "", false
+	}
+
+	return library.KindYTM, id, true
+}
+
+// rowQuerier is the read surface both a store and a transaction expose, so a
+// ref resolves the same way inside and outside a transaction.
+type rowQuerier interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// refTrackID resolves a playable ref to its catalogue row. A local ref is a
+// file path; a remote ref is a kind and a native id, because a remote row has
+// no track_file. The engine only ever sees the ref, so when two libraries hold
+// the same provider id the earliest row is the one the ref means; ordering it
+// explicitly keeps TrackByRef and this lookup on the same row.
+func refTrackID(q rowQuerier, ref string) (int64, error) {
+	var id int64
+	if kind, native, ok := remoteID(ref); ok {
+		err := q.QueryRow(
+			`SELECT id FROM track WHERE kind = ? AND native_id = ? ORDER BY id LIMIT 1`,
+			string(kind), native,
+		).Scan(&id)
+
+		return id, err
+	}
+	err := q.QueryRow(`SELECT track_id FROM track_file WHERE path = ?`, ref).Scan(&id)
+
+	return id, err
+}
+
 // TrackByRef resolves a playable ref back to its catalogue row.
 func (s *Store) TrackByRef(ref string) (library.Track, bool, error) {
-	rows, err := s.db.Query(
-		`SELECT`+trackColumns+
-			` FROM track t
-			  JOIN track_file f ON f.track_id = t.id AND f.path = ?
-			  LEFT JOIN like l ON l.track_id = t.id
-			  LIMIT 1`, ref,
+	var (
+		rows *sql.Rows
+		err  error
 	)
+	if kind, native, ok := remoteID(ref); ok {
+		rows, err = s.db.Query(
+			`SELECT`+trackColumns+trackFrom+
+				` WHERE t.kind = ? AND t.native_id = ? ORDER BY t.id LIMIT 1`,
+			string(kind), native,
+		)
+	} else {
+		rows, err = s.db.Query(
+			`SELECT`+trackColumns+
+				` FROM track t
+				  JOIN track_file f ON f.track_id = t.id AND f.path = ?
+				  LEFT JOIN like l ON l.track_id = t.id
+				  LIMIT 1`, ref,
+		)
+	}
 	if err != nil {
 		return library.Track{}, false, err
 	}
@@ -251,7 +309,7 @@ func (s *Store) SetLiked(ref string, liked bool) error {
 	if !ok {
 		return fmt.Errorf("library: unknown ref %q", ref)
 	}
-	id, err := s.trackID(ref)
+	id, err := refTrackID(s.db, ref)
 	if err != nil {
 		return err
 	}
@@ -268,16 +326,9 @@ func (s *Store) SetLiked(ref string, liked bool) error {
 	return err
 }
 
-func (s *Store) trackID(ref string) (int64, error) {
-	var id int64
-	err := s.db.QueryRow(`SELECT track_id FROM track_file WHERE path = ?`, ref).Scan(&id)
-
-	return id, err
-}
-
 // Liked reports whether a ref carries a like.
 func (s *Store) Liked(ref string) (bool, error) {
-	id, err := s.trackID(ref)
+	id, err := refTrackID(s.db, ref)
 	if err != nil {
 		return false, err
 	}
@@ -289,7 +340,7 @@ func (s *Store) Liked(ref string) (bool, error) {
 
 // ToggleLiked flips one like and returns the state it now has.
 func (s *Store) ToggleLiked(ref string) (bool, error) {
-	id, err := s.trackID(ref)
+	id, err := refTrackID(s.db, ref)
 	if err != nil {
 		return false, err
 	}
@@ -310,7 +361,7 @@ func (s *Store) ToggleLiked(ref string) (bool, error) {
 // Playlists lists a library's playlists with their entry counts.
 func (s *Store) Playlists(libraryID string) ([]library.Playlist, error) {
 	rows, err := s.db.Query(
-		`SELECT p.id, p.name, p.description,
+		`SELECT p.id, p.name, p.description, p.remote_id,
 		        (SELECT COUNT(*) FROM playlist_entry e WHERE e.playlist_id = p.id)
 		 FROM playlist p WHERE p.library_id = ?
 		 ORDER BY p.updated_at DESC, p.name COLLATE NOCASE`,
@@ -324,7 +375,7 @@ func (s *Store) Playlists(libraryID string) ([]library.Playlist, error) {
 	var out []library.Playlist
 	for rows.Next() {
 		var p library.Playlist
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.TrackCount); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RemoteID, &p.TrackCount); err != nil {
 			return nil, err
 		}
 		p.LibraryID = libraryID
@@ -356,17 +407,25 @@ func (s *Store) PlaylistTracks(playlistID string, limit, offset int) ([]library.
 
 // CreatePlaylist adds one and returns it.
 func (s *Store) CreatePlaylist(libraryID, name string) (library.Playlist, error) {
+	return s.CreatePlaylistWithRemote(libraryID, name, "")
+}
+
+// CreatePlaylistWithRemote adds a playlist that mirrors a remote list, so the
+// row remembers which list it came from. Its entries are added afterwards.
+func (s *Store) CreatePlaylistWithRemote(libraryID, name, remoteID string) (library.Playlist, error) {
+	// The id is namespaced by time, not by the remote id: the same remote list
+	// can be imported twice and both rows are honest.
 	id := fmt.Sprintf("playlist:%d", time.Now().UnixNano())
 	now := time.Now().Unix()
 	_, err := s.db.Exec(
-		`INSERT INTO playlist (id, library_id, name, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?)`, id, libraryID, name, now, now,
+		`INSERT INTO playlist (id, library_id, name, remote_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`, id, libraryID, name, remoteID, now, now,
 	)
 	if err != nil {
 		return library.Playlist{}, err
 	}
 
-	return library.Playlist{ID: id, LibraryID: libraryID, Name: name}, nil
+	return library.Playlist{ID: id, LibraryID: libraryID, Name: name, RemoteID: remoteID}, nil
 }
 
 // AddToPlaylist appends refs, skipping ones already present.
@@ -385,8 +444,7 @@ func (s *Store) AddToPlaylist(playlistID string, refs []string) error {
 	}
 
 	for _, ref := range refs {
-		var id int64
-		err := tx.QueryRow(`SELECT track_id FROM track_file WHERE path = ?`, ref).Scan(&id)
+		id, err := refTrackID(tx, ref)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -427,8 +485,8 @@ func (s *Store) RemoveFromPlaylist(playlistID string, refs []string) error {
 	defer func() { _ = tx.Rollback() }()
 
 	for _, ref := range refs {
-		var id int64
-		if err := tx.QueryRow(`SELECT track_id FROM track_file WHERE path = ?`, ref).Scan(&id); err != nil {
+		id, err := refTrackID(tx, ref)
+		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}

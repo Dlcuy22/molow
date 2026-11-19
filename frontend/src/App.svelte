@@ -312,19 +312,29 @@
 
   let paletteOpen = $state(false);
   let paletteSource = $state<"queue" | "ytm">("queue");
+  // paletteIntent is the verb the palette was opened with: the queue and the
+  // ordinary search queue tracks, while the "+" menu's YouTube import adds the
+  // highlighted hit to the open library.
+  let paletteIntent = $state<"queue" | "import">("queue");
   let previewOnOpen = $state(false);
   const isMac = /mac/i.test(navigator.platform || navigator.userAgent);
   const shortcutLabel = isMac ? "⌘P" : "Ctrl P";
   let settingsOpen = $state(false);
 
-  function openPalette(source: "queue" | "ytm", preview: boolean) {
+  function openPalette(
+    source: "queue" | "ytm",
+    preview: boolean,
+    intent: "queue" | "import" = "queue",
+  ) {
     paletteSource = source;
+    paletteIntent = intent;
     previewOnOpen = preview;
     paletteOpen = true;
   }
 
   function closePalette() {
     paletteOpen = false;
+    paletteIntent = "queue";
     previewOnOpen = false;
     commands.previewStop();
   }
@@ -582,7 +592,7 @@
         addOpen = false;
       }}
       onytm={() => {
-        openPalette("ytm", false);
+        openPalette("ytm", false, "import");
         addOpen = false;
       }}
       onclose={() => (addOpen = false)}
@@ -604,6 +614,7 @@
 <CommandPalette
   open={paletteOpen}
   source={paletteSource}
+  intent={paletteIntent}
   {queue}
   preview={snap.preview}
   startPreview={previewOnOpen}

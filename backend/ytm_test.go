@@ -636,3 +636,76 @@ func TestAddYTMPlaylistFollowsContinuation(t *testing.T) {
 		t.Fatalf("queue = %v, want the continuation track included", got)
 	}
 }
+
+// TestAddYTMPlaylistRoutesMixToTheQueue proves a shared mix URL is resolved
+// through the watch-next queue, because the browse endpoint refuses that id
+// type. The mix pages are walked with the same continuation as a playlist.
+func TestAddYTMPlaylistRoutesMixToTheQueue(t *testing.T) {
+	fp := newFakePlayer()
+	svc := newPlayerService()
+	svc.player = fp
+
+	var browseCalls, mixCalls int
+	svc.ytmProv.loadPlaylist = func(context.Context, string, *ytm.BuiltInContinuation) (*ytm.Playlist, error) {
+		browseCalls++
+
+		return &ytm.Playlist{Items: []ytm.Song{{ID: "browsed", Name: "Wrong"}}}, nil
+	}
+	svc.ytmProv.loadMix = func(_ context.Context, id string, cont *ytm.BuiltInContinuation) (*ytm.Playlist, error) {
+		mixCalls++
+		if id != "RDLoK17z6xDwI" {
+			t.Fatalf("id = %q, want the bare mix id", id)
+		}
+		if cont == nil {
+			return &ytm.Playlist{
+				Items:        []ytm.Song{{ID: "m1", Name: "One"}},
+				Continuation: &ytm.BuiltInContinuation{Token: "next", Type: ytm.ContinuationMix, ItemID: id},
+			}, nil
+		}
+
+		return &ytm.Playlist{Items: []ytm.Song{{ID: "m2", Name: "Two"}}}, nil
+	}
+
+	if err := svc.AddYTMPlaylist("https://youtube.com/playlist?list=RDLoK17z6xDwI&playnext=1&si=u_vWY0M06j3qXxv4"); err != nil {
+		t.Fatalf("AddYTMPlaylist: %v", err)
+	}
+	if browseCalls != 0 {
+		t.Fatalf("loadPlaylist calls = %d, want the mix path only", browseCalls)
+	}
+	if mixCalls != 2 {
+		t.Fatalf("loadMix calls = %d, want the continuation page too", mixCalls)
+	}
+	if got := fp.Queue(); len(got) != 2 || got[0] != "ytm:m1" || got[1] != "ytm:m2" {
+		t.Fatalf("queue = %v, want [ytm:m1 ytm:m2]", got)
+	}
+}
+
+// TestAddYTMPlaylistKeepsPlainListsOnBrowse pins the other half of the split: a
+// PL id still goes to the browse endpoint, not to the queue.
+func TestAddYTMPlaylistKeepsPlainListsOnBrowse(t *testing.T) {
+	fp := newFakePlayer()
+	svc := newPlayerService()
+	svc.player = fp
+
+	var browseCalls, mixCalls int
+	svc.ytmProv.loadPlaylist = func(context.Context, string, *ytm.BuiltInContinuation) (*ytm.Playlist, error) {
+		browseCalls++
+
+		return &ytm.Playlist{Items: []ytm.Song{{ID: "s1", Name: "One"}}}, nil
+	}
+	svc.ytmProv.loadMix = func(context.Context, string, *ytm.BuiltInContinuation) (*ytm.Playlist, error) {
+		mixCalls++
+
+		return &ytm.Playlist{Items: []ytm.Song{{ID: "wrong", Name: "Wrong"}}}, nil
+	}
+
+	if err := svc.AddYTMPlaylist("PLabc"); err != nil {
+		t.Fatalf("AddYTMPlaylist: %v", err)
+	}
+	if browseCalls != 1 || mixCalls != 0 {
+		t.Fatalf("calls = browse %d, mix %d, want browse 1, mix 0", browseCalls, mixCalls)
+	}
+	if got := fp.Queue(); len(got) != 1 || got[0] != "ytm:s1" {
+		t.Fatalf("queue = %v, want [ytm:s1]", got)
+	}
+}

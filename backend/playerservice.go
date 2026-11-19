@@ -1011,11 +1011,13 @@ func (s *PlayerService) AppendYTM(videoID string) error {
 	})
 }
 
-// AddYTMPlaylist resolves a YouTube Music playlist or album and adds its tracks
-// to the queue in catalogue order. The input is the share URL a listener copies
-// ("...?list=PL..."), a browse id, or a bare id. The catalogue metadata of every
-// track is cached as it is resolved, so a queue row shows its real title and art
-// before anything is played; the queue itself holds only "ytm:<videoId>"
+// AddYTMPlaylist resolves a YouTube Music playlist, mix or album and adds its
+// tracks to the queue in catalogue order. The input is the share URL a listener
+// copies ("...?list=PL..." or "...?list=RD..."), a browse id, or a bare id. A
+// mix is fetched from the watch-next queue, a playlist and an album from the
+// browse endpoint, and both arrive as the same list. The catalogue metadata of
+// every track is cached as it is resolved, so a queue row shows its real title
+// and art before anything is played; the queue itself holds only "ytm:<videoId>"
 // references, which is all the engine ever sees.
 //
 // When the queue is empty the playlist starts playing; an existing queue is

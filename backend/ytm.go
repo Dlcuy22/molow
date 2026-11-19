@@ -309,11 +309,11 @@ type ytmProvider struct {
 	// Open keeps the whole-track fetch exactly as before.
 	seamless bool
 
-	// resolve, search, loadArtist, loadPlaylist, loadSong and lyrics are the
-	// network calls, indirected so a test can drive the provider and the service
-	// without touching YouTube. In production they are the client's own methods;
-	// the client is also kept so the account methods stay reachable, and so a
-	// stored session can be attached after startup without rebuilding the
+	// resolve, search, loadArtist, loadPlaylist, loadMix, loadSong and lyrics
+	// are the network calls, indirected so a test can drive the provider and the
+	// service without touching YouTube. In production they are the client's own
+	// methods; the client is also kept so the account methods stay reachable, and
+	// so a stored session can be attached after startup without rebuilding the
 	// provider.
 	//
 	// apiMu guards the whole set: a sign-in swaps every call at once while a
@@ -325,6 +325,7 @@ type ytmProvider struct {
 	search       func(context.Context, string, string, bool) (*ytm.SearchResults, error)
 	loadArtist   func(context.Context, string) (*ytm.Artist, error)
 	loadPlaylist func(context.Context, string, *ytm.BuiltInContinuation) (*ytm.Playlist, error)
+	loadMix      func(context.Context, string, *ytm.BuiltInContinuation) (*ytm.Playlist, error)
 	loadSong     func(context.Context, string) (*ytm.Song, error)
 	lyrics       func(context.Context, string) (*ytm.Lyrics, error)
 
@@ -343,6 +344,7 @@ type ytmCalls struct {
 	search       func(context.Context, string, string, bool) (*ytm.SearchResults, error)
 	loadArtist   func(context.Context, string) (*ytm.Artist, error)
 	loadPlaylist func(context.Context, string, *ytm.BuiltInContinuation) (*ytm.Playlist, error)
+	loadMix      func(context.Context, string, *ytm.BuiltInContinuation) (*ytm.Playlist, error)
 	loadSong     func(context.Context, string) (*ytm.Song, error)
 	lyrics       func(context.Context, string) (*ytm.Lyrics, error)
 }
@@ -357,6 +359,7 @@ func (p *ytmProvider) calls() ytmCalls {
 		search:       p.search,
 		loadArtist:   p.loadArtist,
 		loadPlaylist: p.loadPlaylist,
+		loadMix:      p.loadMix,
 		loadSong:     p.loadSong,
 		lyrics:       p.lyrics,
 	}
@@ -405,6 +408,7 @@ func (p *ytmProvider) installClient(client *ytm.Client) {
 	p.loadPlaylist = func(ctx context.Context, id string, cont *ytm.BuiltInContinuation) (*ytm.Playlist, error) {
 		return client.LoadPlaylist(ctx, id, cont, nil, nil, false)
 	}
+	p.loadMix = client.GetMix
 	p.loadSong = client.LoadSong
 	p.lyrics = client.GetSongLyricsTimed
 }
@@ -600,14 +604,21 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 // it stops at the track cap, or at the page cap if the catalogue keeps handing
 // back tokens. A nil continuation ends it, so a single-page playlist costs one
 // request.
+//
+// A mix id ("RD…") is walked the same way, but its pages come from the
+// watch-next queue: the browse endpoint refuses the type.
 func (p *ytmProvider) playlist(ctx context.Context, id string) ([]YTMResult, error) {
 	var out []YTMResult
 	seen := make(map[string]struct{})
 	var cont *ytm.BuiltInContinuation
-	loadPlaylist := p.calls().loadPlaylist
+	calls := p.calls()
+	load := calls.loadPlaylist
+	if ytm.IsMixID(id) {
+		load = calls.loadMix
+	}
 
 	for page := 0; page < ytmPlaylistMaxPages; page++ {
-		pl, err := loadPlaylist(ctx, id, cont)
+		pl, err := load(ctx, id, cont)
 		if err != nil {
 			return nil, err
 		}

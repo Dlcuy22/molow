@@ -1,7 +1,7 @@
 <script lang="ts">
   import CaretDown from "phosphor-svelte/lib/CaretDown";
   import Plus from "phosphor-svelte/lib/Plus";
-  import type { Album, Shelf, Track } from "../lib/types";
+  import type { Album, Playlist, Shelf, Track } from "../lib/types";
   import AlbumCard from "../lib/ui/AlbumCard.svelte";
   import Chip from "../lib/ui/Chip.svelte";
   import Cover from "../lib/ui/Cover.svelte";
@@ -57,6 +57,20 @@
     }),
   );
 </script>
+
+{#snippet playlistCard(list: Playlist)}
+  <button class="w-[166px] text-left" onclick={() => onopenPlaylist(list.id)}>
+    <span class="grid h-[166px] w-[166px] place-items-center rounded-lg bg-surface">
+      <span class="size-7 rounded-md border border-line"></span>
+    </span>
+    <span class="mt-1.5 block truncate font-display text-[15px] font-bold">
+      {list.name}
+    </span>
+    <span class="block text-[11px] text-muted">
+      Playlist · {list.trackCount} {list.trackCount === 1 ? "song" : "songs"}
+    </span>
+  </button>
+{/snippet}
 
 <div class="flex h-full flex-col overflow-hidden pl-[50px] pr-9 pt-[41px]">
   <div class="flex items-start justify-between">
@@ -140,25 +154,18 @@
       {:else}
         <div class="flex flex-wrap gap-x-4 gap-y-5">
           {#each playlists as list (list.id)}
-            <button class="w-[166px] text-left" onclick={() => onopenPlaylist(list.id)}>
-              <span class="grid h-[166px] w-[166px] place-items-center rounded-lg bg-surface">
-                <span class="size-7 rounded-md border border-line"></span>
-              </span>
-              <span class="mt-1.5 block truncate font-display text-[15px] font-bold">
-                {list.name}
-              </span>
-              <span class="block text-[11px] text-muted">
-                Playlist · {list.trackCount} {list.trackCount === 1 ? "song" : "songs"}
-              </span>
-            </button>
+            {@render playlistCard(list)}
           {/each}
         </div>
       {/if}
     {:else if filter === "all"}
-      {#if tracks.length === 0 && albums.length === 0}
+      {#if tracks.length === 0 && albums.length === 0 && playlists.length === 0}
         <p class="text-[12px] text-muted">The catalogue is empty.</p>
       {:else}
         <div class="flex flex-wrap gap-x-4 gap-y-5">
+          {#each playlists as list (list.id)}
+            {@render playlistCard(list)}
+          {/each}
           {#each sortedAlbums as album (album.id)}
             <AlbumCard
               {album}

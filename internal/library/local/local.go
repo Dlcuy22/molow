@@ -85,15 +85,29 @@ func (l *Local) Feed(_ context.Context, tab, cursor string, limit int) (library.
 
 	switch {
 	case tab == "all":
+		playlists, err := l.store.Playlists(l.lib.ID)
+		if err != nil {
+			return library.Page{}, err
+		}
 		albums, total, err := l.store.Albums(l.lib.ID, limit, offset)
 		if err != nil {
 			return library.Page{}, err
 		}
-
-		return library.Page{Shelves: []library.Shelf{{
+		// Playlists go first: an import lands as one, and it has to be visible
+		// on the tab the library opens to.
+		shelves := make([]library.Shelf, 0, 2)
+		if len(playlists) > 0 {
+			shelves = append(shelves, library.Shelf{
+				ID: "playlists", Title: "Playlists", Layout: "grid", Kind: "playlists",
+				Playlists: playlists, Total: len(playlists),
+			})
+		}
+		shelves = append(shelves, library.Shelf{
 			ID: "albums", Title: "Albums", Layout: "grid", Kind: "albums",
 			Albums: albums, Total: total, Cursor: nextCursor(offset+len(albums), total),
-		}}}, nil
+		})
+
+		return library.Page{Shelves: shelves}, nil
 	case tab == "" || tab == "home":
 		return l.home(limit)
 	case tab == "tracks":

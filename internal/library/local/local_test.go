@@ -167,6 +167,36 @@ func TestScanSkipsAPathAnotherLibraryOwns(t *testing.T) {
 	}
 }
 
+// TestAllTabListsPlaylists pins the import's landing place: the tab a library
+// opens to shows the playlist an import created.
+func TestAllTabListsPlaylists(t *testing.T) {
+	src, store := newTestLocal(t)
+	ext := testExt(t)
+
+	root := t.TempDir()
+	writeFiles(t, filepath.Join(root, "01"+ext))
+	if _, err := store.AddRoot("local:test", root); err != nil {
+		t.Fatalf("add root: %v", err)
+	}
+	if _, err := src.Scan(context.Background()); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if _, err := store.CreatePlaylist("local:test", "Imported"); err != nil {
+		t.Fatalf("playlist: %v", err)
+	}
+
+	page, err := src.Feed(context.Background(), "all", "", 60)
+	if err != nil {
+		t.Fatalf("feed: %v", err)
+	}
+	if len(page.Shelves) != 2 || page.Shelves[0].Kind != "playlists" {
+		t.Fatalf("shelves = %+v, want playlists then albums", page.Shelves)
+	}
+	if len(page.Shelves[0].Playlists) != 1 || page.Shelves[0].Playlists[0].Name != "Imported" {
+		t.Fatalf("playlists = %+v, want the created one", page.Shelves[0].Playlists)
+	}
+}
+
 // TestScanOnAnEmptyLibrary is the defensive case: no roots, no walk, no error.
 func TestScanOnAnEmptyLibrary(t *testing.T) {
 	src, _ := newTestLocal(t)

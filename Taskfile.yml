@@ -19,8 +19,22 @@ includes:
   android: ./build/android/Taskfile.yml
 
 tasks:
+  # The audio engine is a git submodule, and a plain clone leaves it empty, so
+  # the first build fails on a missing module instead of on the code. Both entry
+  # points compile it, so both pull it in when it is absent and skip the check
+  # once it is there.
+  molo:ensure:
+    summary: Clones the audio engine submodule when it is missing
+    internal: true
+    status:
+      - test -f molo/go.mod
+    cmds:
+      - git submodule update --init --recursive molo
+
   build:
     summary: Builds the application
+    deps:
+      - molo:ensure
     cmds:
       - task: "{{.GOOS}}:build"
 
@@ -36,6 +50,8 @@ tasks:
 
   dev:
     summary: Runs the application in development mode
+    deps:
+      - molo:ensure
     cmds:
       - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
 

@@ -4,6 +4,17 @@
 
 <h1 align="center">MoLow</h1>
 
+## Contents
+
+- [What is this?](#what-is-this)
+- [Project state](#project-state)
+- [Screenshots](#screenshots)
+- [Codec and container support](#codec-and-container-support)
+- [Downloads](#downloads)
+- [Developing](#developing)
+- [Stack](#stack)
+- [License](#license)
+
 ## What is this?
 
 MoLow is a feature-rich yet lightweight audio player. It
@@ -80,8 +91,25 @@ https://v3.wails.io/quick-start/installation/
 If you are not familiar with Wails 3, I strongly suggest reading its beginner
 tutorial to understand the basics: https://v3.wails.io/tutorials/03-notes-vanilla/
 
-After that, you can use `wails3 dev` and `wails3 build` to
-work in this repository.
+The audio engine lives in [molo](https://github.com/dlcuy22/molo) and is wired
+into this repository as a git submodule at `molo/`. `go.mod` points the
+`github.com/dlcuy22/molo` module at that folder, so `wails3 dev` and
+`wails3 build` fail until the submodule is present.
+
+A plain `git clone` does not fetch submodules, so run this once after cloning:
+
+```sh
+git submodule update --init --recursive
+```
+
+Or fetch the submodule during the clone itself:
+
+```sh
+git clone --recurse-submodules https://github.com/dlcuy22/molow
+```
+
+You only do this once per checkout. After that, use `wails3 dev` and
+`wails3 build` to work in this repository.
 
 ## Stack
 

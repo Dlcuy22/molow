@@ -184,6 +184,11 @@ func (s *PlayerService) AddLocalLibrary(path string) (library.Library, error) {
 		Root:   abs,
 		Status: library.StatusScanning,
 	}
+	if owner, root, found, err := s.watchedElsewhere(store, row.ID, abs); err != nil {
+		return library.Library{}, err
+	} else if found {
+		return library.Library{}, foreignFolderError(abs, owner, root)
+	}
 	saved, err := store.AddLibrary(row)
 	if err != nil {
 		return library.Library{}, err
@@ -206,8 +211,9 @@ func (s *PlayerService) AddLocalLibrary(path string) (library.Library, error) {
 // ImportFolder adds a folder as one more root of an existing library and
 // starts the scan that indexes it; when the scan lands, the folder's tracks
 // become one playlist named after the folder. Re-adding a folder the library
-// already watches is a no-op, and a folder inside — or containing — a watched
-// root is rejected: a nested root would index the same files twice.
+// already watches is a no-op. A folder inside — or containing — another
+// library's root is refused, because a file path can belong to one library
+// only, and a folder nested in the target's own root would index files twice.
 func (s *PlayerService) ImportFolder(libraryID, path string) (library.Library, error) {
 	abs, err := filepath.Abs(strings.TrimSpace(path))
 	if err != nil || abs == "" {
@@ -247,6 +253,11 @@ func (s *PlayerService) ImportFolder(libraryID, path string) (library.Library, e
 		if insidePath(abs, root) || insidePath(root, abs) {
 			return library.Library{}, fmt.Errorf("library: folder overlaps %q", root)
 		}
+	}
+	if owner, root, found, err := s.watchedElsewhere(store, libraryID, abs); err != nil {
+		return library.Library{}, err
+	} else if found {
+		return library.Library{}, foreignFolderError(abs, owner, root)
 	}
 
 	added, err := store.AddRoot(libraryID, abs)
@@ -298,6 +309,47 @@ func samePath(a, b string) bool {
 	}
 
 	return strings.EqualFold(a, b)
+}
+
+// watchedElsewhere finds a root another library watches that the path would
+// overlap: the same folder, one inside the other. A folder belongs to one
+// library only, because the ref a like or a playlist stores is the file path,
+// so a second library over the same tree would address another library's rows.
+func (s *PlayerService) watchedElsewhere(
+	store *sqlite.Store, libraryID, path string,
+) (library.Library, string, bool, error) {
+	libs, err := store.Libraries()
+	if err != nil {
+		return library.Library{}, "", false, err
+	}
+	for _, lib := range libs {
+		if lib.ID == libraryID {
+			continue
+		}
+		roots, err := store.Roots(lib.ID)
+		if err != nil {
+			return library.Library{}, "", false, err
+		}
+		for _, root := range roots {
+			if insidePath(path, root) || insidePath(root, path) {
+				return lib, root, true, nil
+			}
+		}
+	}
+
+	return library.Library{}, "", false, nil
+}
+
+// foreignFolderError names the library that already owns the folder, so a
+// refused import says where the folder went.
+func foreignFolderError(path string, owner library.Library, root string) error {
+	if samePath(path, root) {
+		return fmt.Errorf(
+			"library: folder %q already belongs to library %q", filepath.Base(path), owner.Name,
+		)
+	}
+
+	return fmt.Errorf("library: folder overlaps library %q", owner.Name)
 }
 
 func (s *PlayerService) RemoveLibrary(id string) error {

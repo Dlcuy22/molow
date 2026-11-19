@@ -336,6 +336,11 @@ type TrackRow struct {
 	CoverID     string
 }
 
+// ErrForeignFile reports a path the catalogue already indexes under another
+// library. A scan skips it: a file path is the ref a like or a playlist stores,
+// so the catalogue can hold it under one library only.
+var ErrForeignFile = errors.New("library: file belongs to another library")
+
 // UpsertTrack writes one file into the catalogue.
 //
 // The rules are the plan's: size+mtime means unchanged; a known (dev, ino) at a
@@ -353,11 +358,16 @@ func (s *Store) UpsertTrack(libraryID string, f File, t TrackRow) (int64, error)
 		trackID  int64
 		oldSize  int64
 		oldMtime int64
+		owner    string
 	)
 	err = tx.QueryRow(
-		`SELECT track_id, size, mtime FROM track_file WHERE path = ?`, f.Path,
-	).Scan(&trackID, &oldSize, &oldMtime)
+		`SELECT f.track_id, f.size, f.mtime, t.library_id
+		   FROM track_file f JOIN track t ON t.id = f.track_id
+		  WHERE f.path = ?`, f.Path,
+	).Scan(&trackID, &oldSize, &oldMtime, &owner)
 	switch {
+	case err == nil && owner != libraryID:
+		return 0, ErrForeignFile
 	case err == nil && oldSize == f.Size && oldMtime == f.Mtime:
 		_, err = tx.Exec(
 			`UPDATE track_file SET seen_at = ?, missing = 0 WHERE path = ?`, now, f.Path,
@@ -394,12 +404,17 @@ func (s *Store) UpsertTrack(libraryID string, f File, t TrackRow) (int64, error)
 	// A move on the same filesystem is a path change on an existing track.
 	if f.Dev != 0 && f.Ino != 0 {
 		err = tx.QueryRow(
-			`SELECT track_id FROM track_file WHERE dev = ? AND ino = ? LIMIT 1`, f.Dev, f.Ino,
+			`SELECT f.track_id FROM track_file f JOIN track t ON t.id = f.track_id
+			  WHERE f.dev = ? AND f.ino = ? AND t.library_id = ? LIMIT 1`,
+			f.Dev, f.Ino, libraryID,
 		).Scan(&trackID)
 		if err == nil {
 			// The old path may still be there; a move means this one now owns
 			// the identity, so the old row goes.
-			if _, err := tx.Exec(`DELETE FROM track_file WHERE dev = ? AND ino = ? AND path <> ?`, f.Dev, f.Ino, f.Path); err != nil {
+			if _, err := tx.Exec(
+				`DELETE FROM track_file WHERE dev = ? AND ino = ? AND path <> ? AND track_id = ?`,
+				f.Dev, f.Ino, f.Path, trackID,
+			); err != nil {
 				return 0, err
 			}
 			_, err = tx.Exec(

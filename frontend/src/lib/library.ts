@@ -4,6 +4,7 @@
 
 import { get, writable } from "svelte/store";
 import { Events } from "@wailsio/runtime";
+import WarningCircle from "phosphor-svelte/lib/WarningCircle";
 import { PlayerService } from "../../bindings/github.com/dlcuy22/molow/backend";
 import type {
   Album as GenAlbum,
@@ -15,6 +16,7 @@ import type {
   Track as GenTrack,
 } from "../../bindings/github.com/dlcuy22/molow/internal/library/models";
 import type { Album, Artist, LibraryInfo, Page, Shelf, Track } from "./types";
+import { showToast } from "./toast";
 
 export const libraries = writable<LibraryInfo[]>([]);
 export const libraryId = writable<string>("");
@@ -188,10 +190,26 @@ export async function searchLibrary(query: string): Promise<void> {
   }
 }
 
+/** libraryErrorText unwraps the message a library binding rejects with. The
+ *  binding rejects with a plain string, so both shapes are read, and the
+ *  "library:" prefix is the package's, not the user's. */
+function libraryErrorText(err: unknown): string {
+  const raw =
+    typeof err === "string" ? err : err instanceof Error ? err.message : "";
+  const text = raw.replace(/^library:\s*/, "").trim();
+  if (text === "") {
+    return "Could not add that folder";
+  }
+
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 /** addLibrary opens the folder picker and merges the choice into the selected
  *  library as one more root — one playlist per import, named after the folder.
  *  The backend always has at least one library (a fresh install creates the
- *  default), so an empty selection falls back to the first row. */
+ *  default), so an empty selection falls back to the first row. A folder the
+ *  catalogue already assigns to another library is refused, and that refusal
+ *  is the one thing this flow has to say out loud. */
 export async function addLibrary(): Promise<LibraryInfo | null> {
   try {
     const path = await PlayerService.PickLibraryFolder();
@@ -212,7 +230,14 @@ export async function addLibrary(): Promise<LibraryInfo | null> {
     await Promise.all([loadHome(), loadLibrary()]);
 
     return info;
-  } catch {
+  } catch (err) {
+    showToast({
+      key: "library-import",
+      kind: "message",
+      label: libraryErrorText(err),
+      icon: WarningCircle,
+    });
+
     return null;
   }
 }
@@ -232,7 +257,14 @@ export async function createLibrary(): Promise<LibraryInfo | null> {
     await Promise.all([loadHome(), loadLibrary()]);
 
     return info;
-  } catch {
+  } catch (err) {
+    showToast({
+      key: "library-create",
+      kind: "message",
+      label: libraryErrorText(err),
+      icon: WarningCircle,
+    });
+
     return null;
   }
 }

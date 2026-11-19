@@ -5,6 +5,7 @@ package local
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/dlcuy22/molo"
 	"github.com/dlcuy22/molo/core"
@@ -320,10 +321,15 @@ func (l *Local) importScan(ctx context.Context, importRoot string) (ScanResult, 
 		if ctx.Err() != nil {
 			break
 		}
-		if err := l.index(ctx, path); err != nil {
+		err := l.index(ctx, path)
+		switch {
+		case errors.Is(err, sqlite.ErrForeignFile):
+			// Another library owns the path. It is not a read failure, so it
+			// neither counts as indexed nor fails the scan.
+		case err != nil:
 			errs++
 			last = err
-		} else {
+		default:
 			seen++
 			if importRoot != "" && underPath(path, importRoot) {
 				refs = append(refs, path)

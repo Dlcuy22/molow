@@ -140,6 +140,55 @@ func TestImportFolderMergesIntoTheLibrary(t *testing.T) {
 	}
 }
 
+// TestImportRefusesAnotherLibrarysFolder pins the one-owner rule at the import
+// entry points: a folder another library watches is refused with the owner's
+// name, no track lands in the target, and no playlist is created for it.
+func TestImportRefusesAnotherLibrarysFolder(t *testing.T) {
+	ext := moloTestExt(t)
+
+	rootA := t.TempDir()
+	writeTestFiles(t, filepath.Join(rootA, "01"+ext))
+	svc, store := newTestLibraries(t, rootA)
+	startScan(t, svc, defaultLibraryID)
+
+	rootB := t.TempDir()
+	writeTestFiles(t, filepath.Join(rootB, "01"+ext))
+	owner, err := svc.AddLocalLibrary(rootB)
+	if err != nil {
+		t.Fatalf("add library: %v", err)
+	}
+	svc.wg.Wait()
+
+	if _, err := svc.ImportFolder(defaultLibraryID, rootB); err == nil ||
+		!strings.Contains(err.Error(), "already belongs to library") ||
+		!strings.Contains(err.Error(), owner.Name) {
+		t.Fatalf("import = %v, want the owner named", err)
+	}
+	nested := filepath.Join(rootA, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddLocalLibrary(rootA); err == nil ||
+		!strings.Contains(err.Error(), "already belongs to library") {
+		t.Fatalf("add = %v, want the owner named", err)
+	}
+	if _, err := svc.AddLocalLibrary(nested); err == nil ||
+		!strings.Contains(err.Error(), "overlaps library") {
+		t.Fatalf("add nested = %v, want an overlap error", err)
+	}
+
+	playlists, err := store.Playlists(defaultLibraryID)
+	if err != nil {
+		t.Fatalf("playlists: %v", err)
+	}
+	if len(playlists) != 0 {
+		t.Fatalf("playlists = %+v, want none from a refused import", playlists)
+	}
+	if got := trackCount(t, store, defaultLibraryID); got != 1 {
+		t.Fatalf("tracks = %d, want the original 1", got)
+	}
+}
+
 // TestImportFolderRejectsOverlapAndReAdd pins the guard rails: a folder inside
 // a watched root is refused, as is one containing it, and re-adding a watched
 // root neither rescans into a second playlist nor errors.

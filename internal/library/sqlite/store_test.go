@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -113,6 +114,32 @@ func TestRenameKeepsTrackAndLike(t *testing.T) {
 	}
 	if _, ok, _ := s.TrackByRef("/music/a/01.flac"); ok {
 		t.Fatal("old path still resolves")
+	}
+}
+
+// TestForeignPathStaysWithItsLibrary pins the one-owner rule: a path already
+// catalogued under another library is refused, and the refusal leaves both
+// catalogues as they were.
+func TestForeignPathStaysWithItsLibrary(t *testing.T) {
+	s := newTestStore(t)
+	seed(t, s)
+	if _, err := s.AddLibrary(library.Library{
+		ID: "local:second", Kind: library.KindLocal, Name: "Second", Root: "/other",
+	}); err != nil {
+		t.Fatalf("add library: %v", err)
+	}
+
+	_, err := s.UpsertTrack("local:second", File{
+		Path: "/music/a/01.flac", Dev: 1, Ino: 999, Size: 20, Mtime: 2000,
+	}, TrackRow{NativeID: "id:2", Title: "Taken", Album: "Alpha"})
+	if !errors.Is(err, ErrForeignFile) {
+		t.Fatalf("upsert = %v, want ErrForeignFile", err)
+	}
+	if n := count(t, s, `SELECT COUNT(*) FROM track WHERE library_id = 'local:second'`); n != 0 {
+		t.Fatalf("second library has %d tracks, want none", n)
+	}
+	if n := count(t, s, `SELECT COUNT(*) FROM track`); n != 3 {
+		t.Fatalf("track count = %d, want the original 3", n)
 	}
 }
 

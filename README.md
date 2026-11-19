@@ -87,6 +87,8 @@ will publish builds only when they are ready.
 
 First, make sure the Wails 3 tooling is installed on your system:
 https://v3.wails.io/quick-start/installation/
+and then install bun 
+https://bun.com/docs/installation
 
 If you are not familiar with Wails 3, I strongly suggest reading its beginner
 tutorial to understand the basics: https://v3.wails.io/tutorials/03-notes-vanilla/

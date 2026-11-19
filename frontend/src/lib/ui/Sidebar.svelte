@@ -1,5 +1,6 @@
 <script lang="ts">
   import Books from "phosphor-svelte/lib/Books";
+  import Faders from "phosphor-svelte/lib/Faders";
   import FolderSimplePlus from "phosphor-svelte/lib/FolderSimplePlus";
   import GearSix from "phosphor-svelte/lib/GearSix";
   import House from "phosphor-svelte/lib/House";
@@ -29,6 +30,7 @@
     onsearch = () => {},
     onswitch = (_id: string) => {},
     onnewlibrary = () => {},
+    oneffects = () => {},
     onsettings = () => {},
     onwidthcommit = (_width: number) => {},
   }: {
@@ -41,6 +43,7 @@
     onsearch?: () => void;
     onswitch?: (id: string) => void;
     onnewlibrary?: () => void;
+    oneffects?: () => void;
     onsettings?: () => void;
     onwidthcommit?: (width: number) => void;
   } = $props();
@@ -251,16 +254,29 @@
 
   <div class="px-3 pb-3">
     <div class="mx-1 mb-2 h-px bg-line"></div>
-    <button
-      class="flex h-8 w-full items-center gap-4 rounded-md px-2.5 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
-      class:justify-center={collapsed}
-      class:px-2={collapsed}
-      title="Settings"
-      onclick={onsettings}
-    >
-      <GearSix size="18" />
-      {#if !collapsed}<span>Settings</span>{/if}
-    </button>
+    <div class="flex flex-col gap-1">
+      <button
+        class="flex h-8 w-full items-center gap-4 rounded-md px-2.5 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
+        class:justify-center={collapsed}
+        class:px-2={collapsed}
+        title="Effects"
+        aria-label="Effects"
+        onclick={oneffects}
+      >
+        <Faders size="18" />
+        {#if !collapsed}<span>Effects</span>{/if}
+      </button>
+      <button
+        class="flex h-8 w-full items-center gap-4 rounded-md px-2.5 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
+        class:justify-center={collapsed}
+        class:px-2={collapsed}
+        title="Settings"
+        onclick={onsettings}
+      >
+        <GearSix size="18" />
+        {#if !collapsed}<span>Settings</span>{/if}
+      </button>
+    </div>
   </div>
 
   <!-- The rail's right edge is the resize handle. The visible line is 1px; the

@@ -9,7 +9,7 @@
 </script>
 
 <button
-  class="flex h-[50px] w-[170px] shrink-0 items-center gap-2.5 rounded-lg bg-surface pl-1.5 pr-2 text-left transition-colors hover:bg-hover"
+  class="flex h-[50px] w-[170px] shrink-0 items-center gap-2.5 rounded-lg pl-1.5 pr-2 text-left transition-colors hover:bg-hover focus-visible:bg-hover"
   title="{track.title} — {track.artist}"
   onclick={() => onplay(track)}
 >

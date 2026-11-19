@@ -176,7 +176,7 @@
           {/each}
           {#each tracks.slice(0, 5) as track (track.ref)}
             <button
-              class="flex h-[50px] w-[166px] items-center gap-2 rounded-lg bg-surface pl-1.5 pr-2 text-left"
+              class="flex h-[50px] w-[166px] items-center gap-2 rounded-lg pl-1.5 pr-2 text-left transition-colors hover:bg-hover focus-visible:bg-hover"
               onclick={() => onplay(track)}
             >
               <Cover id={track.coverId} size={40} radius={8} />

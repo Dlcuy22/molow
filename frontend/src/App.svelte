@@ -524,6 +524,7 @@
         addOpen = false;
       }}
       onsettings={() => (settingsOpen = true)}
+      oneffects={() => void commands.openEffectWindow()}
     />
 
     <main class="relative min-w-0 flex-1 overflow-hidden">

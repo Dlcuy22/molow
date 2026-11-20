@@ -402,18 +402,19 @@ func (s *PlayerService) pumpEvents() {
 			}
 			s.noteEvent(ev)
 			snap := s.Snapshot()
+			// Start lyric prefetch before emitting so Lyrics() joins an active job instead of racing it.
+			s.syncLyrics(snap)
 			s.emit(eventSnapshot, snap)
 			s.syncPresence(snap)
 			s.syncSystemMedia(snap)
-			s.syncLyrics(snap)
 		case <-ticker.C:
 			// A tick with no track is a wasted payload, but it is what lets the
 			// UI show a first "Ready" and recover if a push was ever missed.
 			snap := s.Snapshot()
+			s.syncLyrics(snap)
 			s.emit(eventSnapshot, snap)
 			s.syncPresence(snap)
 			s.syncSystemMedia(snap)
-			s.syncLyrics(snap)
 		}
 	}
 }
@@ -1653,6 +1654,7 @@ func (s *PlayerService) command(fn func() error) error {
 	}
 	s.clearError()
 	snap := s.Snapshot()
+	s.syncLyrics(snap)
 	s.emit(eventSnapshot, snap)
 	s.syncPresence(snap)
 
@@ -1673,6 +1675,7 @@ func (s *PlayerService) commandID(fn func() (string, error)) (string, error) {
 	}
 	s.clearError()
 	snap := s.Snapshot()
+	s.syncLyrics(snap)
 	s.emit(eventSnapshot, snap)
 	s.syncPresence(snap)
 

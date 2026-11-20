@@ -99,7 +99,12 @@
   let playerMounted = $state(false);
   let playerTimer: ReturnType<typeof setTimeout> | undefined;
 
-  let lyrics = $state<Lyrics | null>(null);
+  let lyricsDoc = $state<{ path: string; doc: Lyrics | null }>({ path: "", doc: null });
+  let lyricsSettledPath = $state("");
+  const lyrics = $derived(lyricsDoc.path === snap.path ? lyricsDoc.doc : null);
+  const lyricsLoading = $derived(
+    playerMounted && snap.path !== "" && lyricsSettledPath !== snap.path,
+  );
   let accents = $state<string[]>([]);
   let liked = $state(false);
 
@@ -141,53 +146,97 @@
 
   // The lyric column and the backdrop follow the track, not the page.
   let lyricPath = "";
+  let lyricsFetchedWithMeta = "";
   let lyricsSeq = 0;
-  const setLyrics = (doc: Awaited<ReturnType<typeof loadLyrics>>) => {
-    lyrics = doc
-      ? {
-          lines: (doc.lines ?? []).map((l) => ({
-            timeMs: l.timeMs,
-            text: l.text,
-            translation: l.translation ?? "",
-            romanized: l.romanized || undefined,
-            words:
-              l.words?.map((w) => ({
-                text: w.text,
-                romanized: w.romanized || undefined,
-                startMs: w.startMs,
-                endMs: w.endMs,
-              })) ?? undefined,
-          })),
-          synced: doc.synced,
-          source: doc.source,
-        }
-      : null;
+  let lyricsProbeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // Backend syncLyrics waits for duration (and title on local files) before starting providers.
+  const lyricsMetaReady = $derived(
+    snap.path !== "" &&
+      snap.duration > 0 &&
+      (snap.title !== "" || snap.path.startsWith("ytm:")),
+  );
+
+  const setLyrics = (path: string, doc: Awaited<ReturnType<typeof loadLyrics>>) => {
+    lyricsDoc = {
+      path,
+      doc: doc
+        ? {
+            lines: (doc.lines ?? []).map((l) => ({
+              timeMs: l.timeMs,
+              text: l.text,
+              translation: l.translation ?? "",
+              romanized: l.romanized || undefined,
+              words:
+                l.words?.map((w) => ({
+                  text: w.text,
+                  romanized: w.romanized || undefined,
+                  startMs: w.startMs,
+                  endMs: w.endMs,
+                })) ?? undefined,
+            })),
+            synced: doc.synced,
+            source: doc.source,
+          }
+        : null,
+    };
   };
+
   $effect(() => {
-    // The sheet is the only thing that draws lyrics, so a closed sheet reads
-    // no document at all. Dropping the memo on close makes the next open read
-    // the sidecar again, which also picks up a prefetch that finished while
-    // the sheet was shut.
     if (!playerMounted) {
+      clearTimeout(lyricsProbeTimer);
       lyricPath = "";
+      lyricsFetchedWithMeta = "";
+      lyricsSettledPath = "";
+      lyricsDoc = { path: "", doc: null };
       lyricsSeq++;
       return;
     }
     const path = snap.path;
-    if (path === lyricPath) {
+    const ready = lyricsMetaReady;
+    const newTrack = path !== lyricPath;
+    const metaJustReady = !newTrack && ready && lyricsFetchedWithMeta !== path && lyricsSettledPath !== path;
+    if (!newTrack && !metaJustReady) {
       return;
     }
-    lyricPath = path;
-    lyrics = null;
+
+    clearTimeout(lyricsProbeTimer);
+    if (newTrack) {
+      lyricPath = path;
+      lyricsFetchedWithMeta = "";
+      lyricsSettledPath = "";
+      lyricsDoc = { path, doc: null };
+    }
     const seq = ++lyricsSeq;
     if (path === "") {
+      lyricsSettledPath = "";
       return;
+    }
+    if (ready) {
+      lyricsFetchedWithMeta = path;
     }
     void loadLyrics(path).then((doc) => {
       if (lyricPath !== path || lyricsSeq !== seq) {
         return;
       }
-      setLyrics(doc);
+      if (doc !== null) {
+        setLyrics(path, doc);
+        lyricsSettledPath = path;
+        return;
+      }
+      if (ready) {
+        setLyrics(path, null);
+        lyricsSettledPath = path;
+        return;
+      }
+      // Keep loading until duration/tags land so the provider chain can run;
+      // cap the wait in case a stream never reports a duration.
+      lyricsProbeTimer = setTimeout(() => {
+        if (lyricPath === path && lyricsSettledPath !== path) {
+          setLyrics(path, null);
+          lyricsSettledPath = path;
+        }
+      }, 4000);
     });
   });
 
@@ -218,14 +267,14 @@
       }
       return loadLyrics(path).then((doc) => {
         if (lyricPath === path && lyricsSeq === seq) {
-          setLyrics(doc);
+          setLyrics(path, doc);
+          lyricsSettledPath = path;
         }
       });
     });
   });
 
-  // The prefetch announces the sidecar it wrote, so a pane already open on
-  // this track reads it again instead of waiting for the next play.
+  // Pick up a late sidecar write silently without re-triggering the spinner.
   $effect(() => {
     if (!playerMounted) {
       return;
@@ -238,7 +287,8 @@
       const seq = ++lyricsSeq;
       void loadLyrics(path).then((doc) => {
         if (lyricPath === path && lyricsSeq === seq) {
-          setLyrics(doc);
+          setLyrics(path, doc);
+          lyricsSettledPath = path;
         }
       });
     });
@@ -722,6 +772,7 @@
   <AlbumPlayer
     {snap}
     {lyrics}
+    {lyricsLoading}
     stops={accents}
     open={playerOpen}
     onclose={closePlayer}

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
+  import { fade } from "svelte/transition";
   import CaretDown from "phosphor-svelte/lib/CaretDown";
   import MusicNote from "phosphor-svelte/lib/MusicNote";
   import Pause from "phosphor-svelte/lib/Pause";
@@ -18,10 +19,12 @@
   import Marquee from "../lib/ui/Marquee.svelte";
   import Spectrum from "../lib/components/Spectrum.svelte";
   import Cover from "../lib/ui/Cover.svelte";
+  import LoadingSpinner from "../lib/ui/LoadingSpinner.svelte";
 
   let {
     snap,
     lyrics = null,
+    lyricsLoading = false,
     stops = [],
     open = true,
     onclose = () => {},
@@ -29,6 +32,7 @@
   }: {
     snap: Snapshot;
     lyrics?: Lyrics | null;
+    lyricsLoading?: boolean;
     stops?: string[];
     open?: boolean;
     onclose?: () => void;
@@ -47,6 +51,31 @@
   );
 
   const lines = $derived(lyrics?.lines ?? []);
+
+  // Fade the spinner out before mounting lyrics or the empty state so the two never overlap.
+  const SPINNER_FADE_MS = 300;
+  let spinnerMounted = false;
+  let spinnerLeaving = $state(false);
+  let spinnerTimer: ReturnType<typeof setTimeout> | undefined;
+  const showSpinner = $derived(lyricsLoading || spinnerLeaving);
+
+  $effect.pre(() => {
+    clearTimeout(spinnerTimer);
+    if (lyricsLoading) {
+      spinnerMounted = true;
+      spinnerLeaving = false;
+      return;
+    }
+    if (!spinnerMounted) {
+      return;
+    }
+    spinnerLeaving = true;
+    spinnerTimer = setTimeout(() => {
+      spinnerLeaving = false;
+      spinnerMounted = false;
+    }, SPINNER_FADE_MS);
+  });
+
   let active = $state(0);
   $effect(() => {
     const pos = position;
@@ -94,11 +123,13 @@
     untrack(paintClock);
   });
 
-  // Paint --clock when lyrics load/reload or active changes while paused.
+  // Paint --clock when lyrics mount/reload or active changes while paused.
   $effect(() => {
     void lines;
     void active;
-    paintClock();
+    if (!showSpinner) {
+      paintClock();
+    }
   });
 
   $effect(() => {
@@ -245,10 +276,11 @@
     stopGlide();
   });
 
-  // The idle timer, the glide and the sweep clock must not outlive the pane.
+  // The idle timer, the glide, the spinner fade and the sweep clock must not outlive the pane.
   $effect(() => {
     return () => {
       clearTimeout(idleTimer);
+      clearTimeout(spinnerTimer);
       stopGlide();
       stopClock();
     };
@@ -258,7 +290,7 @@
   // the user is not browsing. Clicks are handled by their own handler, which
   // seeks first, so the line the user chose has become the active one.
   $effect(() => {
-    if (userScrolling) return;
+    if (userScrolling || showSpinner) return;
     const el = pairEls[active];
     if (el && el.isConnected) {
       centerOn(el);
@@ -421,12 +453,26 @@
       ontouchmove={beginUserScroll}
       onkeydown={onkey}
     >
-    {#if lines.length === 0}
-        <div class="flex h-full items-center pl-2 text-[12px] text-fg/50">
+      {#if showSpinner}
+        <div
+          class="flex h-full items-center justify-center transition-opacity duration-[180ms] ease-in-out"
+          class:opacity-0={spinnerLeaving}
+          class:opacity-100={!spinnerLeaving}
+        >
+          <LoadingSpinner label="Fetching the lyrics for you..." />
+        </div>
+      {:else if lines.length === 0}
+        <div
+          class="flex h-full items-center pl-2 text-[12px] text-fg/50"
+          in:fade={{ duration: SPINNER_FADE_MS }}
+        >
           No lyrics for this track.
         </div>
       {:else}
-        <div class="flex flex-col gap-[22px] py-[calc(50vh-22px)] pl-2">
+        <div
+          class="flex flex-col gap-[22px] py-[calc(50vh-22px)] pl-2"
+          in:fade={{ duration: SPINNER_FADE_MS }}
+        >
           {#each lines as line, i (line.timeMs + ":" + i)}
             {@const tiers = lyricTiers(line)}
             <div

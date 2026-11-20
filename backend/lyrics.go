@@ -24,10 +24,9 @@ import (
 // open lyric pane reads it again.
 const eventLyrics = "molo:lyrics"
 
-// lyricsJoinWait is how long the lyric pane waits for a prefetch that is
-// already running. It stays under the chain budget, so the wait either ends
-// with the answer or with an empty pane until the event arrives.
-const lyricsJoinWait = 8 * time.Second
+// lyricsJoinWait exceeds ChainBudget so an open pane waits for the chain to
+// finish instead of flashing "no lyrics" right before molo:lyrics arrives.
+const lyricsJoinWait = lyrics.ChainBudget + 2*time.Second
 
 // lyricsHTTP is the client every provider call uses. A provider answers with
 // a few kilobytes, so a request that outlives the chain budget has nothing

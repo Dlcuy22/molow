@@ -870,11 +870,16 @@ func (s *PlayerService) Lyrics(path string) (*lyrics.Document, error) {
 	return s.romanizeLyrics(s.instrumentalMarks(path, doc)), nil
 }
 
-// readLyricsOrJoin is the one resolver: the sidecar loader first, then the
-// prefetch that is still running or just concluded.
+// readLyricsOrJoin checks disk first, then joins any active or completed prefetch.
 func (s *PlayerService) readLyricsOrJoin(path string) (*lyrics.Document, error) {
 	if doc, err := s.readLyrics(path); doc != nil || err != nil {
 		return doc, err
+	}
+	// Ensure a prefetch is armed if Lyrics() arrived before the next pump tick.
+	if s.player != nil {
+		if snap := s.Snapshot(); snap.Path == path {
+			s.syncLyrics(snap)
+		}
 	}
 	if doc, ok := s.joinLyrics(path); ok {
 		return doc, nil

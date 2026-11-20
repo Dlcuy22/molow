@@ -59,7 +59,9 @@ func (s *Store) Tracks(libraryID string, limit, offset int) ([]library.Track, in
 		`SELECT`+trackColumns+trackFrom+
 			` WHERE t.library_id = ?
 			 ORDER BY t.artist COLLATE NOCASE, t.album COLLATE NOCASE,
-			          t.disc_no, t.track_no, t.title COLLATE NOCASE
+			          COALESCE(NULLIF(t.disc_no, 0), 1),
+			          CASE WHEN t.track_no > 0 THEN 0 ELSE 1 END,
+			          t.track_no, t.title COLLATE NOCASE
 			 LIMIT ? OFFSET ?`,
 		libraryID, limit, offset,
 	)
@@ -146,13 +148,15 @@ func (s *Store) Albums(libraryID string, limit, offset int) ([]library.Album, in
 	return out, total, rows.Err()
 }
 
-// AlbumTracks returns one album in track order.
+// AlbumTracks returns one album in disc and track order, treating disc_no 0 as disc 1.
 func (s *Store) AlbumTracks(libraryID, album, artist string) ([]library.Track, error) {
 	rows, err := s.db.Query(
 		`SELECT`+trackColumns+trackFrom+
 			` WHERE t.library_id = ? AND t.album = ?
 			   AND COALESCE(NULLIF(t.album_artist, ''), t.artist) = ?
-			 ORDER BY t.disc_no, t.track_no, t.title COLLATE NOCASE`,
+			 ORDER BY COALESCE(NULLIF(t.disc_no, 0), 1),
+			          CASE WHEN t.track_no > 0 THEN 0 ELSE 1 END,
+			          t.track_no, t.title COLLATE NOCASE`,
 		libraryID, album, artist,
 	)
 	if err != nil {

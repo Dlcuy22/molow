@@ -356,6 +356,8 @@ func (l *Local) importScan(ctx context.Context, importRoot string) (ScanResult, 
 		}
 	}
 
+	sortPathsByIndex(paths)
+
 	var refs []string
 	for i, path := range paths {
 		if ctx.Err() != nil {
@@ -477,6 +479,17 @@ func (l *Local) index(ctx context.Context, path string) error {
 		_ = artcache.Store(coverID, tags.Cover)
 	}
 
+	trackNo := tags.Track
+	discNo := tags.Disc
+	if fDisc, fTrack, _, ok := parseTrackIndex(path); ok {
+		if trackNo <= 0 {
+			trackNo = fTrack
+		}
+		if discNo <= 0 && fDisc > 0 {
+			discNo = fDisc
+		}
+	}
+
 	_, err = l.store.UpsertTrack(l.lib.ID, f, sqlite.TrackRow{
 		NativeID:    nativeID(f),
 		Title:       title,
@@ -484,8 +497,8 @@ func (l *Local) index(ctx context.Context, path string) error {
 		Album:       album,
 		AlbumArtist: strings.TrimSpace(tags.AlbumArtist),
 		Year:        tags.Year,
-		TrackNo:     tags.Track,
-		DiscNo:      tags.Disc,
+		TrackNo:     trackNo,
+		DiscNo:      discNo,
 		DurationMs:  duration,
 		CoverID:     coverID,
 	})
@@ -508,29 +521,14 @@ func nextCursor(next, total int) string {
 	return strconv.Itoa(next)
 }
 
-// titleFromPath is the last-resort name the meta chain would also produce.
+// titleFromPath strips a leading track index from the filename when tags are missing.
 func titleFromPath(path string) string {
-	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	base = strings.TrimSpace(base)
-	// A leading "01. " or "01 - " is a track index, not the name.
-	if i := strings.IndexAny(base, " .-"); i > 0 && i <= 4 && isDigits(base[:i]) {
-		base = strings.TrimSpace(strings.TrimLeft(base[i:], " .-"))
+	base := strings.TrimSpace(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+	if _, _, rest, ok := parseTrackIndex(path); ok && rest != "" {
+		return rest
 	}
 
 	return base
-}
-
-func isDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-
-	return true
 }
 
 // albumFromPath uses the containing folder when the tags have no album. It is

@@ -355,20 +355,39 @@ func (s *Store) UpsertTrack(libraryID string, f File, t TrackRow) (int64, error)
 
 	now := time.Now().Unix()
 	var (
-		trackID  int64
-		oldSize  int64
-		oldMtime int64
-		owner    string
+		trackID    int64
+		oldSize    int64
+		oldMtime   int64
+		owner      string
+		oldTrackNo int
+		oldDiscNo  int
 	)
 	err = tx.QueryRow(
-		`SELECT f.track_id, f.size, f.mtime, t.library_id
+		`SELECT f.track_id, f.size, f.mtime, t.library_id, t.track_no, t.disc_no
 		   FROM track_file f JOIN track t ON t.id = f.track_id
 		  WHERE f.path = ?`, f.Path,
-	).Scan(&trackID, &oldSize, &oldMtime, &owner)
+	).Scan(&trackID, &oldSize, &oldMtime, &owner, &oldTrackNo, &oldDiscNo)
 	switch {
 	case err == nil && owner != libraryID:
 		return 0, ErrForeignFile
 	case err == nil && oldSize == f.Size && oldMtime == f.Mtime:
+		// Backfill missing track/disc indices on rescan without rewriting tags.
+		if (oldTrackNo == 0 && t.TrackNo > 0) || (oldDiscNo == 0 && t.DiscNo > 0) {
+			nextTrack := oldTrackNo
+			if nextTrack == 0 {
+				nextTrack = t.TrackNo
+			}
+			nextDisc := oldDiscNo
+			if nextDisc == 0 {
+				nextDisc = t.DiscNo
+			}
+			if _, err := tx.Exec(
+				`UPDATE track SET track_no = ?, disc_no = ?, updated_at = ? WHERE id = ?`,
+				nextTrack, nextDisc, now, trackID,
+			); err != nil {
+				return 0, err
+			}
+		}
 		_, err = tx.Exec(
 			`UPDATE track_file SET seen_at = ?, missing = 0 WHERE path = ?`, now, f.Path,
 		)

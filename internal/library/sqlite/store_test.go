@@ -527,3 +527,76 @@ func TestMigrationSeedsTheRoots(t *testing.T) {
 		t.Fatalf("seeded roots = %v, want [/music]", roots)
 	}
 }
+
+func TestAlbumTracksNormalizesZeroDiscAndUnnumbered(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.AddLibrary(library.Library{
+		ID: "local:test", Kind: library.KindLocal, Name: "Test", Root: "/music",
+	}); err != nil {
+		t.Fatalf("add library: %v", err)
+	}
+
+	rows := []struct {
+		path   string
+		title  string
+		discNo int
+		track  int
+	}{
+		{"/a/08.flac", "Eight", 0, 8},
+		{"/a/01.flac", "One", 1, 1},
+		{"/a/09.flac", "Nine", 1, 9},
+		{"/a/bonus.flac", "Bonus", 1, 0},
+		{"/a/2-01.flac", "Disc2One", 2, 1},
+	}
+	for i, r := range rows {
+		if _, err := s.UpsertTrack("local:test", File{
+			Path: r.path, Dev: 1, Ino: uint64(i + 1), Size: 10, Mtime: 1000,
+		}, TrackRow{
+			NativeID: "id:" + r.path, Title: r.title, Artist: "Artist",
+			Album: "Album", AlbumArtist: "Artist", DiscNo: r.discNo, TrackNo: r.track,
+		}); err != nil {
+			t.Fatalf("upsert %s: %v", r.path, err)
+		}
+	}
+
+	got, err := s.AlbumTracks("local:test", "Album", "Artist")
+	if err != nil {
+		t.Fatalf("AlbumTracks: %v", err)
+	}
+	want := []string{"One", "Eight", "Nine", "Bonus", "Disc2One"}
+	if gotTitles := titles(got); len(gotTitles) != len(want) {
+		t.Fatalf("titles = %v, want %v", gotTitles, want)
+	} else {
+		for i := range want {
+			if gotTitles[i] != want[i] {
+				t.Fatalf("titles = %v, want %v", gotTitles, want)
+			}
+		}
+	}
+}
+
+func TestRescanBackfillsMissingTrackIndex(t *testing.T) {
+	s := newTestStore(t)
+	seed(t, s)
+
+	// /music/a/01.flac was seeded with TrackNo=0, DiscNo=0.
+	if _, err := s.UpsertTrack("local:test", File{
+		Path: "/music/a/01.flac", Dev: 1, Ino: 101, Size: 10, Mtime: 1000,
+	}, TrackRow{
+		NativeID: "id:1:/music/a/01.flac", Title: "Ignored", Album: "Alpha",
+		TrackNo: 1, DiscNo: 1,
+	}); err != nil {
+		t.Fatalf("rescan: %v", err)
+	}
+
+	tr, ok, err := s.TrackByRef("/music/a/01.flac")
+	if err != nil || !ok {
+		t.Fatalf("TrackByRef: ok=%v err=%v", ok, err)
+	}
+	if tr.TrackNo != 1 || tr.DiscNo != 1 {
+		t.Fatalf("backfill failed: track_no=%d disc_no=%d", tr.TrackNo, tr.DiscNo)
+	}
+	if tr.Title != "First" {
+		t.Fatalf("title changed on unchanged file: %q", tr.Title)
+	}
+}

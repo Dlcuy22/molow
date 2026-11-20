@@ -346,18 +346,40 @@ export async function playTrack(track: Track): Promise<void> {
   }
 }
 
-/** playAlbum starts an album in track order. */
-export async function playAlbum(album: Album): Promise<void> {
+export async function albumRefs(album: Album): Promise<string[]> {
   const id = get(libraryId);
   if (id === "") {
-    return;
+    return [];
   }
   try {
     const tracks = (await PlayerService.LibraryAlbumTracks(id, album.name, album.artist)) ?? [];
-    const refs = tracks.map((t) => t.ref).filter((r) => r !== "");
-    if (refs.length > 0) {
-      await PlayerService.PlayRefs(refs);
-    }
+
+    return tracks.map((t) => t.ref).filter((r) => r !== "");
+  } catch {
+    // Surfaced by the snapshot error line.
+    return [];
+  }
+}
+
+export async function playRefs(refs: string[]): Promise<void> {
+  if (refs.length === 0) {
+    return;
+  }
+  try {
+    await PlayerService.PlayRefs(refs);
+  } catch {
+    // Surfaced by the snapshot error line.
+  }
+}
+
+/** playAlbum starts an album in track order. */
+export async function playAlbum(album: Album): Promise<void> {
+  const refs = await albumRefs(album);
+  if (refs.length === 0) {
+    return;
+  }
+  try {
+    await PlayerService.PlayRefs(refs);
   } catch {
     // Surfaced by the snapshot error line.
   }
@@ -373,6 +395,93 @@ export async function toggleLike(track: Track): Promise<void> {
     await Promise.all([loadHome(), loadLibrary()]);
   } catch {
     // The row keeps its old state; a failed write is the honest result.
+  }
+}
+
+export async function queueNext(refs: string[]): Promise<void> {
+  const usable = refs.filter((r) => r !== "");
+  if (usable.length === 0) {
+    return;
+  }
+  try {
+    await PlayerService.QueueRefsNext(usable);
+  } catch {
+    // Surfaced by the snapshot error line.
+  }
+}
+
+export async function queueLast(refs: string[]): Promise<void> {
+  const usable = refs.filter((r) => r !== "");
+  if (usable.length === 0) {
+    return;
+  }
+  try {
+    await PlayerService.QueueRefsLast(usable);
+  } catch {
+    // Surfaced by the snapshot error line.
+  }
+}
+
+/** Writes the explicit target state instead of toggling against stale store state. */
+export async function setLiked(track: Track, liked: boolean): Promise<void> {
+  if (track.ref === "") {
+    return;
+  }
+  try {
+    await PlayerService.SetLiked(track.libraryId, track.ref, liked);
+    await Promise.all([loadHome(), loadLibrary()]);
+  } catch {
+    // Leave the row unchanged on a failed write.
+  }
+}
+
+export async function addToPlaylist(playlistID: string, refs: string[]): Promise<void> {
+  const id = get(libraryId);
+  if (id === "" || refs.length === 0) {
+    return;
+  }
+  try {
+    await PlayerService.AddToPlaylist(id, playlistID, refs);
+    await loadLibrary();
+  } catch {
+    // Leave the playlist unchanged on a failed write.
+  }
+}
+
+export async function renamePlaylist(playlistID: string, name: string): Promise<void> {
+  const id = get(libraryId);
+  const trimmed = name.trim();
+  if (id === "" || trimmed === "") {
+    return;
+  }
+  try {
+    await PlayerService.RenamePlaylist(id, playlistID, trimmed);
+    await Promise.all([loadHome(), loadLibrary()]);
+  } catch (err) {
+    showToast({
+      key: "playlist-rename",
+      kind: "message",
+      label: libraryErrorText(err, "Could not rename that playlist"),
+      icon: WarningCircle,
+    });
+  }
+}
+
+export async function deletePlaylist(playlistID: string): Promise<void> {
+  const id = get(libraryId);
+  if (id === "") {
+    return;
+  }
+  try {
+    await PlayerService.DeletePlaylist(id, playlistID);
+    await Promise.all([loadHome(), loadLibrary()]);
+  } catch (err) {
+    showToast({
+      key: "playlist-delete",
+      kind: "message",
+      label: libraryErrorText(err, "Could not delete that playlist"),
+      icon: WarningCircle,
+    });
   }
 }
 

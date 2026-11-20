@@ -187,6 +187,8 @@ type PlaylistWriter interface {
 	CreatePlaylist(ctx context.Context, name string) (Playlist, error)
 	AddToPlaylist(ctx context.Context, playlistID string, refs []string) error
 	RemoveFromPlaylist(ctx context.Context, playlistID string, refs []string) error
+	RenamePlaylist(ctx context.Context, playlistID, name string) error
+	DeletePlaylist(ctx context.Context, playlistID string) error
 }
 
 // Authenticator is optional account sign-in.

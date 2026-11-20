@@ -1,0 +1,131 @@
+// Catalogue rows omit Rename and Delete because neither is reversible without
+// modifying or removing audio files on disk.
+
+import { FLAG_LIKEABLE, FLAG_PLAYABLE, type Album, type Playlist, type Track } from "../types";
+import type { MenuItem, MenuTarget } from "./context-menu.svelte";
+
+/** Injected app callbacks to keep this module free of store import cycles. */
+export interface MenuDeps {
+  playlists: Playlist[];
+  next: (refs: string[]) => void;
+  last: (refs: string[]) => void;
+  like: (track: Track, liked: boolean) => void;
+  addToPlaylist: (playlistID: string, refs: string[]) => void;
+  albumRefs: (album: Album) => Promise<string[]>;
+  play: (refs: string[]) => void;
+  openAlbum: (album: Album) => void;
+  openPlaylist: (playlistID: string) => void;
+  renamePlaylist: (playlist: Playlist) => void;
+  deletePlaylist: (playlist: Playlist) => void;
+  /** Library actions take libraryID directly so right-clicking a rail row does
+   *  not switch the active library first. */
+  openLibrary: (libraryID: string) => void;
+  rescanLibrary: (libraryID: string) => void;
+  removeLibrary: (libraryID: string) => void;
+}
+
+function trackItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
+  const track = target.track;
+  const refs = [target.id];
+  const unplayable = track !== undefined && (track.flags & FLAG_PLAYABLE) === 0;
+  const rows: MenuItem[] = [
+    { kind: "item", label: "Add to next", disabled: unplayable, run: () => deps.next(refs) },
+    { kind: "item", label: "Add to queue", disabled: unplayable, run: () => deps.last(refs) },
+  ];
+
+  if (track === undefined) {
+    return rows;
+  }
+
+  if ((track.flags & FLAG_LIKEABLE) !== 0 || track.liked) {
+    rows.push({
+      kind: "item",
+      label: track.liked ? "Remove from Liked" : "Like",
+      run: () => deps.like(track, !track.liked),
+    });
+  }
+
+  // Name a single playlist inline instead of showing a one-item list.
+  if (deps.playlists.length === 1) {
+    const only = deps.playlists[0];
+    rows.push({
+      kind: "item",
+      label: `Add to ${only.name}`,
+      run: () => deps.addToPlaylist(only.id, refs),
+    });
+  } else if (deps.playlists.length > 1) {
+    rows.push({ kind: "separator" });
+    for (const list of deps.playlists) {
+      rows.push({
+        kind: "item",
+        label: list.name,
+        hint: String(list.trackCount),
+        run: () => deps.addToPlaylist(list.id, refs),
+      });
+    }
+  }
+
+  return rows;
+}
+
+function catalogueItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
+  const album = target.album;
+  if (album === undefined) {
+    return [];
+  }
+
+  return [
+    { kind: "item", label: "Open", run: () => deps.openAlbum(album) },
+    { kind: "item", label: "Play", run: () => void deps.albumRefs(album).then(deps.play) },
+    { kind: "separator" },
+    {
+      kind: "item",
+      label: "Add to next",
+      run: () => void deps.albumRefs(album).then(deps.next),
+    },
+    {
+      kind: "item",
+      label: "Add to queue",
+      run: () => void deps.albumRefs(album).then(deps.last),
+    },
+  ];
+}
+
+function playlistItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
+  const list = target.playlist;
+  if (list === undefined) {
+    return [{ kind: "item", label: "Open", run: () => deps.openPlaylist(target.id) }];
+  }
+
+  return [
+    { kind: "item", label: "Open", run: () => deps.openPlaylist(list.id) },
+    { kind: "item", label: "Rename", run: () => deps.renamePlaylist(list) },
+    { kind: "separator" },
+    { kind: "item", label: "Delete", danger: true, run: () => deps.deletePlaylist(list) },
+  ];
+}
+
+// A folder keeps its name on disk, so a library row has no Rename action.
+function libraryItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
+  const id = target.libraryId;
+
+  return [
+    { kind: "item", label: "Open", run: () => deps.openLibrary(id) },
+    { kind: "item", label: "Rescan files", run: () => deps.rescanLibrary(id) },
+    { kind: "separator" },
+    { kind: "item", label: "Remove from Molow", danger: true, run: () => deps.removeLibrary(id) },
+  ];
+}
+
+export function menuItemsFor(target: MenuTarget, deps: MenuDeps): MenuItem[] {
+  switch (target.kind) {
+    case "track":
+      return trackItems(target, deps);
+    case "catalogue":
+      return catalogueItems(target, deps);
+    case "playlist":
+      return playlistItems(target, deps);
+    case "library":
+      return libraryItems(target, deps);
+  }
+}

@@ -24,14 +24,24 @@
     selectLibrary,
     playTrack,
     playAlbum,
+    playRefs,
+    albumRefs,
+    setLiked,
+    queueNext,
+    queueLast,
+    addToPlaylist,
+    renamePlaylist,
+    deletePlaylist,
     likeRef,
     isLiked,
     loadAccents,
     loadLyrics,
     addLibrary,
     createLibrary,
+    removeLibrary,
+    rescanLibrary,
   } from "./lib/library";
-  import type { Album, Lyrics, Track } from "./lib/types";
+  import type { Album, Lyrics, Playlist, Track } from "./lib/types";
   import { percent } from "./lib/format";
   import { installKeyboard, shouldIgnoreTarget, type ShortcutAction } from "./lib/shortcuts";
   import { showToast } from "./lib/toast";
@@ -43,6 +53,11 @@
   import SearchOverlay from "./lib/ui/SearchOverlay.svelte";
   import AddMenu from "./lib/ui/AddMenu.svelte";
   import QueueWindow from "./lib/ui/QueueWindow.svelte";
+  import ContextMenu from "./lib/ui/ContextMenu.svelte";
+  import RenameDialog from "./lib/ui/RenameDialog.svelte";
+  import ConfirmDialog from "./lib/ui/ConfirmDialog.svelte";
+  import { contextMenu } from "./lib/ui/context-menu.svelte";
+  import { menuItemsFor, type MenuDeps } from "./lib/ui/menu-items";
   import HomePage from "./pages/HomePage.svelte";
   import LibraryPage from "./pages/LibraryPage.svelte";
   import AlbumPlayer from "./pages/AlbumPlayer.svelte";
@@ -277,6 +292,55 @@
       queueOpen = true;
     }
   }
+
+  // Read from the open library's shelf so menu actions match visible playlists.
+  const menuPlaylists = $derived(
+    $libraryPage.shelves.find((s) => s.kind === "playlists")?.playlists ?? [],
+  );
+
+  let renaming = $state<Playlist | null>(null);
+  let confirming = $state<{ title: string; body: string; run: () => void } | null>(null);
+
+  const menuDeps = $derived<MenuDeps>({
+    playlists: menuPlaylists,
+    next: (refs) => void queueNext(refs),
+    last: (refs) => void queueLast(refs),
+    like: (track, liked) => void setLiked(track, liked),
+    addToPlaylist: (id, refs) => void addToPlaylist(id, refs),
+    albumRefs,
+    play: (refs) => {
+      void playRefs(refs);
+      openPlayer();
+    },
+    openAlbum,
+    openPlaylist: (id) => {
+      tab = "library";
+      void loadLibrary("playlist:" + id);
+    },
+    renamePlaylist: (list) => {
+      renaming = list;
+    },
+    deletePlaylist: (list) => {
+      confirming = {
+        title: "Delete playlist",
+        body: `"${list.name}" leaves Molow. Its songs stay in the library.`,
+        run: () => void deletePlaylist(list.id),
+      };
+    },
+    openLibrary: (id) => {
+      tab = "library";
+      void selectLibrary(id);
+    },
+    rescanLibrary: (id) => void rescanLibrary(id),
+    removeLibrary: (id) => {
+      const name = $libraries.find((l) => l.id === id)?.name ?? "this library";
+      confirming = {
+        title: "Remove library",
+        body: `${name} leaves Molow. The audio files on disk are not touched.`,
+        run: () => void removeLibrary(id),
+      };
+    },
+  });
 
   function outside(e: PointerEvent) {
     const target = e.target as HTMLElement | null;
@@ -624,3 +688,41 @@
 
 <SettingsPanel open={settingsOpen} onclose={() => (settingsOpen = false)} />
 <Toaster />
+
+<!-- One menu for the whole app. It sits outside the sheet's inert wrapper so a
+     row inside the sheet still gets a working menu. -->
+{#if contextMenu.open && contextMenu.target}
+  <ContextMenu
+    target={contextMenu.target}
+    items={menuItemsFor(contextMenu.target, menuDeps)}
+  />
+{/if}
+
+{#if renaming}
+  <RenameDialog
+    title="Rename playlist"
+    label="Playlist name"
+    value={renaming.name}
+    onsubmit={(name) => {
+      const list = renaming;
+      renaming = null;
+      if (list) {
+        void renamePlaylist(list.id, name);
+      }
+    }}
+    oncancel={() => (renaming = null)}
+  />
+{/if}
+
+{#if confirming}
+  <ConfirmDialog
+    title={confirming.title}
+    body={confirming.body}
+    onconfirm={() => {
+      const pick = confirming;
+      confirming = null;
+      pick?.run();
+    }}
+    oncancel={() => (confirming = null)}
+  />
+{/if}

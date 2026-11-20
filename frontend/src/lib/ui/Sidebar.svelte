@@ -7,6 +7,7 @@
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
   import Plus from "phosphor-svelte/lib/Plus";
   import Cover from "./Cover.svelte";
+  import { openContextMenu } from "./context-menu.svelte";
 
   export interface PlaylistRow {
     id: string;
@@ -199,6 +200,14 @@
           title={lib.name}
           aria-current={lib.id === activeLibrary ? "true" : undefined}
           onclick={() => onswitch(lib.id)}
+          oncontextmenu={(e) => {
+            openContextMenu(e, {
+              kind: "library",
+              id: lib.id,
+              label: lib.name || "this library",
+              libraryId: lib.id,
+            });
+          }}
         >
           <span
             class="relative shrink-0 overflow-hidden rounded-[4px]"

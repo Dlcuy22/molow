@@ -5,6 +5,8 @@
   import AlbumCard from "../lib/ui/AlbumCard.svelte";
   import Chip from "../lib/ui/Chip.svelte";
   import Cover from "../lib/ui/Cover.svelte";
+  import PlaylistCard from "../lib/ui/PlaylistCard.svelte";
+  import TrackTile from "../lib/ui/TrackTile.svelte";
 
   let {
     shelves = [],
@@ -59,17 +61,7 @@
 </script>
 
 {#snippet playlistCard(list: Playlist)}
-  <button class="w-[166px] text-left" onclick={() => onopenPlaylist(list.id)}>
-    <span class="grid h-[166px] w-[166px] place-items-center rounded-lg bg-surface">
-      <span class="size-7 rounded-md border border-line"></span>
-    </span>
-    <span class="mt-1.5 block truncate font-display text-[15px] font-bold">
-      {list.name}
-    </span>
-    <span class="block text-[11px] text-muted">
-      Playlist · {list.trackCount} {list.trackCount === 1 ? "song" : "songs"}
-    </span>
-  </button>
+  <PlaylistCard list={list} onopen={onopenPlaylist} />
 {/snippet}
 
 <div class="flex h-full flex-col overflow-hidden pl-[50px] pr-9 pt-[41px]">
@@ -175,16 +167,7 @@
             />
           {/each}
           {#each tracks.slice(0, 5) as track (track.ref)}
-            <button
-              class="flex h-[50px] w-[166px] items-center gap-2 rounded-lg pl-1.5 pr-2 text-left transition-colors hover:bg-hover focus-visible:bg-hover"
-              onclick={() => onplay(track)}
-            >
-              <Cover id={track.coverId} size={40} radius={8} />
-              <span class="min-w-0">
-                <span class="block truncate font-display text-[12px] font-bold">{track.title}</span>
-                <span class="block truncate text-[10px] text-muted">{track.artist}</span>
-              </span>
-            </button>
+            <TrackTile {track} onplay={onplay} />
           {/each}
         </div>
       {/if}

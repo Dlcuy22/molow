@@ -275,6 +275,14 @@ func (l *Local) RemoveFromPlaylist(_ context.Context, id string, refs []string) 
 	return l.store.RemoveFromPlaylist(id, refs)
 }
 
+func (l *Local) RenamePlaylist(_ context.Context, id, name string) error {
+	return l.store.RenamePlaylist(l.lib.ID, id, name)
+}
+
+func (l *Local) DeletePlaylist(_ context.Context, id string) error {
+	return l.store.DeletePlaylist(l.lib.ID, id)
+}
+
 // Scan walks every root and writes the catalogue. The walk is synchronous; the
 // service runs it on a worker so a large folder does not block the UI.
 func (l *Local) Scan(ctx context.Context) (int, error) {

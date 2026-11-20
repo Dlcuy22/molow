@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/dlcuy22/molo"
 	"github.com/dlcuy22/molow/internal/artcache"
 	"github.com/dlcuy22/molow/internal/color"
 	"github.com/dlcuy22/molow/internal/cover"
@@ -683,6 +684,47 @@ func (s *PlayerService) PlayRefs(refs []string) error {
 	return s.command(func() error { return s.player.PlayQueue(refs) })
 }
 
+// QueueRefsNext inserts refs after the active track, or starts playback if idle.
+func (s *PlayerService) QueueRefsNext(refs []string) error {
+	refs = queuedRefs(refs)
+	if len(refs) == 0 {
+		return nil
+	}
+
+	return s.command(func() error {
+		snap := s.player.Snapshot()
+		if snap.QueueIndex >= 0 && (snap.State == molo.Playing || snap.State == molo.Paused) {
+			return s.player.InsertQueue(snap.QueueIndex+1, refs)
+		}
+
+		return s.player.InsertQueueAndPlay(0, refs)
+	})
+}
+
+// QueueRefsLast appends refs to the end of the queue without interrupting playback.
+func (s *PlayerService) QueueRefsLast(refs []string) error {
+	refs = queuedRefs(refs)
+	if len(refs) == 0 {
+		return nil
+	}
+
+	return s.command(func() error {
+		return s.player.InsertQueue(len(s.player.Queue()), refs)
+	})
+}
+
+// queuedRefs filters empty refs (missing local files) so InsertQueue does not fail.
+func queuedRefs(refs []string) []string {
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if ref != "" {
+			out = append(out, ref)
+		}
+	}
+
+	return out
+}
+
 // LibrarySearch runs a library's own search capability.
 func (s *PlayerService) LibrarySearch(id, query string, limit int) (library.Page, error) {
 	src, ok := s.librarySource(id)
@@ -761,6 +803,38 @@ func (s *PlayerService) RemoveFromPlaylist(libraryID, playlistID string, refs []
 	}
 
 	return writer.RemoveFromPlaylist(s.ctx, playlistID, refs)
+}
+
+// RenamePlaylist changes a playlist's name, rejecting blank input.
+func (s *PlayerService) RenamePlaylist(libraryID, playlistID, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("playlist: a name is required")
+	}
+	src, ok := s.librarySource(libraryID)
+	if !ok {
+		return fmt.Errorf("library: unknown id %q", libraryID)
+	}
+	writer, ok := src.(library.PlaylistWriter)
+	if !ok {
+		return fmt.Errorf("library: %q cannot edit playlists", libraryID)
+	}
+
+	return writer.RenamePlaylist(s.ctx, playlistID, name)
+}
+
+// DeletePlaylist removes a playlist and its entries while leaving catalogue tracks intact.
+func (s *PlayerService) DeletePlaylist(libraryID, playlistID string) error {
+	src, ok := s.librarySource(libraryID)
+	if !ok {
+		return fmt.Errorf("library: unknown id %q", libraryID)
+	}
+	writer, ok := src.(library.PlaylistWriter)
+	if !ok {
+		return fmt.Errorf("library: %q cannot edit playlists", libraryID)
+	}
+
+	return writer.DeletePlaylist(s.ctx, playlistID)
 }
 
 // PickLibraryFolder shows the native folder picker and returns the path without

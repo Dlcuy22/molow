@@ -1,6 +1,7 @@
 <script lang="ts">
   import Cover from "./Cover.svelte";
   import type { Album } from "../types";
+  import { openContextMenu } from "./context-menu.svelte";
 
   let {
     album,
@@ -18,6 +19,16 @@
   const meta = $derived(
     home ? album.artist : `Album · ${album.songCount} ${album.songCount === 1 ? "song" : "songs"}`,
   );
+
+  function menu(e: MouseEvent) {
+    openContextMenu(e, {
+      kind: "catalogue",
+      id: album.id,
+      label: album.name || "this album",
+      libraryId: album.libraryId,
+      album,
+    });
+  }
 </script>
 
 <div class="group w-[166px] shrink-0">
@@ -26,6 +37,7 @@
     style="height:{home ? 175 : 166}px"
     aria-label="{album.name} by {album.artist}"
     onclick={() => onopen(album)}
+    oncontextmenu={menu}
   >
     <Cover id={album.coverId} alt="" size={166} radius={8} class="transition-opacity group-hover:opacity-90" />
     <span
@@ -45,6 +57,7 @@
       class:text-[20px]={home}
       class:text-[15px]={!home}
       onclick={() => onopen(album)}
+      oncontextmenu={menu}
     >
       {album.name}
     </button>

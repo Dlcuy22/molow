@@ -193,6 +193,14 @@ export function DeleteEffectPreset(name: string): $CancellablePromise<void> {
 }
 
 /**
+ * DeletePlaylist drops a playlist and its entries. The catalogue tracks stay:
+ * a playlist is a view over them, not their owner.
+ */
+export function DeletePlaylist(libraryID: string, playlistID: string): $CancellablePromise<void> {
+    return $Call.ByID(4273019416, libraryID, playlistID);
+}
+
+/**
  * DiscordStatus reports the integration's state for the settings UI.
  */
 export function DiscordStatus(): $CancellablePromise<$models.DiscordStatus> {
@@ -505,6 +513,23 @@ export function QueueCover(path: string): $CancellablePromise<string> {
 }
 
 /**
+ * QueueRefsLast appends refs to the end, which is what "Add to queue" means. A
+ * live track keeps playing; an empty queue simply gains its first entries.
+ */
+export function QueueRefsLast(refs: string[] | null): $CancellablePromise<void> {
+    return $Call.ByID(2281190466, refs);
+}
+
+/**
+ * QueueRefsNext splices refs after the playing track, which is what "Add to
+ * next" means. With nothing sounding there is no next position, so the insert
+ * also starts them.
+ */
+export function QueueRefsNext(refs: string[] | null): $CancellablePromise<void> {
+    return $Call.ByID(4259517539, refs);
+}
+
+/**
  * RefreshAuth re-validates the stored session against the server and updates the
  * status. It is the call that notices a revoked session, because a dead one
  * answers HTTP 200 rather than an error status.
@@ -526,6 +551,14 @@ export function RemoveFromPlaylist(libraryID: string, playlistID: string, refs: 
 
 export function RemoveLibrary(id: string): $CancellablePromise<void> {
     return $Call.ByID(2918659700, id);
+}
+
+/**
+ * RenamePlaylist changes a playlist's name. The menu's Rename row supplies the
+ * name; an empty one is refused here rather than stored as a blank row.
+ */
+export function RenamePlaylist(libraryID: string, playlistID: string, name: string): $CancellablePromise<void> {
+    return $Call.ByID(4043211265, libraryID, playlistID, name);
 }
 
 /**

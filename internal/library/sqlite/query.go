@@ -428,6 +428,47 @@ func (s *Store) CreatePlaylistWithRemote(libraryID, name, remoteID string) (libr
 	return library.Playlist{ID: id, LibraryID: libraryID, Name: name, RemoteID: remoteID}, nil
 }
 
+// RenamePlaylist sets a playlist's name. The library id is checked so a
+// playlist from another library cannot be renamed by a stale id.
+func (s *Store) RenamePlaylist(libraryID, playlistID, name string) error {
+	res, err := s.db.Exec(
+		`UPDATE playlist SET name = ?, updated_at = ? WHERE id = ? AND library_id = ?`,
+		name, time.Now().Unix(), playlistID, libraryID,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("playlist: unknown id %q", playlistID)
+	}
+
+	return nil
+}
+
+// DeletePlaylist drops a playlist. Its entries go with it through the
+// ON DELETE CASCADE on playlist_entry.
+func (s *Store) DeletePlaylist(libraryID, playlistID string) error {
+	res, err := s.db.Exec(
+		`DELETE FROM playlist WHERE id = ? AND library_id = ?`, playlistID, libraryID,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("playlist: unknown id %q", playlistID)
+	}
+
+	return nil
+}
+
 // AddToPlaylist appends refs, skipping ones already present.
 func (s *Store) AddToPlaylist(playlistID string, refs []string) error {
 	tx, err := s.db.Begin()

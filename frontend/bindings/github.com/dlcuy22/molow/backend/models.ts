@@ -239,11 +239,27 @@ export interface LyricsCacheClear {
  * "lyrics" (a lyrics/ folder in the track's own directory) or "beside" (the
  * .lrc next to the file). Folder is where YouTube Music references cache their
  * <videoId>.lrc; an empty value keeps the default under the config dir.
+ * 
+ * AutoRomanization turns the romanized lyric tier on, and RomanizationLanguage
+ * picks which engine runs. "jp" is the only one with an engine; "ko", "zh" and
+ * "cjk" are reserved, and a value without an engine leaves the sheet untouched.
+ * AutoSpacing writes a word break between morphemes in the romaji, which reads
+ * like prose; off keeps the line joined the way the kana are written. It has no
+ * effect while AutoRomanization is off.
+ * 
+ * WordSweep is which rows the karaoke highlight runs on: "both" sweeps the
+ * original and the romaji, "original" keeps the romaji a static reading line.
+ * The sweep is a display choice, so the backend only stores it; the pane reads
+ * it directly.
  */
 export interface LyricsSettings {
     "providers": { [_ in string]?: boolean } | null;
     "saveLocation": string;
     "folder": string;
+    "autoRomanization": boolean;
+    "romanizationLanguage": string;
+    "autoSpacing": boolean;
+    "wordSweep": string;
 }
 
 /**

@@ -81,9 +81,12 @@ export interface LibraryInfo {
   trackCount: number;
 }
 
-/** LyricWord is one sung segment of a word-synced line, in milliseconds. */
+/** LyricWord is one sung segment of a word-synced line, in milliseconds.
+ *  romanized is the same word in Hepburn romaji, a slice of the line's
+ *  romanized text, and is absent when the sheet has not been romanized. */
 export interface LyricWord {
   text: string;
+  romanized?: string;
   startMs: number;
   endMs: number;
 }
@@ -92,6 +95,7 @@ export interface LyricLine {
   timeMs: number;
   text: string;
   translation: string;
+  romanized?: string;
   words?: LyricWord[];
 }
 

@@ -68,10 +68,26 @@ type PlaybackSettings struct {
 // "lyrics" (a lyrics/ folder in the track's own directory) or "beside" (the
 // .lrc next to the file). Folder is where YouTube Music references cache their
 // <videoId>.lrc; an empty value keeps the default under the config dir.
+//
+// AutoRomanization turns the romanized lyric tier on, and RomanizationLanguage
+// picks which engine runs. "jp" is the only one with an engine; "ko", "zh" and
+// "cjk" are reserved, and a value without an engine leaves the sheet untouched.
+// AutoSpacing writes a word break between morphemes in the romaji, which reads
+// like prose; off keeps the line joined the way the kana are written. It has no
+// effect while AutoRomanization is off.
+//
+// WordSweep is which rows the karaoke highlight runs on: "both" sweeps the
+// original and the romaji, "original" keeps the romaji a static reading line.
+// The sweep is a display choice, so the backend only stores it; the pane reads
+// it directly.
 type LyricsSettings struct {
-	Providers    map[string]bool `json:"providers"`
-	SaveLocation string          `json:"saveLocation"`
-	Folder       string          `json:"folder"`
+	Providers            map[string]bool `json:"providers"`
+	SaveLocation         string          `json:"saveLocation"`
+	Folder               string          `json:"folder"`
+	AutoRomanization     bool            `json:"autoRomanization"`
+	RomanizationLanguage string          `json:"romanizationLanguage"`
+	AutoSpacing          bool            `json:"autoSpacing"`
+	WordSweep            string          `json:"wordSweep"`
 }
 
 // StreamSettings is the Stream tab. It is empty today: the YouTube Music and
@@ -157,9 +173,13 @@ func defaultLyricsSettings() LyricsSettings {
 	}
 
 	return LyricsSettings{
-		Providers:    providers,
-		SaveLocation: "lyrics",
-		Folder:       "",
+		Providers:            providers,
+		SaveLocation:         "lyrics",
+		Folder:               "",
+		AutoRomanization:     false,
+		RomanizationLanguage: lyricRomanizationJP,
+		AutoSpacing:          false,
+		WordSweep:            lyricWordSweepBoth,
 	}
 }
 
@@ -338,12 +358,13 @@ func clampVisualizerDelayMs(ms int) int {
 	}
 }
 
-// normalizeLyricsSettings fills the lyric group in: unknown provider names are
-// dropped, known ones the file omitted default to on, and only the two save
-// locations are kept. def is what normalization with no source falls back to.
+// normalizeLyricsSettings drops unknown providers, defaults omitted ones to on,
+// and falls back invalid save, language, or sweep values to def.
 func normalizeLyricsSettings(s LyricsSettings, def LyricsSettings) LyricsSettings {
 	out := LyricsSettings{
-		Providers: make(map[string]bool, len(lyrics.ChainProviders)),
+		Providers:        make(map[string]bool, len(lyrics.ChainProviders)),
+		AutoRomanization: s.AutoRomanization,
+		AutoSpacing:      s.AutoSpacing,
 	}
 	for _, name := range lyrics.ChainProviders {
 		on, present := s.Providers[name]
@@ -357,6 +378,18 @@ func normalizeLyricsSettings(s LyricsSettings, def LyricsSettings) LyricsSetting
 		out.SaveLocation = s.SaveLocation
 	default:
 		out.SaveLocation = def.SaveLocation
+	}
+	switch s.RomanizationLanguage {
+	case "jp":
+		out.RomanizationLanguage = s.RomanizationLanguage
+	default:
+		out.RomanizationLanguage = def.RomanizationLanguage
+	}
+	switch s.WordSweep {
+	case lyricWordSweepBoth, lyricWordSweepOriginal:
+		out.WordSweep = s.WordSweep
+	default:
+		out.WordSweep = def.WordSweep
 	}
 	out.Folder = s.Folder
 
@@ -484,6 +517,8 @@ func (s *PlayerService) SetAppSettings(next AppSettings) (AppSettings, error) {
 	s.appSettingsMu.Unlock()
 
 	s.applyAppSettingsLocked()
+	// Update dictionary residency on save rather than on the read path.
+	s.syncRomanizer()
 	// The log file follows the document on the same path the engine settings
 	// do, so a toggle, a level or a new path takes effect on the save itself.
 	s.applyLogSettings()

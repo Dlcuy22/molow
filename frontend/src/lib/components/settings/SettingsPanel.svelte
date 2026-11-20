@@ -268,6 +268,10 @@
   const providers = $derived($appSettings.playback.lyrics.providers ?? {});
   const saveLocation = $derived($appSettings.playback.lyrics.saveLocation);
   const lyricsFolder = $derived($appSettings.playback.lyrics.folder);
+  const autoRomanization = $derived($appSettings.playback.lyrics.autoRomanization);
+  const romanizationLanguage = $derived($appSettings.playback.lyrics.romanizationLanguage);
+  const autoSpacing = $derived($appSettings.playback.lyrics.autoSpacing);
+  const wordSweep = $derived($appSettings.playback.lyrics.wordSweep);
 
   // setVisualizerStyle persists the chosen layout and pokes the running pump
   // at once. Off is the same switch the v key flips, and the layout is kept so
@@ -515,6 +519,72 @@
                     <Button label="Clear" busyLabel="Clearing" onclick={clearLyricsCache} />
                   {/snippet}
                 </SettingRow>
+
+                <SettingRow
+                  label="Auto romanization"
+                  description="Show the line in romaji while it plays."
+                >
+                  {#snippet control()}
+                    <Switch
+                      checked={autoRomanization}
+                      label="Auto romanization"
+                      onchange={(on) => setLyrics({ autoRomanization: on })}
+                    />
+                  {/snippet}
+                </SettingRow>
+
+                <!-- JP is the only engine today; more options land here later. -->
+                <div class="py-2.5" class:opacity-40={!autoRomanization}>
+                  <SettingRow label="Language" description={null}>
+                    {#snippet control()}
+                      <Picker
+                        label={null}
+                        ariaLabel="Romanization language"
+                        value={romanizationLanguage}
+                        disabled={!autoRomanization}
+                        options={[{ value: "jp", label: "JP" }]}
+                        onchange={(v) => setLyrics({ romanizationLanguage: v })}
+                      />
+                    {/snippet}
+                  </SettingRow>
+                </div>
+
+                <div class="py-2.5" class:opacity-40={!autoRomanization}>
+                  <SettingRow
+                    label="Auto spacing"
+                    description="Separate words with a space, so a line reads like prose."
+                  >
+                    {#snippet control()}
+                      <Switch
+                        checked={autoSpacing}
+                        label="Auto spacing"
+                        disabled={!autoRomanization}
+                        onchange={(on) => setLyrics({ autoSpacing: on })}
+                      />
+                    {/snippet}
+                  </SettingRow>
+                </div>
+
+                <div class="py-2.5" class:opacity-40={!autoRomanization}>
+                  <SettingRow
+                    label="Word sweep"
+                    description="Highlight the romaji with the line, or keep it a static caption."
+                  >
+                    {#snippet control()}
+                      <Picker
+                        label={null}
+                        ariaLabel="Word sweep"
+                        value={wordSweep}
+                        disabled={!autoRomanization}
+                        options={[
+                          { value: "both", label: "Both" },
+                          { value: "original", label: "Original" },
+                        ]}
+                        onchange={(v) => setLyrics({ wordSweep: v })}
+                      />
+                    {/snippet}
+                  </SettingRow>
+                </div>
               </div>
             </SettingGroup>
           </div>

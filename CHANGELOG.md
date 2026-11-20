@@ -9,6 +9,29 @@ without a deprecation cycle.
 
 ## [Unreleased]
 
+### Added
+
+- Japanese romanization for the lyric column: a Settings ▸ Playback ▸ Lyrics
+  switch converts each line to Hepburn romaji with kagome and the embedded
+  IPADIC dictionary. The romaji draws as a caption under the line it spells,
+  not in place of it, and the original text and the translation stay in the
+  document; a language without an engine (Korean, Chinese) leaves the sheet as
+  it is. The dictionary is about 13 MB in the binary and is loaded only when the
+  switch is on, not at startup, and is dropped again after five idle minutes with
+  the switch off. It is cached as an owned file on first use, which is what allows
+  the drop to return the whole 88 MiB instead of leaving it pinned for the session.
+- An Auto spacing switch beside it: on, a word break sits between morphemes and
+  the romaji reads like prose (`anata ga home te kure ta`); off, it stays joined
+  the way the kana are written. A space the sheet already carried is not doubled,
+  a っ is not split from the morpheme it doubles, and punctuation stays attached
+  to its word. The reading is the same either way, and the karaoke sweep works
+  with spacing on.
+- A Word sweep picker: Both (the default) highlights the romaji with the
+  original line, Original keeps the romaji a static caption.
+- The lyric sweep now runs on an interpolated clock instead of the 4 Hz position
+  snapshot, so a word fades in step with the voice rather than snapping on the
+  quarter second.
+
 ## [0.5.0] - 2026-11-14
 
 ### Added

@@ -173,6 +173,9 @@ type PlayerService struct {
 	state      SessionState
 	stateTimer *time.Timer
 
+	// romanizer owns the lyric dictionary and its load/unload lifecycle.
+	romanizer *romanizer
+
 	// libMu guards the catalogue handle and the source registry. A scan runs on
 	// its own goroutine, so the map is read while a scan writes progress.
 	libMu    sync.Mutex
@@ -204,7 +207,7 @@ func newPlayerService() *PlayerService {
 
 	ytmIndex := newYTMIndex()
 
-	return &PlayerService{
+	s := &PlayerService{
 		closing:         make(chan struct{}),
 		spectrumCfg:     spectrum.DefaultConfig(),
 		spectrumEnabled: true,
@@ -224,6 +227,12 @@ func newPlayerService() *PlayerService {
 		cancel:              cancel,
 		log:                 slog.Default(),
 	}
+	s.romanizer = newRomanizer(func(msg string, args ...any) {
+		s.logger().Info(msg, args...)
+	})
+	s.romanizer.wants = s.romanizationWanted
+
+	return s
 }
 
 // ServiceStartup builds the engine and starts the two background pumps. It is
@@ -233,6 +242,9 @@ func (s *PlayerService) ServiceStartup(_ context.Context, _ application.ServiceO
 	// the startup lines land in the file and at the remembered level. A
 	// failure only costs the file: the console keeps everything.
 	s.applyLogSettings()
+
+	// Load the dictionary only if saved settings enable romanization.
+	s.syncRomanizer()
 
 	// Register the Lua effects before the player is built, so the chooser and
 	// the effect window see them from the first snapshot. A script failure is
@@ -348,6 +360,9 @@ func (s *PlayerService) ServiceShutdown() error {
 	if store != nil {
 		_ = store.Close()
 	}
+
+	// Stop a pending dictionary drop so the timer cannot outlive the service.
+	s.romanizer.shutdown()
 
 	if s.player != nil {
 		return s.player.Close()

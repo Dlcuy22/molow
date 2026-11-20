@@ -112,6 +112,10 @@ export const appSettings = writable<AppSettings>({
       providers: { petitlyrics: true, betterlyrics: true, lyricsplus: true, kugou: true, lrclib: true },
       saveLocation: "lyrics",
       folder: "",
+      autoRomanization: false,
+      romanizationLanguage: "jp",
+      autoSpacing: false,
+      wordSweep: "both",
     },
   },
   stream: {},
@@ -573,19 +577,16 @@ export const commands = {
     PlayerService.SetPreviewConfig(cfg).catch(() => {});
   },
 
-  // setAppSettings writes the whole settings document. It mirrors the value
-  // locally first so the panel reacts on the click, then persists through Go.
-  // The normalized document Go returns is mirrored back, so a clamped value
-  // does not leave the panel showing something the file does not hold.
+  // setAppSettings mirrors locally for instant UI feedback, then persists through Go.
   setAppSettings: (next: AppSettings) => {
-    appSettings.set(next);
-    PlayerService.SetAppSettings(next)
+    pendingSettingsSave = PlayerService.SetAppSettings(next)
       .then((stored) => {
         if (stored) appSettings.set(stored);
       })
       .catch((err) => {
         player.update((s) => ({ ...s, error: errorText(err) }));
       });
+    appSettings.set(next);
   },
 
   // Effect commands. openEffectWindow is the main window's entry point; the
@@ -754,6 +755,14 @@ function errorText(err: unknown): string {
   return "the player rejected that action";
 }
 
+
+// Tracks the latest SetAppSettings RPC so dependent reads wait for Go to commit it.
+let pendingSettingsSave: Promise<unknown> = Promise.resolve();
+
+/** waitForSettingsSave resolves once the latest SetAppSettings RPC has settled. */
+export function waitForSettingsSave(): Promise<unknown> {
+  return pendingSettingsSave;
+}
 
 /** current reads the store without subscribing, for event handlers. */
 export function current(): Snapshot {

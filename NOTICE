@@ -71,9 +71,27 @@ PulseAudio on Linux, CoreAudio on macOS.
 Permissive components
 ---------------------
 
+### github.com/ikawaha/kagome v2.11.1 and the IPADIC dictionary — MIT, with the
+mecab-ipadic notice
+
+The lyric romanizer (`internal/romanize`) uses kagome to segment Japanese lines
+and the `ipa` dictionary package for the readings. Both are MIT.
+
+The `ipa` package embeds mecab-ipadic-2.7.0-20070801, whose data is distributed
+by NAIST and includes entries from ICOT Free Software. The upstream `NOTICE.txt`
+in that module requires the ICOT NO WARRANTY section to travel with any
+redistribution of the dictionary, so it must be reproduced in full wherever a
+build is documented:
+
+- https://github.com/ikawaha/kagome-dict/blob/master/ipa/NOTICE.txt
+
+The dictionary is compiled into every binary, so a redistributor ships that
+notice alongside the LGPL obligations above.
+
 MIT:
 
-- github.com/dlcuy22/molo v1.2.0 — the audio engine
+- github.com/ikawaha/kagome/v2 v2.11.1, github.com/ikawaha/kagome-dict v1.1.7,
+  github.com/ikawaha/kagome-dict/ipa v1.2.6 the Japanese lyric romanizer
 - github.com/tphakala/go-flac v1.1.0
 - github.com/tphakala/go-mp3 v0.1.0
 - github.com/tphakala/go-m4a v0.5.0

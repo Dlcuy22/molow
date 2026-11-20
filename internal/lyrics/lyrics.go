@@ -18,23 +18,24 @@ import (
 	"strings"
 )
 
-// Line is one lyric line and its translation, keyed by the timestamp they
-// share. A file with no translation leaves Translation empty. Words carries
-// the per-word timing of a word-synced line; a line-synced line leaves it nil.
+// Line is one lyric line and its optional translation, keyed by timestamp.
+// Words holds per-word timing when word-synced; Romanized is derived at read
+// time when romanization is enabled and is never persisted on disk.
 type Line struct {
 	TimeMs      int64  `json:"timeMs"`
 	Text        string `json:"text"`
 	Translation string `json:"translation"`
+	Romanized   string `json:"romanized,omitempty"`
 	Words       []Word `json:"words,omitempty"`
 }
 
-// Word is one sung segment of a line and its timing. End is always set: a
-// provider may not supply one, so it falls back to the next word's start and
-// for the last word to the next line's start, or half a second.
+// Word is one sung segment of a line. End always falls back to the next word,
+// the next line, or 500ms; Romanized is an in-order slice of Line.Romanized.
 type Word struct {
-	Text    string `json:"text"`
-	StartMs int64  `json:"startMs"`
-	EndMs   int64  `json:"endMs"`
+	Text      string `json:"text"`
+	Romanized string `json:"romanized,omitempty"`
+	StartMs   int64  `json:"startMs"`
+	EndMs     int64  `json:"endMs"`
 }
 
 // Document is what the player draws. Synced is false for a plain-text lyric

@@ -1,0 +1,36 @@
+ゆらゆらり
+  line   yurayurari
+  spaced yurayura ri
+  words  yura|yurari
+  sweeps ok
+色とりどり
+  line   irotoridori
+  words  iro|toridori
+  sweeps ok
+涙はそっと枯れていく
+  line   namidawasottokareteiku
+  spaced namida wa sotto kare te iku
+  words  namida|wa|so|t|to|kare|te|iku
+  sweeps ok
+可笑しいよねって笑ってる
+  line   okashiiyonettewaratteru
+  spaced okashii yo ne tte waratteru
+  words  o|ka|shi|i|yo|ne|t|te||wa|rat|te|ru
+  sweeps ok
+datte = 哀たく
+  line   datte = 哀taku
+  spaced datte = 哀 taku
+  words  datte|=|哀|taku
+  sweeps ok
+本当に愛してる 私だけの貴方を
+  line   hontooniaishiteru watashidakenoanatao
+  spaced hontooni aishi teru watashi dake no anata o
+  words  hontooni|aishiteru||watashi|dake|no|anata|o
+  sweeps ok
+「ごめんなさい」すらも
+  line   「gomennasai」suramo
+  spaced 「gomennasai」 sura mo
+  words  「|gomennasai|」|suramo
+  sweeps ok
+hello, world!
+  line   hello, world!

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import CaretDown from "phosphor-svelte/lib/CaretDown";
   import MusicNote from "phosphor-svelte/lib/MusicNote";
   import Pause from "phosphor-svelte/lib/Pause";
@@ -9,7 +10,7 @@
   import SkipBack from "phosphor-svelte/lib/SkipBack";
   import SkipForward from "phosphor-svelte/lib/SkipForward";
   import type { Snapshot } from "../../bindings/github.com/dlcuy22/molow/backend/models";
-  import type { Lyrics } from "../lib/types";
+  import type { Lyrics, LyricLine, LyricWord } from "../lib/types";
   import { commands, spectrumConfig, appSettings } from "../lib/store";
   import { formatTime } from "../lib/format";
   import { sweepSegments } from "../lib/word-sweep";
@@ -58,23 +59,85 @@
     active = idx;
   });
 
-  // wordOpacity is how strongly one word shows at the play position. A sung
-  // word is solid, an unsung word sits dimmed, and the word under the play
-  // head fades between the two. Only the active line calls it; other lines
-  // keep their own opacity.
-  const wordOpacity = (w: { startMs: number; endMs: number }): number => {
-    if (position >= w.endMs) {
-      return 1;
+  // Interpolate the 4 Hz snapshot position at display rate and publish --clock
+  // once per frame on the active line so every word span updates via CSS.
+  let clockBase = 0;
+  let clockAt = 0;
+  let clockRaf: number | undefined;
+
+  const clockNow = (): number =>
+    snap.state === "playing" ? clockBase + (performance.now() - clockAt) : clockBase;
+
+  function paintClock() {
+    const el = pairEls[active];
+    if (!el || !el.isConnected) return;
+    el.style.setProperty("--clock", String(Math.round(clockNow())));
+  }
+
+  function stopClock() {
+    if (clockRaf !== undefined) {
+      cancelAnimationFrame(clockRaf);
+      clockRaf = undefined;
     }
-    if (position <= w.startMs || w.endMs <= w.startMs) {
-      return 0.3;
+  }
+
+  function stepClock() {
+    paintClock();
+    clockRaf = requestAnimationFrame(stepClock);
+  }
+
+  // Re-anchor only on snapshot updates; tracking active here would stamp a stale position.
+  $effect(() => {
+    const pos = snap.position;
+    clockBase = pos;
+    clockAt = performance.now();
+    untrack(paintClock);
+  });
+
+  // Paint --clock when lyrics load/reload or active changes while paused.
+  $effect(() => {
+    void lines;
+    void active;
+    paintClock();
+  });
+
+  $effect(() => {
+    stopClock();
+    if (!open || snap.state !== "playing") {
+      untrack(paintClock);
+      return;
     }
-    return 0.3 + 0.7 * ((position - w.startMs) / (w.endMs - w.startMs));
+    stepClock();
+    return stopClock;
+  });
+
+  // Opacity slope (0.3 -> 1.0) over the word's duration; zero-length words snap.
+  const wordRate = (w: { startMs: number; endMs: number }): number => {
+    const span = w.endMs - w.startMs;
+    return span > 0 ? 0.7 / span : 1e6;
   };
 
   // instrumentalMark is the line text the TTML pre-processing leaves in a long
   // instrumental gap. The pane draws notes for it instead of the character.
   const instrumentalMark = "♪";
+
+  type LyricTier = { text: string; words?: LyricWord[] };
+
+  // Original line first, then romaji when present; empty word texts drop from sweepSegments.
+  const lyricTiers = (line: LyricLine): LyricTier[] => {
+    const tiers: LyricTier[] = [{ text: line.text, words: line.words }];
+    if (line.romanized) {
+      tiers.push({
+        text: line.romanized,
+        words: line.words?.map((w) => ({ ...w, text: w.romanized ?? "" })),
+      });
+    }
+
+    return tiers;
+  };
+
+  const sweepBoth = $derived($appSettings.playback.lyrics.wordSweep !== "original");
+
   const visualizerStyle = $derived($appSettings.general.visualizerStyle ?? "minimal");
   const visualizerFull = $derived($spectrumConfig.enabled && visualizerStyle === "full");
   // lyricsFade masks the bottom of the lyrics column, transparent under the
@@ -182,11 +245,12 @@
     stopGlide();
   });
 
-  // The idle timer and the glide must not outlive the pane.
+  // The idle timer, the glide and the sweep clock must not outlive the pane.
   $effect(() => {
     return () => {
       clearTimeout(idleTimer);
       stopGlide();
+      stopClock();
     };
   });
 
@@ -229,6 +293,26 @@
   onwheel={wakeCursor}
   onkeydown={wakeCursor}
 />
+
+{#snippet tier(text: string, words: LyricWord[] | undefined, swept: boolean)}
+  {#if swept && words && words.length > 0}
+    {@const segments = sweepSegments(text, words)}
+    {#if segments}
+      {#each segments as segment, j (j)}
+        {#if segment.word}
+          <span
+            class="lyric-word"
+            style="--from:{segment.word.startMs};--inv:{wordRate(segment.word)}"
+          >{segment.text}</span>
+        {:else}{segment.text}{/if}
+      {/each}
+    {:else}
+      {text}
+    {/if}
+  {:else}
+    {text}
+  {/if}
+{/snippet}
 
 <div
   class="album-sheet h-full w-full overflow-hidden text-fg"
@@ -344,6 +428,7 @@
       {:else}
         <div class="flex flex-col gap-[22px] py-[calc(50vh-22px)] pl-2">
           {#each lines as line, i (line.timeMs + ":" + i)}
+            {@const tiers = lyricTiers(line)}
             <div
               bind:this={pairEls[i]}
               class="flex flex-col gap-[2px]"
@@ -369,29 +454,24 @@
                       <MusicNote size={28} weight="fill" />
                       <MusicNote size={28} weight="fill" />
                     </span>
-                  {:else if i === active && line.words && line.words.length > 0}
-                    <!-- The word sweep dims and lifts each timed word. The
-                         words sit inside the line text, so the gaps between
-                         them come from the line and are never highlighted. -->
-                    {@const segments = sweepSegments(line.text, line.words)}
-                    {#if segments}
-                      {#each segments as segment, j (j)}
-                        {#if segment.word}
-                          <span
-                            class="transition-opacity duration-100 ease-linear"
-                            style:opacity={wordOpacity(segment.word)}
-                          >{segment.text}</span>
-                        {:else}{segment.text}{/if}
-                      {/each}
-                    {:else}
-                      {line.text}
-                    {/if}
                   {:else}
-                    {line.text}
+                    <span class="block">{@render tier(tiers[0].text, tiers[0].words, i === active)}</span>
+                    {#if tiers[1]}
+                      <span class="mt-[3px] block font-jp text-[17px] font-normal italic leading-[1.4] text-fg/56">
+                        {@render tier(tiers[1].text, tiers[1].words, i === active && sweepBoth)}
+                      </span>
+                    {/if}
                   {/if}
                 </button>
               {:else}
-                <p class="font-jp text-[28px] font-medium leading-[1.4]">{line.text}</p>
+                <p class="font-jp text-[28px] font-medium leading-[1.4]">
+                  {@render tier(tiers[0].text, tiers[0].words, false)}
+                </p>
+                {#if tiers[1]}
+                  <p class="mt-[3px] font-jp text-[17px] font-normal italic leading-[1.4] text-fg/56">
+                    {@render tier(tiers[1].text, tiers[1].words, false)}
+                  </p>
+                {/if}
               {/if}
               {#if line.translation}
                 <p
@@ -432,3 +512,9 @@
     {/if}
   {/if}
 </div>
+
+<style>
+  .lyric-word {
+    opacity: clamp(0.3, calc(0.3 + (var(--clock, 0) - var(--from)) * var(--inv)), 1);
+  }
+</style>

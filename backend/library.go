@@ -867,7 +867,7 @@ func (s *PlayerService) Lyrics(path string) (*lyrics.Document, error) {
 		return doc, err
 	}
 
-	return s.instrumentalMarks(path, doc), nil
+	return s.romanizeLyrics(s.instrumentalMarks(path, doc)), nil
 }
 
 // readLyricsOrJoin is the one resolver: the sidecar loader first, then the

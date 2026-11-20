@@ -11,6 +11,7 @@
     appSettings,
     sessionState,
     spectrumConfig,
+    waitForSettingsSave,
   } from "./lib/store";
   import {
     connectLibrary,
@@ -139,6 +140,7 @@
 
   // The lyric column and the backdrop follow the track, not the page.
   let lyricPath = "";
+  let lyricsSeq = 0;
   const setLyrics = (doc: Awaited<ReturnType<typeof loadLyrics>>) => {
     lyrics = doc
       ? {
@@ -146,9 +148,11 @@
             timeMs: l.timeMs,
             text: l.text,
             translation: l.translation ?? "",
+            romanized: l.romanized || undefined,
             words:
               l.words?.map((w) => ({
                 text: w.text,
+                romanized: w.romanized || undefined,
                 startMs: w.startMs,
                 endMs: w.endMs,
               })) ?? undefined,
@@ -165,6 +169,7 @@
     // the sheet was shut.
     if (!playerMounted) {
       lyricPath = "";
+      lyricsSeq++;
       return;
     }
     const path = snap.path;
@@ -173,14 +178,48 @@
     }
     lyricPath = path;
     lyrics = null;
+    const seq = ++lyricsSeq;
     if (path === "") {
       return;
     }
     void loadLyrics(path).then((doc) => {
-      if (lyricPath !== path) {
+      if (lyricPath !== path || lyricsSeq !== seq) {
         return;
       }
       setLyrics(doc);
+    });
+  });
+
+  const romanizationKey = $derived(
+    `${$appSettings.playback.lyrics.autoRomanization}:${$appSettings.playback.lyrics.romanizationLanguage}:${$appSettings.playback.lyrics.autoSpacing}`,
+  );
+  let lastRomanizationKey: string | undefined;
+
+  // Reload the open sheet after romanization settings commit on Go.
+  $effect(() => {
+    const key = romanizationKey;
+    if (lastRomanizationKey === undefined) {
+      lastRomanizationKey = key;
+      return;
+    }
+    if (key === lastRomanizationKey) {
+      return;
+    }
+    lastRomanizationKey = key;
+    if (lyricPath === "") {
+      return;
+    }
+    const path = lyricPath;
+    const seq = ++lyricsSeq;
+    void waitForSettingsSave().then(() => {
+      if (lyricPath !== path || lyricsSeq !== seq) {
+        return;
+      }
+      return loadLyrics(path).then((doc) => {
+        if (lyricPath === path && lyricsSeq === seq) {
+          setLyrics(doc);
+        }
+      });
     });
   });
 
@@ -195,8 +234,9 @@
       if (path !== lyricPath || lyrics !== null) {
         return;
       }
+      const seq = ++lyricsSeq;
       void loadLyrics(path).then((doc) => {
-        if (lyricPath === path) {
+        if (lyricPath === path && lyricsSeq === seq) {
           setLyrics(doc);
         }
       });

@@ -2,7 +2,7 @@
   import type { Album, Shelf, Track } from "../lib/types";
   import AlbumCard from "../lib/ui/AlbumCard.svelte";
   import TrackTile from "../lib/ui/TrackTile.svelte";
-  import { loadAccents } from "../lib/library";
+  import { cachedAccents, loadAccents } from "../lib/library";
 
   let {
     shelves = [],
@@ -32,8 +32,13 @@
       return;
     }
     stopId = coverId;
-    stops = [];
     if (coverId === "") {
+      stops = [];
+      return;
+    }
+    const hit = cachedAccents(coverId);
+    if (hit) {
+      stops = hit;
       return;
     }
     void loadAccents(coverId).then((hex) => {

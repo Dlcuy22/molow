@@ -35,6 +35,7 @@
     deletePlaylist,
     likeRef,
     isLiked,
+    cachedAccents,
     loadAccents,
     loadLyrics,
     addLibrary,
@@ -248,16 +249,28 @@
   let accentId = "";
   $effect(() => {
     const id = snap.coverId;
+    if (id === "") {
+      // Hold the current backdrop across transient empty-metadata frames during
+      // track switches; clear once idle/stopped or a loaded track has no cover.
+      if (snap.path === "" || snap.title !== "") {
+        accentId = "";
+        accents = [];
+      }
+      return;
+    }
     if (id === accentId) {
       return;
     }
     accentId = id;
-    accents = [];
-    if (id === "") {
+    const hit = cachedAccents(id);
+    if (hit) {
+      if (hit[0] !== accents[0] || hit[1] !== accents[1]) {
+        accents = hit;
+      }
       return;
     }
     void loadAccents(id).then((hex) => {
-      if (accentId === id) {
+      if (accentId === id && (hex[0] !== accents[0] || hex[1] !== accents[1])) {
         accents = hex;
       }
     });

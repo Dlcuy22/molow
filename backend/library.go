@@ -899,17 +899,62 @@ func ytmLyricsDocument(sheet *ytm.Lyrics) *lyrics.Document {
 	return doc
 }
 
-// CoverAccents returns the ranked accent palette of one cover. The album
-// player uses the first entries; the rest are there for a caller that wants a
-// different tie-break. The bytes come from the artwork cache, which the scanner
-// fills, so this works for a library cover that was never the current track.
+const accentCacheMax = 128
+
+type accentCall struct {
+	done   chan struct{}
+	colors []color.Colour
+	err    error
+}
+
+// CoverAccents returns the ranked accent palette for coverID, cached by cover
+// hash so tracks sharing album artwork do not re-decode or recompute it.
 func (s *PlayerService) CoverAccents(coverID string) ([]color.Colour, error) {
 	if coverID == "" {
 		return nil, nil
 	}
+
+	s.accentMu.Lock()
+	if s.accentCache == nil {
+		s.accentCache = make(map[string][]color.Colour)
+	}
+	if s.accentInflight == nil {
+		s.accentInflight = make(map[string]*accentCall)
+	}
+	if cached, ok := s.accentCache[coverID]; ok {
+		out := append([]color.Colour(nil), cached...)
+		s.accentMu.Unlock()
+
+		return out, nil
+	}
+	if call, ok := s.accentInflight[coverID]; ok {
+		s.accentMu.Unlock()
+		<-call.done
+
+		return append([]color.Colour(nil), call.colors...), call.err
+	}
+	call := &accentCall{done: make(chan struct{})}
+	s.accentInflight[coverID] = call
+	s.accentMu.Unlock()
+
+	colors, err := s.computeCoverAccents(coverID)
+
+	s.accentMu.Lock()
+	delete(s.accentInflight, coverID)
+	if err == nil && len(colors) > 0 {
+		s.storeAccentsLocked(coverID, colors)
+	}
+	call.colors = colors
+	call.err = err
+	s.accentMu.Unlock()
+	close(call.done)
+
+	return append([]color.Colour(nil), colors...), err
+}
+
+func (s *PlayerService) computeCoverAccents(coverID string) ([]color.Colour, error) {
 	data := artcache.Load(coverID)
-	if len(data) == 0 {
-		// A cover the engine has open but the scanner has not stored yet.
+	if len(data) == 0 && s.player != nil {
 		if cover.ID(s.player.Snapshot().Meta.Tags.Cover) == coverID {
 			data = s.player.Snapshot().Meta.Tags.Cover
 		}
@@ -919,4 +964,16 @@ func (s *PlayerService) CoverAccents(coverID string) ([]color.Colour, error) {
 	}
 
 	return color.Palette(data, 5, true)
+}
+
+func (s *PlayerService) storeAccentsLocked(id string, colors []color.Colour) {
+	if _, ok := s.accentCache[id]; !ok {
+		if len(s.accentOrder) >= accentCacheMax {
+			oldest := s.accentOrder[0]
+			s.accentOrder = s.accentOrder[1:]
+			delete(s.accentCache, oldest)
+		}
+		s.accentOrder = append(s.accentOrder, id)
+	}
+	s.accentCache[id] = append([]color.Colour(nil), colors...)
 }

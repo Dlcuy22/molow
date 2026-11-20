@@ -21,6 +21,7 @@ import (
 	"github.com/dlcuy22/molo/meta"
 	"github.com/dlcuy22/molo/provider"
 	"github.com/dlcuy22/molow/internal/artcache"
+	"github.com/dlcuy22/molow/internal/color"
 	"github.com/dlcuy22/molow/internal/cover"
 	"github.com/dlcuy22/molow/internal/library"
 	"github.com/dlcuy22/molow/internal/library/sqlite"
@@ -107,6 +108,13 @@ type PlayerService struct {
 	coverMu    sync.Mutex
 	coverCache map[string]string
 	coverOrder []string
+
+	// accentMu guards the cover-hash -> palette cache so repeated tracks on the
+	// same album reuse the extracted gradient without re-decoding the cover.
+	accentMu       sync.Mutex
+	accentCache    map[string][]color.Colour
+	accentOrder    []string
+	accentInflight map[string]*accentCall
 
 	// spectrumMu guards the runner, which the tick goroutine reads and
 	// ConfigureSpectrum replaces. It also guards the last emitted frame, so
@@ -218,6 +226,8 @@ func newPlayerService() *PlayerService {
 		effectWindowPresent: effectWindowPresent,
 		rateChanged:         make(chan struct{}, 1),
 		coverCache:          make(map[string]string),
+		accentCache:         make(map[string][]color.Colour),
+		accentInflight:      make(map[string]*accentCall),
 		index:               newTagIndex(),
 		ytm:                 ytmIndex,
 		ytmProv:             newYTMProvider(ytmIndex, ytmSeamlessSwap, nil),

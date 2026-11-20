@@ -530,38 +530,69 @@ export function connectLibrary(): () => void {
   return off;
 }
 
-// ---- artwork accent and lyrics -------------------------------------------------
+const ACCENT_CACHE_MAX = 128;
+const accentCache = new Map<string, string[]>();
+const accentPending = new Map<string, Promise<string[]>>();
 
-/** loadAccents returns the cover's ranked accents, light end first. */
+/** cachedAccents returns previously resolved stops for coverId without an IPC call. */
+export function cachedAccents(coverId: string): string[] | undefined {
+  return coverId === "" ? undefined : accentCache.get(coverId);
+}
+
+/** loadAccents returns the cover's ranked accents, cached by coverId hash. */
 export async function loadAccents(coverId: string): Promise<string[]> {
   if (coverId === "") {
     return [];
   }
-  try {
-    const cs = (await PlayerService.CoverAccents(coverId)) ?? [];
-    if (cs.length === 0) {
-      return [];
-    }
-    const luma = (c: { r: number; g: number; b: number }) =>
-      (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255;
-    const hex = (c: { r: number; g: number; b: number }) =>
-      "#" +
-      [c.r, c.g, c.b]
-        .map((v) => Math.round(v).toString(16).padStart(2, "0"))
-        .join("");
-    const dark = cs[0];
-    let light = dark;
-    for (const c of cs.slice(1)) {
-      if (Math.abs(luma(c) - luma(dark)) >= 0.15) {
-        light = c;
-        break;
-      }
-    }
-    const ordered = luma(light) >= luma(dark) ? [light, dark] : [dark, light];
-    return ordered.map(hex);
-  } catch {
-    return [];
+  const hit = accentCache.get(coverId);
+  if (hit) {
+    return hit;
   }
+  const inflight = accentPending.get(coverId);
+  if (inflight) {
+    return inflight;
+  }
+
+  const p = (async () => {
+    try {
+      const cs = (await PlayerService.CoverAccents(coverId)) ?? [];
+      if (cs.length === 0) {
+        return [];
+      }
+      const luma = (c: { r: number; g: number; b: number }) =>
+        (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255;
+      const hex = (c: { r: number; g: number; b: number }) =>
+        "#" +
+        [c.r, c.g, c.b]
+          .map((v) => Math.round(v).toString(16).padStart(2, "0"))
+          .join("");
+      const dark = cs[0];
+      let light = dark;
+      for (const c of cs.slice(1)) {
+        if (Math.abs(luma(c) - luma(dark)) >= 0.15) {
+          light = c;
+          break;
+        }
+      }
+      const ordered = luma(light) >= luma(dark) ? [light, dark] : [dark, light];
+      const stops = ordered.map(hex);
+      if (accentCache.size >= ACCENT_CACHE_MAX) {
+        const oldest = accentCache.keys().next().value;
+        if (oldest !== undefined) {
+          accentCache.delete(oldest);
+        }
+      }
+      accentCache.set(coverId, stops);
+      return stops;
+    } catch {
+      return [];
+    } finally {
+      accentPending.delete(coverId);
+    }
+  })();
+
+  accentPending.set(coverId, p);
+  return p;
 }
 
 /**

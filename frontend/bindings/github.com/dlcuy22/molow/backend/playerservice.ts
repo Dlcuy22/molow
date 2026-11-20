@@ -171,10 +171,8 @@ export function Cover(id: string): $CancellablePromise<string> {
 }
 
 /**
- * CoverAccents returns the ranked accent palette of one cover. The album
- * player uses the first entries; the rest are there for a caller that wants a
- * different tie-break. The bytes come from the artwork cache, which the scanner
- * fills, so this works for a library cover that was never the current track.
+ * CoverAccents returns the ranked accent palette for coverID, cached by cover
+ * hash so tracks sharing album artwork do not re-decode or recompute it.
  */
 export function CoverAccents(coverID: string): $CancellablePromise<color$0.Colour[] | null> {
     return $Call.ByID(3762243019, coverID);
@@ -193,8 +191,7 @@ export function DeleteEffectPreset(name: string): $CancellablePromise<void> {
 }
 
 /**
- * DeletePlaylist drops a playlist and its entries. The catalogue tracks stay:
- * a playlist is a view over them, not their owner.
+ * DeletePlaylist removes a playlist and its entries while leaving catalogue tracks intact.
  */
 export function DeletePlaylist(libraryID: string, playlistID: string): $CancellablePromise<void> {
     return $Call.ByID(4273019416, libraryID, playlistID);
@@ -513,17 +510,14 @@ export function QueueCover(path: string): $CancellablePromise<string> {
 }
 
 /**
- * QueueRefsLast appends refs to the end, which is what "Add to queue" means. A
- * live track keeps playing; an empty queue simply gains its first entries.
+ * QueueRefsLast appends refs to the end of the queue without interrupting playback.
  */
 export function QueueRefsLast(refs: string[] | null): $CancellablePromise<void> {
     return $Call.ByID(2281190466, refs);
 }
 
 /**
- * QueueRefsNext splices refs after the playing track, which is what "Add to
- * next" means. With nothing sounding there is no next position, so the insert
- * also starts them.
+ * QueueRefsNext inserts refs after the active track, or starts playback if idle.
  */
 export function QueueRefsNext(refs: string[] | null): $CancellablePromise<void> {
     return $Call.ByID(4259517539, refs);
@@ -554,8 +548,7 @@ export function RemoveLibrary(id: string): $CancellablePromise<void> {
 }
 
 /**
- * RenamePlaylist changes a playlist's name. The menu's Rename row supplies the
- * name; an empty one is refused here rather than stored as a blank row.
+ * RenamePlaylist changes a playlist's name, rejecting blank input.
  */
 export function RenamePlaylist(libraryID: string, playlistID: string, name: string): $CancellablePromise<void> {
     return $Call.ByID(4043211265, libraryID, playlistID, name);

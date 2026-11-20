@@ -55,14 +55,15 @@ perfect, and I am working on it.
 </p>
 
 ## Codec and container support
+
 | Name | Support | Note |
-|---|---|---|
+| --- | :---: | --- |
 | MP3 | Yes | MPEG-1/2/2.5 Layer III |
 | FLAC | Yes | Lossless, 16 and 24-bit |
 | WAV | Yes | Integer PCM 8/16/24/32-bit and IEEE float 32/64-bit |
 | Opus (`.opus`, `.ogg`) | Yes | Pure Go; the optional `libopusfile` path seeks faster |
 | Ogg Vorbis | No | Only Ogg Opus is read |
-| AAC (`.aac`) | Yes | AAC-LC in ADTS|
+| AAC (`.aac`) | Yes | AAC-LC in ADTS |
 | M4A / MP4 | Yes | AAC-LC only |
 | ALAC | No | Not implemented |
 | WebM / Matroska | Yes | Opus audio only |
@@ -85,39 +86,50 @@ will publish builds only when they are ready.
 
 ## Developing
 
-First, make sure the Wails 3 tooling is installed on your system:
-https://v3.wails.io/quick-start/installation/
-and then install bun 
-https://bun.com/docs/installation
+First, make sure the [Wails 3 tooling](https://v3.wails.io/quick-start/installation/)
+is installed on your system, and then install [Bun](https://bun.com/docs/installation).
 
-If you are not familiar with Wails 3, I strongly suggest reading its beginner
-tutorial to understand the basics: https://v3.wails.io/tutorials/03-notes-vanilla/
+If you are not familiar with Wails 3, I strongly suggest reading its
+[beginner tutorial](https://v3.wails.io/tutorials/03-notes-vanilla/) to
+understand the basics.
 
-The audio engine lives in [molo](https://github.com/dlcuy22/molo) and is wired
-into this repository as a git submodule at `molo/`. `go.mod` points the
-`github.com/dlcuy22/molo` module at that folder, so `wails3 dev` and
-`wails3 build` fail until the submodule is present.
+If you don't have time to read any of those, follow these steps:
 
-A plain `git clone` does not fetch submodules, so run this once after cloning:
+1. **Install Go:** Download and install from [go.dev/dl](https://go.dev/dl/), or install it through your package manager on Linux.
 
-```sh
-git submodule update --init --recursive
-```
+2. **Install Bun:**
 
-Or fetch the submodule during the clone itself:
+   On Linux / macOS:
 
-```sh
-git clone --recurse-submodules https://github.com/dlcuy22/molow
-```
+   ```sh
+   curl -fsSL https://bun.sh/install | bash
+   ```
 
-You only do this once per checkout. After that, use `wails3 dev` and
-`wails3 build` to work in this repository.
+   On Windows (PowerShell):
+
+   ```powershell
+   irm bun.sh/install.ps1|iex
+   ```
+
+3. **Install the Wails 3 tooling:**
+
+   On Linux, install the required system packages from your package manager first: `gcc`, `pkg-config`, `gtk4-devel`, `webkitgtk6.0-devel`.
+
+   Then install the CLI, run setup, and verify your installation:
+
+   ```sh
+   go install github.com/wailsapp/wails/v3/cmd/wails3@latest
+   wails3 setup
+   wails3 doctor
+   ```
+
+Done.
 
 ## Stack
 
-- Backend and system language: Go
-- Scripting language: Lua
-- Frontend: TypeScript + Tailwind CSS + Svelte 5 + Vite + Bun
+- **Backend:** Go with Wails framework
+- **Scripting language:** Lua
+- **Frontend & Tooling:** TypeScript + Tailwind CSS + Svelte 5 + Vite + Bun
 
 ## License
 

@@ -29,24 +29,23 @@ const (
 	opPong      = 4
 )
 
-// ipcTimeout bounds one request or response, so a Discord that stopped
-// answering cannot pin the manager's loop. On a timeout the connection is
-// dropped and the retry tick reconnects.
-const ipcTimeout = 3 * time.Second
+// ipcTimeout bounds one request or response so a stalled Discord client cannot
+// pin the manager's loop.
+const ipcTimeout = 5 * time.Second
 
-// maxFrame caps a single IPC payload. Presence frames are tiny; the bound only
-// stops a corrupt length prefix from asking for a wild allocation.
+// maxFrame caps a single IPC payload against corrupt length prefixes.
 const maxFrame = 1 << 20
 
-// ipcClient owns one connection to the local Discord client. It is not safe
-// for concurrent use; the manager's loop is the only goroutine that touches it.
+// ipcClient owns one connection to the local Discord client. Only the manager's
+// loop goroutine touches it.
 type ipcClient struct {
 	appID string
+	dial  func() (net.Conn, error)
 	conn  net.Conn
 }
 
 func newIPCClient(appID string) *ipcClient {
-	return &ipcClient{appID: appID}
+	return &ipcClient{appID: appID, dial: dialDiscord}
 }
 
 // clientFrame is the payload of the opening handshake (opcode 0) and the
@@ -65,11 +64,11 @@ type ipcError struct {
 	} `json:"data"`
 }
 
-// login opens the first Discord socket that answers and completes the
-// handshake. It fails when Discord is not running, which the manager treats as
-// "try again on the next retry tick".
+// login closes any prior socket, opens the first Discord socket that answers,
+// and completes the handshake.
 func (c *ipcClient) login() error {
-	conn, err := dialDiscord()
+	c.close()
+	conn, err := c.dial()
 	if err != nil {
 		return fmt.Errorf("discord ipc: no socket: %w", err)
 	}
@@ -81,7 +80,7 @@ func (c *ipcClient) login() error {
 		return fmt.Errorf("discord ipc: handshake: %w", err)
 	}
 
-	payload, err := c.await()
+	payload, err := c.await("")
 	if err != nil {
 		c.close()
 
@@ -137,7 +136,7 @@ func (c *ipcClient) setActivity(a *activity) error {
 		return fmt.Errorf("discord ipc: set activity: %w", err)
 	}
 
-	payload, err := c.await()
+	payload, err := c.await(nonce)
 	if err != nil {
 		return fmt.Errorf("discord ipc: set activity reply: %w", err)
 	}
@@ -145,11 +144,12 @@ func (c *ipcClient) setActivity(a *activity) error {
 	return discordError(payload)
 }
 
-// await reads frames until a command reply (opcode 1) arrives, answering any
-// keepalive ping in between. It returns the raw reply payload.
-func (c *ipcClient) await() ([]byte, error) {
+// await reads frames until a command reply (opcode 1) arrives, answering pings
+// and skipping unsolicited frames when nonce is non-empty.
+func (c *ipcClient) await(nonce string) ([]byte, error) {
+	deadline := time.Now().Add(ipcTimeout)
 	for {
-		op, payload, err := c.readFrame()
+		op, payload, err := c.readFrame(deadline)
 		if err != nil {
 			return nil, err
 		}
@@ -159,11 +159,26 @@ func (c *ipcClient) await() ([]byte, error) {
 				return nil, err
 			}
 		case opFrame:
+			if nonce != "" && frameNonce(payload) != nonce {
+				continue
+			}
+
 			return payload, nil
 		case opClose:
 			return nil, fmt.Errorf("discord closed the connection")
 		}
 	}
+}
+
+func frameNonce(payload []byte) string {
+	var env struct {
+		Nonce string `json:"nonce"`
+	}
+	if err := json.Unmarshal(payload, &env); err != nil {
+		return ""
+	}
+
+	return env.Nonce
 }
 
 // discordError reports a frame as an error when Discord marked it one.
@@ -209,9 +224,9 @@ func (c *ipcClient) writeRaw(op int, payload []byte) error {
 	return err
 }
 
-// readFrame reads one frame, returning its opcode and payload.
-func (c *ipcClient) readFrame() (int, []byte, error) {
-	if err := c.conn.SetReadDeadline(time.Now().Add(ipcTimeout)); err != nil {
+// readFrame reads one frame before deadline, returning its opcode and payload.
+func (c *ipcClient) readFrame(deadline time.Time) (int, []byte, error) {
+	if err := c.conn.SetReadDeadline(deadline); err != nil {
 		return 0, nil, err
 	}
 

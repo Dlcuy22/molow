@@ -2,18 +2,19 @@ package discordrpc
 
 import (
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 )
 
-// Timing for the background loop. The sync tick re-sends the activity so the
-// progress bar tracks a seek and the connection is noticed as dead; the retry
-// tick reconnects when Discord was not running at startup or restarted under
-// us. Both are coarse on purpose: presence is cosmetic and must not cost a
-// wakeup a second.
+// Loop cadence: syncInterval polls for seek/pause/duration changes (only sending
+// on diff), refreshInterval re-publishes steady playback to detect a restarted
+// Discord without tripping its ~15s rate limit, and retryInterval reconnects.
 const (
-	syncInterval  = 5 * time.Second
-	retryInterval = 30 * time.Second
+	syncInterval    = 5 * time.Second
+	refreshInterval = 60 * time.Second
+	retryInterval   = 30 * time.Second
+	seekDriftMs     = 2000
 )
 
 // Config is the static Discord side of the integration: the application id the
@@ -90,6 +91,9 @@ type Manager struct {
 	connected bool
 	current   TrackInfo
 	discord   *ipcClient
+
+	// lastSent is loop-owned and skips unchanged SET_ACTIVITY ticks.
+	lastSent sentActivity
 
 	// stopCh, doneCh and wakeCh are owned by Start and captured by the loop, so
 	// the loop never reads them from the struct and Stop never reassigns a
@@ -269,8 +273,19 @@ func (m *Manager) connect() error {
 	return nil
 }
 
+type sentActivity struct {
+	valid      bool
+	cleared    bool
+	track      TrackInfo
+	paused     bool
+	durationMs int64
+	startMs    int64
+	at         time.Time
+}
+
 func (m *Manager) disconnect() {
 	m.discord.logout()
+	m.lastSent = sentActivity{}
 	m.mu.Lock()
 	m.connected = false
 	m.mu.Unlock()
@@ -278,23 +293,31 @@ func (m *Manager) disconnect() {
 
 func (m *Manager) markDisconnected(err error) {
 	m.log.Debug("discordrpc: SetActivity failed, dropping connection", "error", err)
+	// Close the underlying pipe so Windows does not keep a zombie session pinned in Discord.
+	m.discord.close()
+	m.lastSent = sentActivity{}
 	m.mu.Lock()
 	m.connected = false
 	m.mu.Unlock()
 }
 
-// setActivity renders the stored track and sends it. It polls the live position
-// and pause state so a seek or a pause is reflected on the next tick without a
-// new Update.
+// setActivity renders the stored track and sends it only when track fields,
+// pause state, duration, or seek position changed (or refreshInterval elapsed).
 func (m *Manager) setActivity() {
 	m.mu.Lock()
 	track := m.current
 	m.mu.Unlock()
 
 	if track.Title == "" {
+		if m.lastSent.valid && m.lastSent.cleared {
+			return
+		}
 		if err := m.discord.setActivity(nil); err != nil {
 			m.markDisconnected(err)
+
+			return
 		}
+		m.lastSent = sentActivity{valid: true, cleared: true, at: time.Now()}
 
 		return
 	}
@@ -315,13 +338,66 @@ func (m *Manager) setActivity() {
 	}
 
 	card := buildActivity(track, m.cfg, paused, elapsedMs, durationMs)
+	var startMs int64
+	if card.Timestamps != nil && card.Timestamps.Start != nil {
+		startMs = card.Timestamps.Start.UnixMilli()
+	}
+	now := time.Now()
+	if m.activityUnchanged(track, paused, durationMs, startMs, now) {
+		return
+	}
 
 	if err := m.discord.setActivity(card); err != nil {
 		m.markDisconnected(err)
 
 		return
 	}
+	m.lastSent = sentActivity{
+		valid:      true,
+		track:      track,
+		paused:     paused,
+		durationMs: durationMs,
+		startMs:    startMs,
+		at:         now,
+	}
 	m.log.Debug("discordrpc: activity set", "title", track.Title, "large", card.LargeImage, "small", card.SmallImage)
+}
+
+func (m *Manager) activityUnchanged(track TrackInfo, paused bool, durationMs, startMs int64, now time.Time) bool {
+	prev := m.lastSent
+	if !prev.valid || prev.cleared {
+		return false
+	}
+	if now.Sub(prev.at) >= refreshInterval {
+		return false
+	}
+	if prev.paused != paused || prev.durationMs != durationMs || !sameTrack(prev.track, track) {
+		return false
+	}
+	if !paused && abs64(startMs-prev.startMs) > seekDriftMs {
+		return false
+	}
+
+	return true
+}
+
+func sameTrack(a, b TrackInfo) bool {
+	return a.Title == b.Title &&
+		a.Artist == b.Artist &&
+		a.LargeImage == b.LargeImage &&
+		a.LargeText == b.LargeText &&
+		a.SmallImage == b.SmallImage &&
+		a.SmallText == b.SmallText &&
+		a.ActivityType == b.ActivityType &&
+		slices.Equal(a.Buttons, b.Buttons)
+}
+
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+
+	return v
 }
 
 // buildActivity renders one card from the track, the static config and the live

@@ -103,6 +103,7 @@ export interface Lyrics {
   lines: LyricLine[];
   synced: boolean;
   source: string;
+  provider?: string;
 }
 
 /** Accent is one ranked colour from the cover, as the album player needs it. */

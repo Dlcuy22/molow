@@ -177,6 +177,7 @@
             })),
             synced: doc.synced,
             source: doc.source,
+            provider: doc.provider || undefined,
           }
         : null,
     };

@@ -39,11 +39,13 @@ type Word struct {
 }
 
 // Document is what the player draws. Synced is false for a plain-text lyric
-// file, which the player shows without following the position.
+// file, which the player shows without following the position. Provider names
+// the upstream provider when known (e.g. "petitlyrics", "betterlyrics").
 type Document struct {
-	Lines  []Line `json:"lines"`
-	Synced bool   `json:"synced"`
-	Source string `json:"source"`
+	Lines    []Line `json:"lines"`
+	Synced   bool   `json:"synced"`
+	Source   string `json:"source"`
+	Provider string `json:"provider,omitempty"`
 }
 
 // Load finds the lyric file for mediaPath and parses it. A missing file is
@@ -57,18 +59,18 @@ func Load(mediaPath string, extraDirs ...string) (*Document, error) {
 		return nil, nil
 	}
 
-	lines, synced, err := parse(main)
+	lines, synced, provider, err := parse(main)
 	if err != nil {
 		return nil, err
 	}
 	if translation != "" {
-		if extra, _, err := parse(translation); err == nil {
+		if extra, _, _, err := parse(translation); err == nil {
 			mergeTranslation(lines, extra)
 		}
 	}
 	lines = pairDuplicateTimes(lines)
 
-	return &Document{Lines: lines, Synced: synced, Source: main}, nil
+	return &Document{Lines: lines, Synced: synced, Source: main, Provider: provider}, nil
 }
 
 // LoadRef is the local-file lookup for a reference the music folders do not
@@ -81,13 +83,13 @@ func LoadRef(id string, dirs []string) (*Document, error) {
 		return nil, nil
 	}
 
-	lines, synced, err := parse(main)
+	lines, synced, provider, err := parse(main)
 	if err != nil {
 		return nil, err
 	}
 	lines = pairDuplicateTimes(lines)
 
-	return &Document{Lines: lines, Synced: synced, Source: main}, nil
+	return &Document{Lines: lines, Synced: synced, Source: main, Provider: provider}, nil
 }
 
 // Write stores raw lyric text at path, atomically. Sidecar writes go through
@@ -149,14 +151,102 @@ var (
 	wordBlockLine = regexp.MustCompile(`(?m)^<[^>\[\]]*[:|][^>\[\]]*>$`)
 )
 
-// parse reads the lyric file at path. It is the disk half of Parse.
-func parse(path string) ([]Line, bool, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, false, err
+// providerTagPrefix is the LRC metadata header written on fetched sidecars so
+// restarts and per-provider adjustments remember which provider supplied them.
+const providerTagPrefix = "[re:molow/"
+
+// TagProvider prepends the provider metadata tag to a fetched LRC sheet.
+func TagProvider(raw, provider string) string {
+	raw = strings.TrimSpace(raw)
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if raw == "" || provider == "" {
+		return raw
+	}
+	if parseExplicitProvider(raw) != "" {
+		return raw
 	}
 
-	return Parse(string(raw))
+	return providerTagPrefix + provider + "]\n" + raw
+}
+
+// parse reads the lyric file at path. It is the disk half of Parse.
+func parse(path string) ([]Line, bool, string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false, "", err
+	}
+	src := string(raw)
+	lines, synced, err := Parse(src)
+	if err != nil {
+		return nil, false, "", err
+	}
+
+	return lines, synced, parseProvider(src), nil
+}
+
+// parseProvider returns the provider recorded in src, or infers "petitlyrics"
+// for legacy untagged sidecars written before provider headers existed.
+func parseProvider(src string) string {
+	if p := parseExplicitProvider(src); p != "" {
+		return p
+	}
+	if looksLikePetitLyrics(src) {
+		return "petitlyrics"
+	}
+
+	return ""
+}
+
+func parseExplicitProvider(src string) string {
+	for _, line := range strings.Split(strings.ReplaceAll(src, "\r\n", "\n"), "\n") {
+		raw := strings.TrimSpace(line)
+		if raw == "" {
+			continue
+		}
+		if !strings.HasPrefix(raw, "[") || !strings.HasSuffix(raw, "]") {
+			continue
+		}
+		if len(raw) > len(providerTagPrefix)+1 && strings.EqualFold(raw[:len(providerTagPrefix)], providerTagPrefix) {
+			return strings.ToLower(strings.TrimSpace(raw[len(providerTagPrefix) : len(raw)-1]))
+		}
+	}
+
+	return ""
+}
+
+// looksLikePetitLyrics identifies legacy untagged PetitLyrics word-block LRC
+// files: petitToLRC trims trailing decimal zeros ("1.7", "34"), whereas every
+// other word-synced serializer formats fixed 3-decimal seconds ("1.700").
+func looksLikePetitLyrics(src string) bool {
+	for _, block := range strings.Split(strings.ReplaceAll(src, "\r\n", "\n"), "\n") {
+		raw := strings.TrimSpace(block)
+		if !wordBlockLine.MatchString(raw) {
+			continue
+		}
+		for _, seg := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(raw, "<"), ">"), "|") {
+			i2 := strings.LastIndex(seg, ":")
+			if i2 < 0 {
+				continue
+			}
+			i1 := strings.LastIndex(seg[:i2], ":")
+			if i1 < 0 {
+				continue
+			}
+			startStr := strings.TrimSpace(seg[i1+1 : i2])
+			endStr := strings.TrimSpace(seg[i2+1:])
+			if !hasThreeDecimals(startStr) || !hasThreeDecimals(endStr) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func hasThreeDecimals(s string) bool {
+	dot := strings.IndexByte(s, '.')
+
+	return dot >= 0 && len(s)-dot-1 == 3
 }
 
 // Parse turns one canonical LRC document into lines. The format is the sidecar

@@ -134,13 +134,14 @@ func startLyricsFetch(s *PlayerService, path, ref string, meta lyrics.TrackMeta)
 			// so a restart and the user's editor both read one format. If the
 			// save fails, only the session cache is lost.
 			target := s.lyricsTarget(path, ref, meta)
-			log.Debug("lyrics: saving the winner", "path", path, "provider", source, "target", target, "bytes", len(raw))
-			if target != "" && lyrics.Write(target, raw) == nil {
-				lines, synced, perr := lyrics.Parse(raw)
+			tagged := lyrics.TagProvider(raw, source)
+			log.Debug("lyrics: saving the winner", "path", path, "provider", source, "target", target, "bytes", len(tagged))
+			if target != "" && lyrics.Write(target, tagged) == nil {
+				lines, synced, perr := lyrics.Parse(tagged)
 				if perr != nil {
 					log.Warn("lyrics: written sheet does not parse", "target", target, "error", perr)
 				} else {
-					doc = &lyrics.Document{Lines: lines, Synced: synced, Source: target}
+					doc = &lyrics.Document{Lines: lines, Synced: synced, Source: target, Provider: source}
 					log.Debug("lyrics: sidecar live", "target", target, "source", source, "lines", len(lines), "synced", synced)
 				}
 			} else {
@@ -396,9 +397,10 @@ func (s *PlayerService) instrumentalMarks(path string, doc *lyrics.Document) *ly
 	}
 
 	return &lyrics.Document{
-		Lines:  lyrics.MarkInstrumental(doc.Lines, duration),
-		Synced: doc.Synced,
-		Source: doc.Source,
+		Lines:    lyrics.MarkInstrumental(doc.Lines, duration),
+		Synced:   doc.Synced,
+		Source:   doc.Source,
+		Provider: doc.Provider,
 	}
 }
 

@@ -3,12 +3,14 @@
 
 /**
  * Document is what the player draws. Synced is false for a plain-text lyric
- * file, which the player shows without following the position.
+ * file, which the player shows without following the position. Provider names
+ * the upstream provider when known (e.g. "petitlyrics", "betterlyrics").
  */
 export interface Document {
     "lines": Line[] | null;
     "synced": boolean;
     "source": string;
+    "provider"?: string;
 }
 
 /**

@@ -893,7 +893,7 @@ func (s *PlayerService) readLyricsOrJoin(path string) (*lyrics.Document, error) 
 // by its start time, and the instrumental markers the endpoint emits are
 // dropped so an instrumental intro does not render as a line of its own.
 func ytmLyricsDocument(sheet *ytm.Lyrics) *lyrics.Document {
-	doc := &lyrics.Document{Synced: sheet.Synced, Source: "ytmusic"}
+	doc := &lyrics.Document{Synced: sheet.Synced, Source: "ytmusic", Provider: "ytmusic"}
 	for _, line := range sheet.Lines {
 		if line.Text == "" || line.Text == "♪" {
 			continue

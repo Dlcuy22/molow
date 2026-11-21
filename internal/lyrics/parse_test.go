@@ -196,3 +196,40 @@ func TestWriteIsAtomic(t *testing.T) {
 		t.Fatalf("temp files left behind: %d", n)
 	}
 }
+
+func TestProviderTagRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	tagged := TagProvider("[00:01.00]そら\n", "petitlyrics")
+	write(t, dir, "abc123.lrc", tagged)
+
+	doc, err := LoadRef("abc123", []string{dir})
+	if err != nil || doc == nil {
+		t.Fatalf("doc %+v err %v", doc, err)
+	}
+	if doc.Provider != "petitlyrics" {
+		t.Fatalf("provider = %q, want petitlyrics", doc.Provider)
+	}
+	if len(doc.Lines) != 1 || doc.Lines[0].Text != "そら" {
+		t.Fatalf("lines = %+v, want one lyric line without the metadata tag", doc.Lines)
+	}
+}
+
+func TestLegacyPetitLyricsInference(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "petit.lrc", "[00:01.13]まわる\n<ま:1.133:1.7|わ:1.7:2.51>\n")
+	write(t, dir, "better.lrc", "[00:01.13]まわる\n<ま:1.133:1.700|わ:1.700:2.510>\n")
+	write(t, dir, "line.lrc", "[00:01.13]まわる\n")
+
+	petit, err := LoadRef("petit", []string{dir})
+	if err != nil || petit == nil || petit.Provider != "petitlyrics" {
+		t.Fatalf("petit = %+v err %v, want provider=petitlyrics", petit, err)
+	}
+	better, err := LoadRef("better", []string{dir})
+	if err != nil || better == nil || better.Provider != "" {
+		t.Fatalf("better = %+v err %v, want empty provider", better, err)
+	}
+	line, err := LoadRef("line", []string{dir})
+	if err != nil || line == nil || line.Provider != "" {
+		t.Fatalf("line = %+v err %v, want empty provider", line, err)
+	}
+}

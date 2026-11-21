@@ -73,7 +73,7 @@ func (s *PlayerService) romanizeLyrics(doc *lyrics.Document) *lyrics.Document {
 		out[i].Words = ws
 	}
 
-	return &lyrics.Document{Lines: out, Synced: doc.Synced, Source: doc.Source}
+	return &lyrics.Document{Lines: out, Synced: doc.Synced, Source: doc.Source, Provider: doc.Provider}
 }
 
 type romanizationMode struct {

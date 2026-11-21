@@ -79,6 +79,20 @@ func keyName(key string) string {
 	return strconv.FormatUint(h.Sum64(), 16)
 }
 
+// Has reports whether a cached file exists for key without reading its bytes.
+func Has(key string) bool {
+	if key == "" {
+		return false
+	}
+	p, err := path(key)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(p)
+
+	return err == nil && info.Size() > 0
+}
+
 // Load returns the cached bytes for key, or nil when the key is empty or the
 // entry is absent or unreadable.
 func Load(key string) []byte {

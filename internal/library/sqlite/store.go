@@ -341,6 +341,63 @@ type TrackRow struct {
 // so the catalogue can hold it under one library only.
 var ErrForeignFile = errors.New("library: file belongs to another library")
 
+// TouchIfUnchanged checks whether f.Path belongs to libraryID with matching
+// size and mtime. When unchanged, it updates seen_at and clears missing without
+// requiring tag metadata, returning (trackID, true, nil).
+//
+// It returns ErrForeignFile if another library owns the path. It returns
+// (0, false, nil) when the path is unknown, changed, missing its cached cover
+// according to hasCover, or missing a track or disc index that fallbackTrack or
+// fallbackDisc can supply.
+func (s *Store) TouchIfUnchanged(
+	libraryID string,
+	f File,
+	fallbackTrack, fallbackDisc int,
+	hasCover func(coverID string) bool,
+) (int64, bool, error) {
+	var (
+		trackID    int64
+		oldSize    int64
+		oldMtime   int64
+		owner      string
+		coverID    string
+		oldTrackNo int
+		oldDiscNo  int
+	)
+	err := s.db.QueryRow(
+		`SELECT f.track_id, f.size, f.mtime, t.library_id, t.cover_id, t.track_no, t.disc_no
+		   FROM track_file f JOIN track t ON t.id = f.track_id
+		  WHERE f.path = ?`, f.Path,
+	).Scan(&trackID, &oldSize, &oldMtime, &owner, &coverID, &oldTrackNo, &oldDiscNo)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if owner != libraryID {
+		return 0, false, ErrForeignFile
+	}
+	if oldSize != f.Size || oldMtime != f.Mtime {
+		return 0, false, nil
+	}
+	if coverID != "" && hasCover != nil && !hasCover(coverID) {
+		return 0, false, nil
+	}
+	if (oldTrackNo == 0 && fallbackTrack > 0) || (oldDiscNo == 0 && fallbackDisc > 0) {
+		return 0, false, nil
+	}
+
+	if _, err := s.db.Exec(
+		`UPDATE track_file SET seen_at = ?, missing = 0 WHERE path = ?`,
+		time.Now().Unix(), f.Path,
+	); err != nil {
+		return 0, false, err
+	}
+
+	return trackID, true, nil
+}
+
 // UpsertTrack writes one file into the catalogue.
 //
 // The rules are the plan's: size+mtime means unchanged; a known (dev, ino) at a

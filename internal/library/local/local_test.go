@@ -209,3 +209,48 @@ func TestScanOnAnEmptyLibrary(t *testing.T) {
 		t.Fatalf("indexed %d files, want 0", n)
 	}
 }
+
+// TestRescanSkipsUnchangedAndReindexesModified pins the TouchIfUnchanged fast
+// path: an unchanged file keeps its stored row without re-indexing, while a
+// modified mtime triggers a full re-index.
+func TestRescanSkipsUnchangedAndReindexesModified(t *testing.T) {
+	src, store := newTestLocal(t)
+	ext := testExt(t)
+
+	root := t.TempDir()
+	p := filepath.Join(root, "01. Song"+ext)
+	writeFiles(t, p)
+
+	if _, err := store.AddRoot("local:test", root); err != nil {
+		t.Fatalf("add root: %v", err)
+	}
+	if _, err := src.Scan(context.Background()); err != nil {
+		t.Fatalf("first scan: %v", err)
+	}
+
+	first, ok, err := store.TrackByRef(p)
+	if err != nil || !ok || first.TrackNo != 1 {
+		t.Fatalf("after first scan: ok=%v tr=%+v err=%v", ok, first, err)
+	}
+
+	if err := store.MarkMissing("local:test", 1<<40); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.Scan(context.Background()); err != nil {
+		t.Fatalf("second scan: %v", err)
+	}
+	second, ok, err := store.TrackByRef(p)
+	if err != nil || !ok || second.Flags&library.FlagPlayable == 0 {
+		t.Fatalf("after unchanged rescan: ok=%v tr=%+v err=%v", ok, second, err)
+	}
+
+	if err := os.WriteFile(p, []byte("updated content with different size"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := src.Scan(context.Background()); err != nil || n != 1 {
+		t.Fatalf("modified scan: n=%d err=%v", n, err)
+	}
+	if _, ok, err := store.TrackByRef(p); err != nil || !ok {
+		t.Fatalf("after modified rescan: ok=%v err=%v", ok, err)
+	}
+}

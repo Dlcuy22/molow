@@ -449,6 +449,16 @@ func (l *Local) index(ctx context.Context, path string) error {
 	}
 	f := file(path, info)
 
+	fDisc, fTrack, _, hasIndex := parseTrackIndex(path)
+	if !hasIndex {
+		fDisc, fTrack = 0, 0
+	}
+	if _, ok, err := l.store.TouchIfUnchanged(l.lib.ID, f, fTrack, fDisc, artcache.Has); err != nil {
+		return err
+	} else if ok {
+		return nil
+	}
+
 	m, err := meta.Resolve(ctx, path)
 	if err != nil || m == nil {
 		m = &meta.Meta{Tags: meta.Tags{Title: titleFromPath(path)}}
@@ -481,7 +491,7 @@ func (l *Local) index(ctx context.Context, path string) error {
 
 	trackNo := tags.Track
 	discNo := tags.Disc
-	if fDisc, fTrack, _, ok := parseTrackIndex(path); ok {
+	if hasIndex {
 		if trackNo <= 0 {
 			trackNo = fTrack
 		}

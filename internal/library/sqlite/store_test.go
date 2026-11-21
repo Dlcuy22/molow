@@ -600,3 +600,53 @@ func TestRescanBackfillsMissingTrackIndex(t *testing.T) {
 		t.Fatalf("title changed on unchanged file: %q", tr.Title)
 	}
 }
+
+func TestTouchIfUnchanged(t *testing.T) {
+	s := newTestStore(t)
+	seed(t, s)
+
+	// Mark everything missing so a hit proves missing=0 and seen_at update.
+	if err := s.MarkMissing("local:test", 1<<40); err != nil {
+		t.Fatal(err)
+	}
+
+	// /music/a/02.flac has TrackNo=1, CoverID="cover-Alpha".
+	f := File{Path: "/music/a/02.flac", Dev: 1, Ino: 102, Size: 10, Mtime: 1000}
+
+	// Missing cover forces a miss so the scanner re-extracts artwork.
+	if _, ok, err := s.TouchIfUnchanged("local:test", f, 2, 0, func(string) bool { return false }); err != nil || ok {
+		t.Fatalf("missing cover: ok=%v err=%v, want miss", ok, err)
+	}
+
+	// Changed size or mtime misses.
+	if _, ok, err := s.TouchIfUnchanged("local:test", File{Path: f.Path, Size: 11, Mtime: f.Mtime}, 0, 0, nil); err != nil || ok {
+		t.Fatalf("changed size: ok=%v err=%v, want miss", ok, err)
+	}
+	if _, ok, err := s.TouchIfUnchanged("local:test", File{Path: f.Path, Size: f.Size, Mtime: f.Mtime + 1}, 0, 0, nil); err != nil || ok {
+		t.Fatalf("changed mtime: ok=%v err=%v, want miss", ok, err)
+	}
+
+	// Unchanged file with present cover hits and clears missing.
+	id, ok, err := s.TouchIfUnchanged("local:test", f, 2, 0, func(coverID string) bool { return coverID == "cover-Alpha" })
+	if err != nil || !ok || id == 0 {
+		t.Fatalf("unchanged hit: id=%d ok=%v err=%v", id, ok, err)
+	}
+	tr, found, err := s.TrackByRef(f.Path)
+	if err != nil || !found || tr.Flags&library.FlagPlayable == 0 {
+		t.Fatalf("TrackByRef after touch: found=%v flags=%v err=%v", found, tr.Flags, err)
+	}
+
+	// Missing track_no with a filename fallback misses so UpsertTrack can backfill.
+	fZero := File{Path: "/music/a/01.flac", Dev: 1, Ino: 101, Size: 10, Mtime: 1000}
+	if _, ok, err := s.TouchIfUnchanged("local:test", fZero, 1, 0, func(string) bool { return true }); err != nil || ok {
+		t.Fatalf("backfill needed: ok=%v err=%v, want miss", ok, err)
+	}
+
+	// Foreign owner returns ErrForeignFile.
+	if _, err := s.AddLibrary(library.Library{ID: "local:other", Kind: library.KindLocal, Name: "Other"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.TouchIfUnchanged("local:other", f, 0, 0, nil); !errors.Is(err, ErrForeignFile) {
+		t.Fatalf("foreign owner: err=%v, want ErrForeignFile", err)
+	}
+}

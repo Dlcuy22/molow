@@ -17,6 +17,8 @@
     disabled = false,
     format,
     onchange,
+    onscrubstart,
+    onscrubend,
   }: {
     value: number;
     min: number;
@@ -27,9 +29,43 @@
     disabled?: boolean;
     format?: (value: number) => string;
     onchange: (value: number) => void;
+    onscrubstart?: () => void;
+    onscrubend?: () => void;
   } = $props();
 
   const shown = $derived(format ? format(value) : `${value}${unit}`);
+
+  // Track pointer drags on window so releasing outside the slider or losing
+  // focus always ends the scrub state cleanly.
+  let scrubbing = false;
+
+  function finishScrub() {
+    if (!scrubbing) return;
+    scrubbing = false;
+    window.removeEventListener("pointerup", finishScrub);
+    window.removeEventListener("pointercancel", finishScrub);
+    window.removeEventListener("blur", finishScrub);
+    onscrubend?.();
+  }
+
+  function onPointerDown(e: PointerEvent) {
+    if (disabled || (!onscrubstart && !onscrubend)) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (scrubbing) return;
+    scrubbing = true;
+    window.addEventListener("pointerup", finishScrub);
+    window.addEventListener("pointercancel", finishScrub);
+    window.addEventListener("blur", finishScrub);
+    onscrubstart?.();
+  }
+
+  $effect(() => {
+    if (disabled) {
+      finishScrub();
+    }
+
+    return finishScrub;
+  });
 </script>
 
 <label class="flex w-full flex-col gap-1 text-xs text-muted">
@@ -48,6 +84,7 @@
     style="--fill-frac: {fillFrac(value, min, max)}"
     aria-label={label}
     aria-valuetext={shown}
+    onpointerdown={onPointerDown}
     oninput={(e) => onchange(Number(e.currentTarget.value))}
   />
 </label>

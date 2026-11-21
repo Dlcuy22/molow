@@ -791,7 +791,7 @@
   onclose={closePalette}
 />
 
-<SettingsPanel open={settingsOpen} onclose={() => (settingsOpen = false)} />
+<SettingsPanel open={settingsOpen} livePreview={playerOpen} onclose={() => (settingsOpen = false)} />
 <Toaster />
 
 <!-- One menu for the whole app. It sits outside the sheet's inert wrapper so a

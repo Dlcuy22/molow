@@ -18,8 +18,13 @@
   import Button from "./Button.svelte";
 
   // The settings panel: a modal overlay opened with Ctrl+I, with a tab per
-  // category.
-  let { open, onclose }: { open: boolean; onclose: () => void } = $props();
+  // category. livePreview enables the slider scrub fade-out when the album
+  // player is open behind the panel.
+  let {
+    open,
+    livePreview = false,
+    onclose,
+  }: { open: boolean; livePreview?: boolean; onclose: () => void } = $props();
 
   type Tab = "general" | "playback" | "integration" | "stream";
   let tab = $state<Tab>("general");
@@ -266,12 +271,18 @@
   }
 
   const providers = $derived($appSettings.playback.lyrics.providers ?? {});
+  const petitLyricsOn = $derived(providers.petitlyrics ?? true);
+  const petitLyricsDelayMs = $derived($appSettings.playback.lyrics.petitLyricsDelayMs ?? 0);
   const saveLocation = $derived($appSettings.playback.lyrics.saveLocation);
   const lyricsFolder = $derived($appSettings.playback.lyrics.folder);
   const autoRomanization = $derived($appSettings.playback.lyrics.autoRomanization);
   const romanizationLanguage = $derived($appSettings.playback.lyrics.romanizationLanguage);
   const autoSpacing = $derived($appSettings.playback.lyrics.autoSpacing);
   const wordSweep = $derived($appSettings.playback.lyrics.wordSweep);
+
+  function formatLyricDelay(ms: number): string {
+    return ms > 0 ? `+${ms} ms` : `${ms} ms`;
+  }
 
   // setVisualizerStyle persists the chosen layout and pokes the running pump
   // at once. Off is the same switch the v key flips, and the layout is kept so
@@ -293,6 +304,30 @@
     });
   }
 
+  // Live-preview scrub: grabbing a lyric or visualizer slider fades out the
+  // rest of the settings window so the user can see the live effect underneath.
+  let scrubTarget = $state<string | null>(null);
+  const scrubbing = $derived(scrubTarget !== null);
+  let backdropPress = false;
+
+  function startScrub(id: string) {
+    if (!livePreview) return;
+    scrubTarget = id;
+  }
+
+  function endScrub(id: string) {
+    if (scrubTarget === id) {
+      scrubTarget = null;
+    }
+  }
+
+  $effect(() => {
+    void open;
+    void tab;
+    void livePreview;
+    scrubTarget = null;
+  });
+
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -310,15 +345,19 @@
        flex container, so the panel's max-h-full counts the gutter and can never
        overflow the viewport. -->
   <div
-    class="fixed inset-0 z-50 flex justify-center bg-black/50 px-[clamp(0.75rem,2vw,1.5rem)] pb-[clamp(0.75rem,2vw,1.5rem)] pt-[clamp(1rem,6vh,3.5rem)]"
+    class="settings-backdrop fixed inset-0 z-50 flex justify-center px-[clamp(0.75rem,2vw,1.5rem)] pb-[clamp(0.75rem,2vw,1.5rem)] pt-[clamp(1rem,6vh,3.5rem)] {scrubbing ? 'bg-black/0' : 'bg-black/50'}"
     role="presentation"
+    onpointerdown={(e) => {
+      backdropPress = e.target === e.currentTarget;
+    }}
     onclick={(e) => {
-      if (e.target === e.currentTarget) onclose();
+      if (backdropPress && e.target === e.currentTarget) onclose();
+      backdropPress = false;
     }}
   >
     <div
       bind:this={panelEl}
-      class="flex max-h-full w-full max-w-[clamp(28rem,56vw,52rem)] flex-col overflow-hidden border border-line bg-surface"
+      class="settings-panel flex max-h-full w-full max-w-[clamp(28rem,56vw,52rem)] flex-col overflow-hidden border {scrubbing ? 'scrubbing border-transparent bg-transparent' : 'border-line bg-surface'}"
       role="dialog"
       aria-modal="true"
       aria-label="Settings"
@@ -327,7 +366,7 @@
     >
       <!-- Tabs across the top -->
       <div
-        class="flex shrink-0 items-center gap-1 border-b border-line px-[clamp(0.5rem,1.6vw,1.25rem)] py-[clamp(0.375rem,1vh,0.75rem)]"
+        class="scrub-chrome flex shrink-0 items-center gap-1 border-b border-line px-[clamp(0.5rem,1.6vw,1.25rem)] py-[clamp(0.375rem,1vh,0.75rem)]"
         role="tablist"
         aria-label="Settings categories"
       >
@@ -353,7 +392,7 @@
         role="tabpanel"
       >
         {#if tab === "playback"}
-          <div class="divide-y divide-line">
+          <div class="scrub-groups divide-y divide-line">
             <SettingGroup label="Crossfade" description={null}>
               <!-- One feature's rows: the switch, the length it runs for, and
                    the case it leaves alone. -->
@@ -426,15 +465,43 @@
             <SettingGroup label="Lyrics" description={null}>
               <!-- Where a sheet comes from, and where the app keeps what it
                    fetched: the providers first, then storage. -->
-              <div class="divide-y divide-line">
+              <div class="scrub-rows divide-y divide-line">
                 <SettingRow
                   label="PetitLyrics"
                   description="Word-synced"
                 >
                   {#snippet control()}
-                    <Switch checked={providers.petitlyrics ?? true} label="PetitLyrics" onchange={(on) => toggleProvider("petitlyrics", on)} />
+                    <Switch checked={petitLyricsOn} label="PetitLyrics" onchange={(on) => toggleProvider("petitlyrics", on)} />
                   {/snippet}
                 </SettingRow>
+
+                <div
+                  class:opacity-40={!petitLyricsOn}
+                  data-scrub-keep={scrubTarget === "petitlyrics-delay" ? "" : undefined}
+                >
+                  <SettingRow
+                    label="PetitLyrics delay"
+                    description="Adjust if the lyric is late vice versa"
+                  >
+                    {#snippet control()}
+                      <div class="w-48 self-center">
+                        <Slider
+                          label="Delay"
+                          value={petitLyricsDelayMs}
+                          min={-2000}
+                          max={2000}
+                          step={50}
+                          unit="ms"
+                          disabled={!petitLyricsOn}
+                          format={formatLyricDelay}
+                          onchange={(ms) => setLyrics({ petitLyricsDelayMs: ms })}
+                          onscrubstart={() => startScrub("petitlyrics-delay")}
+                          onscrubend={() => endScrub("petitlyrics-delay")}
+                        />
+                      </div>
+                    {/snippet}
+                  </SettingRow>
+                </div>
 
                 <SettingRow
                   label="BetterLyrics"
@@ -612,12 +679,12 @@
             No stream settings yet. YouTube Music and network options will live here.
           </p>
         {:else}
-          <div class="divide-y divide-line">
+          <div class="scrub-groups divide-y divide-line">
             <SettingGroup label="Visualizer" description={null}>
               <!-- The rows keep their own labels and dividers inside the
                    group; the shell only names the block, so a later knob is
                    one more row here rather than a new section. -->
-              <div class="divide-y divide-line">
+              <div class="scrub-rows divide-y divide-line">
                 <SettingRow
                   label="Album player visualizer"
                   description="Album player's Visualizer width. Turn this off if you are having a performance issue."
@@ -636,25 +703,29 @@
                   {/snippet}
                 </SettingRow>
 
-                <SettingRow
-                  label="Visualizer delay"
-                  description="Adjust if the visualizer runs ahead of the beat vice versa"
-                >
-                  {#snippet control()}
-                    <div class="w-48 self-center">
-                      <Slider
-                        label="Delay"
-                        value={$appSettings.general.visualizerDelayMs}
-                        min={0}
-                        max={500}
-                        step={5}
-                        unit="ms"
-                        format={(v) => `${v} ms`}
-                        onchange={setVisualizerDelay}
-                      />
-                    </div>
-                  {/snippet}
-                </SettingRow>
+                <div data-scrub-keep={scrubTarget === "visualizer-delay" ? "" : undefined}>
+                  <SettingRow
+                    label="Visualizer delay"
+                    description="Adjust if the visualizer runs ahead of the beat vice versa"
+                  >
+                    {#snippet control()}
+                      <div class="w-48 self-center">
+                        <Slider
+                          label="Delay"
+                          value={$appSettings.general.visualizerDelayMs}
+                          min={0}
+                          max={500}
+                          step={5}
+                          unit="ms"
+                          format={(v) => `${v} ms`}
+                          onchange={setVisualizerDelay}
+                          onscrubstart={() => startScrub("visualizer-delay")}
+                          onscrubend={() => endScrub("visualizer-delay")}
+                        />
+                      </div>
+                    {/snippet}
+                  </SettingRow>
+                </div>
 
                 <SettingRow
                   label="Dynamic scale"
@@ -674,48 +745,55 @@
                        because none of them changes anything the user can see
                        while it is hidden. -->
                   <div
-                    class="grid grid-cols-2 gap-x-4 gap-y-3"
+                    class="scrub-grid grid grid-cols-2 gap-x-4 gap-y-3"
                     class:opacity-40={!$spectrumConfig.enabled}
                   >
                     {#each $spectrumSchema as p (p.key)}
-                      {#if p.kind === "choice"}
-                        <!-- A choice has no continuous range, so the set the
-                             schema names is rendered instead of a slider over a
-                             span it cannot take. -->
-                        <Picker
-                          label={p.label}
-                          value={String(spectrumValue(p))}
-                          disabled={!$spectrumConfig.enabled}
-                          options={(p.choices ?? []).map((c) => ({ value: String(c), label: fftLabel(c) }))}
-                          onchange={(v) => onSpectrumParam(p, Number(v))}
-                        />
-                      {:else if p.kind === "steps"}
-                        <!-- Steps are deliberate non-uniform stops (the rate
-                             dial: 30, 60, 120, 180), so the slider runs over
-                             list indexes and the index picks the value the
-                             engine gets. -->
-                        <Slider
-                          label={p.label}
-                          value={Math.max(0, (p.choices ?? []).indexOf(spectrumValue(p)))}
-                          min={0}
-                          max={(p.choices ?? []).length - 1}
-                          step={1}
-                          disabled={!$spectrumConfig.enabled}
-                          format={(i) => `${(p.choices ?? [])[i] ?? p.default} Hz`}
-                          onchange={(i) => onSpectrumParam(p, (p.choices ?? [])[i] ?? p.default)}
-                        />
-                      {:else}
-                        <Slider
-                          label={p.label}
-                          value={spectrumValue(p)}
-                          min={p.min}
-                          max={p.max}
-                          step={p.step}
-                          disabled={!$spectrumConfig.enabled}
-                          format={(v) => (p.key === "minHz" || p.key === "maxHz" ? `${v} Hz` : String(v))}
-                          onchange={(v) => onSpectrumParam(p, v)}
-                        />
-                      {/if}
+                      {@const scrubId = `visualizer:${p.key}`}
+                      <div data-scrub-keep={scrubTarget === scrubId ? "" : undefined}>
+                        {#if p.kind === "choice"}
+                          <!-- A choice has no continuous range, so the set the
+                               schema names is rendered instead of a slider over a
+                               span it cannot take. -->
+                          <Picker
+                            label={p.label}
+                            value={String(spectrumValue(p))}
+                            disabled={!$spectrumConfig.enabled}
+                            options={(p.choices ?? []).map((c) => ({ value: String(c), label: fftLabel(c) }))}
+                            onchange={(v) => onSpectrumParam(p, Number(v))}
+                          />
+                        {:else if p.kind === "steps"}
+                          <!-- Steps are deliberate non-uniform stops (the rate
+                               dial: 30, 60, 120, 180), so the slider runs over
+                               list indexes and the index picks the value the
+                               engine gets. -->
+                          <Slider
+                            label={p.label}
+                            value={Math.max(0, (p.choices ?? []).indexOf(spectrumValue(p)))}
+                            min={0}
+                            max={(p.choices ?? []).length - 1}
+                            step={1}
+                            disabled={!$spectrumConfig.enabled}
+                            format={(i) => `${(p.choices ?? [])[i] ?? p.default} Hz`}
+                            onchange={(i) => onSpectrumParam(p, (p.choices ?? [])[i] ?? p.default)}
+                            onscrubstart={() => startScrub(scrubId)}
+                            onscrubend={() => endScrub(scrubId)}
+                          />
+                        {:else}
+                          <Slider
+                            label={p.label}
+                            value={spectrumValue(p)}
+                            min={p.min}
+                            max={p.max}
+                            step={p.step}
+                            disabled={!$spectrumConfig.enabled}
+                            format={(v) => (p.key === "minHz" || p.key === "maxHz" ? `${v} Hz` : String(v))}
+                            onchange={(v) => onSpectrumParam(p, v)}
+                            onscrubstart={() => startScrub(scrubId)}
+                            onscrubend={() => endScrub(scrubId)}
+                          />
+                        {/if}
+                      </div>
                     {/each}
                   </div>
                 </div>
@@ -801,10 +879,109 @@
         {/if}
       </div>
 
-      <div class="flex shrink-0 items-center gap-3 border-t border-line px-[clamp(0.5rem,1.6vw,1.25rem)] py-[clamp(0.375rem,1vh,0.75rem)] text-[11px] text-muted">
+      <div class="scrub-chrome flex shrink-0 items-center gap-3 border-t border-line px-[clamp(0.5rem,1.6vw,1.25rem)] py-[clamp(0.375rem,1vh,0.75rem)] text-[11px] text-muted">
         <span>Settings apply as you change them.</span>
         <span class="ml-auto"><kbd class="font-sans text-fg">Esc</kbd> to close</span>
       </div>
     </div>
   </div>
 {/if}
+
+<style>
+  .settings-backdrop {
+    transition: background-color 180ms var(--ease-panel);
+  }
+
+  .settings-panel {
+    transition:
+      background-color 180ms var(--ease-panel),
+      border-color 180ms var(--ease-panel);
+  }
+
+  .settings-panel .scrub-chrome,
+  .settings-panel :global(.scrub-group),
+  .settings-panel :global(.scrub-group > p),
+  .settings-panel :global(.scrub-group > .scrub-rule),
+  .settings-panel :global(.scrub-rows > *),
+  .settings-panel :global(.scrub-grid > *) {
+    transition:
+      opacity 180ms var(--ease-panel),
+      border-color 180ms var(--ease-panel);
+  }
+
+  .settings-panel.scrubbing .scrub-chrome {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .settings-panel.scrubbing #settings-panel-body {
+    scrollbar-color: transparent transparent;
+  }
+
+  .settings-panel.scrubbing #settings-panel-body::-webkit-scrollbar-thumb {
+    background-color: transparent;
+  }
+
+  .settings-panel.scrubbing :global(.scrub-groups > *),
+  .settings-panel.scrubbing :global(.scrub-rows > *) {
+    border-color: transparent;
+  }
+
+  .settings-panel.scrubbing :global(.scrub-group:not(:has([data-scrub-keep]))),
+  .settings-panel.scrubbing :global(.scrub-group:has([data-scrub-keep]) > p),
+  .settings-panel.scrubbing :global(.scrub-group:has([data-scrub-keep]) > .scrub-rule),
+  .settings-panel.scrubbing :global(.scrub-rows > :not([data-scrub-keep]):not(:has([data-scrub-keep]))),
+  .settings-panel.scrubbing :global(.scrub-grid > :not([data-scrub-keep])) {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* Keep the floating row readable over album art without shifting the range input. */
+  .settings-panel :global([data-scrub-keep]) {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .settings-panel :global([data-scrub-keep]::before) {
+    content: "";
+    position: absolute;
+    inset: -2px -8px;
+    z-index: -1;
+    border-radius: var(--radius-md);
+    background-color: color-mix(in srgb, var(--color-surface) 92%, transparent);
+    border: 1px solid var(--color-line);
+    box-shadow: 0 4px 12px hsl(0 0% 0% / 0.35);
+    pointer-events: none;
+    animation: scrub-pill-in 180ms var(--ease-panel) both;
+  }
+
+  .settings-panel :global(.scrub-grid > [data-scrub-keep]::before) {
+    inset: -6px -8px;
+  }
+
+  @keyframes scrub-pill-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .settings-backdrop,
+    .settings-panel,
+    .settings-panel .scrub-chrome,
+    .settings-panel :global(.scrub-group),
+    .settings-panel :global(.scrub-group > p),
+    .settings-panel :global(.scrub-group > .scrub-rule),
+    .settings-panel :global(.scrub-rows > *),
+    .settings-panel :global(.scrub-grid > *) {
+      transition: none;
+    }
+
+    .settings-panel :global([data-scrub-keep]::before) {
+      animation: none;
+    }
+  }
+</style>

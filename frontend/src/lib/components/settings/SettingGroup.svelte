@@ -20,14 +20,14 @@
   } = $props();
 </script>
 
-<div class="pt-2.5">
+<div class="scrub-group pt-2.5">
   <p class="text-[10px] font-medium uppercase tracking-[0.06em] text-muted">{label}</p>
   {#if description}
     <p class="mt-1 text-[11px] text-muted">{description}</p>
   {/if}
   <!-- Top padding only: the last row carries its own py-2.5, and the panel rule
        follows this box, so padding here would double the gap above that rule. -->
-  <div class="mt-2 border-t border-line/50"></div>
+  <div class="scrub-rule mt-2 border-t border-line/50"></div>
   <div class={description ? "mt-3" : "-mt-0.5"}>
     {@render children()}
   </div>

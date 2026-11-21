@@ -21,15 +21,12 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"net/url"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/dlcuy22/molow/internal/artcache"
+	"github.com/dlcuy22/molow/internal/artwork"
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
 	"github.com/godbus/dbus/v5/prop"
@@ -63,6 +60,7 @@ const (
 // exported property set, and the last published track.
 type backend struct {
 	log  *slog.Logger
+	art  *artwork.Store
 	cmd  Commands
 	conn *dbus.Conn
 
@@ -76,20 +74,20 @@ type backend struct {
 	// trackID is the id of the published track, kept so SetPosition can reject
 	// a call aimed at a track that already ended.
 	trackID dbus.ObjectPath
-	// artKey and artFile cache the artwork file written for the current cover,
-	// so a 4 Hz tick does not stat or rewrite it. Keyed by the content hash.
+	// artKey and artFile cache the artwork URL for the current cover,
+	// so a 4 Hz tick does not stat it. Keyed by the content hash.
 	artKey  string
 	artFile string
 }
 
 // newBackend builds the MPRIS transport. Start does the work; this only wires
 // the command surface into the exported views.
-func newBackend(cmd Commands, log *slog.Logger) (Backend, error) {
+func newBackend(cmd Commands, art *artwork.Store, log *slog.Logger) (Backend, error) {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	return &backend{cmd: cmd, log: log}, nil
+	return &backend{cmd: cmd, art: art, log: log}, nil
 }
 
 // rootView exposes only the org.mpris.MediaPlayer2 methods. The two views are
@@ -304,16 +302,15 @@ func (b *backend) dispatch(fn func()) bool {
 	return true
 }
 
-// artFor returns a file:// URL for the cover art, writing the bytes to the art
-// cache on first sight so the shell can read them. Keyed by content, so the same
-// cover across many tracks is written once. It returns "" when there is no art
-// or the cache is unusable, which MPRIS reads as "no artwork".
-func (b *backend) artFor(data []byte, mime string) string {
-	if len(data) == 0 {
+// artFor returns a file:// URL for the normalized cover art in the shared
+// artwork store. It returns "" when there is no art or the store is unusable,
+// which MPRIS reads as "no artwork".
+func (b *backend) artFor(data []byte, _ string) string {
+	if len(data) == 0 || b.art == nil {
 		return ""
 	}
 
-	key := artcache.Key(data)
+	key := artwork.ID(data)
 	b.mu.Lock()
 	if b.artKey == key {
 		file := b.artFile
@@ -323,21 +320,15 @@ func (b *backend) artFor(data []byte, mime string) string {
 	}
 	b.mu.Unlock()
 
-	dir, err := artcache.Dir()
+	id, err := b.art.Put(data)
 	if err != nil {
+		b.log.Debug("mpris: could not cache artwork", "error", err)
+
 		return ""
 	}
-	ext := ".jpg"
-	if strings.Contains(mime, "png") {
-		ext = ".png"
-	}
-	path := filepath.Join(dir, "mpris-"+key+ext)
-	if _, err := os.Stat(path); err != nil {
-		if err := os.WriteFile(path, data, 0o644); err != nil {
-			b.log.Debug("mpris: could not write artwork", "error", err)
-
-			return ""
-		}
+	path, ok := b.art.FilePath(id)
+	if !ok {
+		return ""
 	}
 
 	file := (&url.URL{Scheme: "file", Path: path}).String()

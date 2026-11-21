@@ -12,13 +12,15 @@ package systemedia
 import (
 	"log/slog"
 	"time"
+
+	"github.com/dlcuy22/molow/internal/artwork"
 )
 
 // backend is the inert transport. Every method is a no-op and Start reports
 // that no transport exists for this platform.
 type backend struct{}
 
-func newBackend(_ Commands, _ *slog.Logger) (Backend, error) {
+func newBackend(_ Commands, _ *artwork.Store, _ *slog.Logger) (Backend, error) {
 	return &backend{}, nil
 }
 

@@ -20,9 +20,7 @@ import (
 	"github.com/dlcuy22/molo"
 	"github.com/dlcuy22/molo/meta"
 	"github.com/dlcuy22/molo/provider"
-	"github.com/dlcuy22/molow/internal/artcache"
-	"github.com/dlcuy22/molow/internal/color"
-	"github.com/dlcuy22/molow/internal/cover"
+	"github.com/dlcuy22/molow/internal/artwork"
 	"github.com/dlcuy22/molow/internal/library"
 	"github.com/dlcuy22/molow/internal/library/sqlite"
 	"github.com/dlcuy22/molow/internal/spectrum"
@@ -102,19 +100,8 @@ type PlayerService struct {
 	// built on startup, once the engine exists.
 	preview *previewer
 
-	// coverMu guards the decoded-artwork cache. Art arrives with the resolved
-	// tags, so it is decoded on the first request and kept under the id the
-	// snapshot advertises; a track change reuses the entry if the art repeats.
-	coverMu    sync.Mutex
-	coverCache map[string]string
-	coverOrder []string
-
-	// accentMu guards the cover-hash -> palette cache so repeated tracks on the
-	// same album reuse the extracted gradient without re-decoding the cover.
-	accentMu       sync.Mutex
-	accentCache    map[string][]color.Colour
-	accentOrder    []string
-	accentInflight map[string]*accentCall
+	// art owns canonical <= 512px cover storage, data URLs, and accent palettes.
+	art *artwork.Store
 
 	// spectrumMu guards the runner, which the tick goroutine reads and
 	// ConfigureSpectrum replaces. It also guards the last emitted frame, so
@@ -214,6 +201,10 @@ func newPlayerService() *PlayerService {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	ytmIndex := newYTMIndex()
+	art, err := artwork.Open("")
+	if err != nil {
+		slog.Default().Warn("artwork: cache dir unavailable", "error", err)
+	}
 
 	s := &PlayerService{
 		closing:         make(chan struct{}),
@@ -225,12 +216,10 @@ func newPlayerService() *PlayerService {
 		albumPlayerOpen:     true,
 		effectWindowPresent: effectWindowPresent,
 		rateChanged:         make(chan struct{}, 1),
-		coverCache:          make(map[string]string),
-		accentCache:         make(map[string][]color.Colour),
-		accentInflight:      make(map[string]*accentCall),
+		art:                 art,
 		index:               newTagIndex(),
 		ytm:                 ytmIndex,
-		ytmProv:             newYTMProvider(ytmIndex, ytmSeamlessSwap, nil),
+		ytmProv:             newYTMProvider(ytmIndex, art, ytmSeamlessSwap, nil),
 		searchCache:         make(map[string][]YTMResult),
 		appSettings:         loadAppSettings(slog.Default(), "loaded"),
 		ctx:                 ctx,
@@ -689,7 +678,7 @@ func (s *PlayerService) Snapshot() Snapshot {
 		Artist:      snap.Meta.Tags.Artist,
 		Album:       snap.Meta.Tags.Album,
 		ArtistID:    s.currentArtistID(snap.Path),
-		CoverID:     cover.ID(snap.Meta.Tags.Cover),
+		CoverID:     artwork.ID(snap.Meta.Tags.Cover),
 		CoverMime:   snap.Meta.Tags.CoverMIME,
 		Codec:       snap.Meta.Codec,
 		Container:   snap.Meta.Container,
@@ -776,53 +765,34 @@ func equalPaths(a, b []string) bool {
 // Cover returns the current track's artwork as an inline data URL, or an empty
 // string when the track has none. The snapshot carries only the id, so the
 // payload a UI redraws at 4 Hz stays small; the bytes cross the bridge once,
-// when the id changes. The cache is keyed by that id, so revisiting a track
-// does not re-decode its art.
+// when the id changes. The store keys normalized art by that id, so revisiting
+// a track does not re-decode its art.
 func (s *PlayerService) Cover(id string) string {
-	if id == "" {
+	if id == "" || s.art == nil {
+		return ""
+	}
+	if url, ok := s.art.DataURL(id); ok {
+		return url
+	}
+	if s.player == nil {
 		return ""
 	}
 
-	s.coverMu.Lock()
-	defer s.coverMu.Unlock()
-
-	if url, ok := s.coverCache[id]; ok {
-		return url
-	}
-
-	// The catalogue stores artwork bytes on disk under the cover id, so a card
-	// for a track that is not playing can still be drawn from memory.
-	if data := artcache.Load(id); len(data) > 0 {
-		if url, err := cover.DataURL(data); err == nil {
-			s.storeCover(id, url)
-
-			return url
-		}
-	}
-
 	data := s.player.Snapshot().Meta.Tags.Cover
-	if cover.ID(data) != id {
+	if artwork.ID(data) != id {
 		// The track moved on between the request and this read; answer with
 		// nothing rather than the wrong art.
 		return ""
 	}
-
-	url, err := cover.DataURL(data)
-	if err != nil {
+	if _, err := s.art.Put(data); err != nil {
 		s.log.Warn("cover: skipping undecodable artwork", "error", err)
 
 		return ""
 	}
-	s.storeCover(id, url)
+	url, _ := s.art.DataURL(id)
 
 	return url
 }
-
-// coverCacheMax bounds the decoded-artwork cache. A long listening session can
-// touch hundreds of tracks, and each entry is a few tens of kilobytes of base64
-// held for the life of the process, so the oldest entries are evicted once the
-// cap is reached.
-const coverCacheMax = 64
 
 // searchCacheMax bounds the remembered searches. The palette fires one request
 // per settled query, so a session accumulates them; past the cap the cache is
@@ -832,8 +802,9 @@ const searchCacheMax = 32
 // QueueCover returns the artwork of one queued track as an inline data URL, or
 // an empty string when it has none. The palette asks only for the rows it is
 // about to draw, so a large queue never pays to decode art the user will not
-// see. The cache is keyed by the content id the row carries, so a repeat ask
-// and a track that reappears are both served without re-reading the file.
+// see. The store keys normalized art by the content id the row carries, so a
+// repeat ask and a track that reappears are both served without re-reading the
+// file.
 func (s *PlayerService) QueueCover(path string) string {
 	// A remote reference has no file to read; its art comes from the
 	// catalogue, already fetched when the row was added or the track opened.
@@ -842,99 +813,63 @@ func (s *PlayerService) QueueCover(path string) string {
 	}
 
 	tags := s.index.lookup(path)
-	if tags.CoverID == "" {
+	if tags.CoverID == "" || s.art == nil {
 		return ""
 	}
-
-	s.coverMu.Lock()
-	if url, ok := s.coverCache[tags.CoverID]; ok {
-		s.coverMu.Unlock()
-
+	if url, ok := s.art.DataURL(tags.CoverID); ok {
 		return url
 	}
-	s.coverMu.Unlock()
 
-	// Read and encode off the lock: opening the file is the slow part, and
-	// holding coverMu across it would stall the current track's Cover call.
 	m, err := meta.Resolve(s.ctx, path)
 	if err != nil || m == nil {
 		return ""
 	}
 	data := m.Tags.Cover
-	if cover.ID(data) != tags.CoverID {
+	if artwork.ID(data) != tags.CoverID {
 		// The file changed under us; the row's id is stale, so answer nothing
 		// rather than art that no longer matches.
 		return ""
 	}
-
-	url, err := cover.DataURL(data)
-	if err != nil {
+	if _, err := s.art.Put(data); err != nil {
 		s.log.Warn("cover: skipping undecodable artwork", "path", path, "error", err)
 
 		return ""
 	}
-
-	s.coverMu.Lock()
-	s.storeCover(tags.CoverID, url)
-	s.coverMu.Unlock()
+	url, _ := s.art.DataURL(tags.CoverID)
 
 	return url
-}
-
-// storeCover records one decoded data URL, evicting the oldest entry when the
-// cache is full. The caller holds coverMu.
-func (s *PlayerService) storeCover(id, url string) {
-	if _, ok := s.coverCache[id]; !ok {
-		if len(s.coverOrder) >= coverCacheMax {
-			oldest := s.coverOrder[0]
-			s.coverOrder = s.coverOrder[1:]
-			delete(s.coverCache, oldest)
-		}
-		s.coverOrder = append(s.coverOrder, id)
-	}
-	s.coverCache[id] = url
 }
 
 // ytmCover returns a remote track's artwork as an inline data URL, or "" when
 // it has none. It is a plain read for the frontend: a failure means "no art",
 // which is not worth the error line.
 func (s *PlayerService) ytmCover(ref string) string {
+	if s.art == nil {
+		return ""
+	}
 	t, ok := s.ytm.lookup(ref)
 	if !ok {
 		return ""
 	}
-	id := t.coverID()
-	if id == "" {
-		return ""
+	if id := t.coverID(); id != "" {
+		if url, ok := s.art.DataURL(id); ok {
+			return url
+		}
 	}
-
-	s.coverMu.Lock()
-	if url, ok := s.coverCache[id]; ok {
-		s.coverMu.Unlock()
-
-		return url
-	}
-	s.coverMu.Unlock()
 
 	// The bytes may not be here yet: a row can be drawn from a search result
-	// before its art is fetched. Fetch off the lock, because it is a network
-	// round trip, then fall back to the URL hash as the cache key so a repeat
-	// ask still hits.
+	// before its art is fetched.
 	data := s.ytmProv.fetchThumb(ref)
 	if len(data) == 0 {
 		return ""
 	}
-	url, err := cover.DataURL(data)
+	id, err := s.art.Put(data)
 	if err != nil {
 		s.log.Warn("cover: skipping undecodable artwork", "ref", ref, "error", err)
 
 		return ""
 	}
-
-	id = cover.ID(data)
-	s.coverMu.Lock()
-	s.storeCover(id, url)
-	s.coverMu.Unlock()
+	url, _ := s.art.DataURL(id)
 
 	return url
 }

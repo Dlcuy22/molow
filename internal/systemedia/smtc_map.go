@@ -1,9 +1,6 @@
 package systemedia
 
-import (
-	"strings"
-	"time"
-)
+import "time"
 
 // The Windows Media enums and shapes the SMTC backend speaks. They live
 // untagged so the mapping can be tested on any host; the values are the ones in
@@ -132,14 +129,4 @@ func buttonsFor(cmd Commands) smtcButtons {
 		Next:     cmd.Next != nil,
 		Previous: cmd.Previous != nil,
 	}
-}
-
-// artFileName is the cache file for one cover. The extension follows the bytes
-// because the shell decodes the file, not the MIME the tag declared.
-func artFileName(key, mime string) string {
-	if strings.Contains(mime, "png") {
-		return "smtc-" + key + ".png"
-	}
-
-	return "smtc-" + key + ".jpg"
 }

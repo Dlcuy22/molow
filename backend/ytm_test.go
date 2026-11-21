@@ -75,7 +75,7 @@ func TestYTMRefRoundTrip(t *testing.T) {
 }
 
 func TestYTMProviderMatchAndName(t *testing.T) {
-	p := newYTMProvider(newYTMIndex(), false, nil)
+	p := newYTMProvider(newYTMIndex(), nil, false, nil)
 	if p.Name() != "ytm" {
 		t.Fatalf("Name = %q", p.Name())
 	}
@@ -284,7 +284,7 @@ func TestYTMProviderRotateIdentityKeepsTheAccount(t *testing.T) {
 	refused := ytm.NewClient()
 	refused.SetAuth(auth)
 
-	p := newYTMProvider(newYTMIndex(), false, nil)
+	p := newYTMProvider(newYTMIndex(), nil, false, nil)
 	p.installClient(refused)
 	p.rotateIdentity()
 

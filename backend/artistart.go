@@ -14,16 +14,15 @@ package backend
 
 import (
 	"context"
+	"hash/fnv"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
 	"sync"
 
-	"github.com/dlcuy22/molow/internal/artcache"
-	"github.com/dlcuy22/molow/internal/cover"
+	"github.com/dlcuy22/molow/internal/artwork"
 )
-
-// artistCacheKey namespaces the disk entries, so an artist id can never collide
-// with a content hash from another cache user.
-func artistCacheKey(artistID string) string { return "artist:" + artistID }
 
 // ytmArtistIndex caches the resolved avatar URL per artist browse id. A present
 // entry with an empty URL means the artist was looked up and has none, which is
@@ -52,23 +51,23 @@ func (a *ytmArtistIndex) put(id, url string) {
 }
 
 // artistAvatarDataURL resolves the artist's avatar and returns it as an inline
-// data URL, or "" when there is none. It is the settings preview's source: the
-// webview cannot be relied on to load the remote image directly, and a data URL
-// keeps the preview off the network after the first fetch. The decoded form is
-// cached in memory, separate from the URL cache, because a preview may redraw
-// often.
+// data URL, or "" when there is none. Fetched bytes are normalized once into
+// the shared artwork store so data URLs share its bounded LRU.
 func (p *ytmProvider) artistAvatarDataURL(ctx context.Context, artistID string) string {
 	if artistID == "" {
 		return ""
 	}
 
-	p.avatarMu.Lock()
-	if url, ok := p.avatarData[artistID]; ok {
+	if p.art != nil {
+		p.avatarMu.Lock()
+		artID := p.avatarIDs[artistID]
 		p.avatarMu.Unlock()
-
-		return url
+		if artID != "" {
+			if url, ok := p.art.DataURL(artID); ok {
+				return url
+			}
+		}
 	}
-	p.avatarMu.Unlock()
 
 	url := p.artistArt(ctx, artistID)
 	if url == "" {
@@ -78,16 +77,30 @@ func (p *ytmProvider) artistAvatarDataURL(ctx context.Context, artistID string) 
 	if len(data) == 0 {
 		return ""
 	}
-	dataURL, err := cover.DataURL(data)
+
+	if p.art != nil {
+		artID, err := p.art.Put(data)
+		if err != nil {
+			return ""
+		}
+		p.avatarMu.Lock()
+		p.avatarIDs[artistID] = artID
+		p.avatarMu.Unlock()
+		dataURL, _ := p.art.DataURL(artID)
+
+		return dataURL
+	}
+
+	img, err := artwork.Decode(data)
+	if err != nil {
+		return ""
+	}
+	encoded, mime, err := artwork.Encode(artwork.Resize(img, artwork.MaxEdge))
 	if err != nil {
 		return ""
 	}
 
-	p.avatarMu.Lock()
-	p.avatarData[artistID] = dataURL
-	p.avatarMu.Unlock()
-
-	return dataURL
+	return artwork.FormatDataURL(encoded, mime)
 }
 
 // logger returns the provider's logger, falling back to the default so a
@@ -98,6 +111,19 @@ func (p *ytmProvider) logger() *slog.Logger {
 	}
 
 	return slog.Default()
+}
+
+// artistURLPath returns a dedicated .url sidecar inside the artwork cache dir
+// so plain URL text never mixes with canonical .jpg/.png image files.
+func (p *ytmProvider) artistURLPath(artistID string) string {
+	dir := p.art.Dir()
+	if dir == "" {
+		return ""
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte("artist:" + artistID))
+
+	return filepath.Join(dir, "artist-"+strconv.FormatUint(h.Sum64(), 16)+".url")
 }
 
 // artistArt resolves an artist's avatar URL. It reads the in-memory index, then
@@ -113,13 +139,14 @@ func (p *ytmProvider) artistArt(ctx context.Context, artistID string) string {
 		return url
 	}
 
-	// The disk cache is consulted before the network, so a restart reuses the
-	// avatar a previous run resolved.
-	if data := artcache.Load(artistCacheKey(artistID)); len(data) > 0 {
-		url := string(data)
-		p.artists.put(artistID, url)
+	urlPath := p.artistURLPath(artistID)
+	if urlPath != "" {
+		if data, err := os.ReadFile(urlPath); err == nil && len(data) > 0 {
+			url := string(data)
+			p.artists.put(artistID, url)
 
-		return url
+			return url
+		}
 	}
 
 	artist, err := loadArtist(ctx, artistID)
@@ -130,8 +157,8 @@ func (p *ytmProvider) artistArt(ctx context.Context, artistID string) string {
 	}
 	url := ytmThumb(artist.Thumbnail)
 	p.artists.put(artistID, url)
-	if url != "" {
-		if err := artcache.Store(artistCacheKey(artistID), []byte(url)); err != nil {
+	if url != "" && urlPath != "" {
+		if err := os.WriteFile(urlPath, []byte(url), 0o644); err != nil {
 			p.logger().Warn("artist art: cache write failed", "artist", artistID, "error", err)
 		}
 	}

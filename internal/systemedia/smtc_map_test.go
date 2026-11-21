@@ -119,18 +119,3 @@ func TestButtonsForOnlyOffersWiredControls(t *testing.T) {
 		t.Fatalf("buttonsFor(playpause+previous) = %+v, want %+v", got, want)
 	}
 }
-
-// TestArtFileNameFollowsTheBytes pins the cache file name: the content key is
-// kept so the same cover is written once, and the extension follows the
-// declared type because the shell decodes the file.
-func TestArtFileNameFollowsTheBytes(t *testing.T) {
-	if got := artFileName("abc", "image/png"); got != "smtc-abc.png" {
-		t.Fatalf("png art = %q", got)
-	}
-	if got := artFileName("abc", "image/jpeg"); got != "smtc-abc.jpg" {
-		t.Fatalf("jpeg art = %q", got)
-	}
-	if got := artFileName("abc", ""); got != "smtc-abc.jpg" {
-		t.Fatalf("undeclared art = %q", got)
-	}
-}

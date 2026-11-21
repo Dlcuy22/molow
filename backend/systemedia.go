@@ -29,7 +29,7 @@ type systemMediaState struct {
 // session bus) logs once and stays inert: system media controls are a
 // convenience, never a reason the player fails to start.
 func (s *PlayerService) initSystemMedia() {
-	mgr := systemedia.New(s.log)
+	mgr := systemedia.New(s.art, s.log)
 
 	s.systemMedia.mu.Lock()
 	s.systemMedia.manager = mgr

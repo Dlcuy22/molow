@@ -39,7 +39,7 @@ import (
 	"github.com/dlcuy22/molo/meta"
 	"github.com/dlcuy22/molo/provider"
 	"github.com/dlcuy22/molo/stream"
-	"github.com/dlcuy22/molow/internal/cover"
+	"github.com/dlcuy22/molow/internal/artwork"
 	ytm "github.com/dlcuy22/ytm-go"
 )
 
@@ -137,7 +137,7 @@ type ytmTrack struct {
 // which is stable across the session.
 func (t ytmTrack) coverID() string {
 	if len(t.Thumb) > 0 {
-		return cover.ID(t.Thumb)
+		return artwork.ID(t.Thumb)
 	}
 	if t.ThumbnailURL != "" {
 		return ytmURLID(t.ThumbnailURL)
@@ -280,17 +280,17 @@ func (x *ytmIndex) prune(protected map[string]struct{}) {
 // provider.AudioProvider.
 type ytmProvider struct {
 	index *ytmIndex
+	art   *artwork.Store
 	http  *http.Client
 
 	// artists caches resolved artist avatars for the presence's small image. It
 	// is separate from the track index because one artist can front many tracks.
 	artists *ytmArtistIndex
 
-	// avatarMu guards the decoded-avatar cache, which serves the settings
-	// preview. It is keyed by artist id and holds a data URL, so the preview
-	// never reaches the image host itself.
-	avatarMu   sync.Mutex
-	avatarData map[string]string
+	// avatarMu guards artistID -> artwork cover ID so repeated settings previews
+	// hit the shared artwork store's bounded LRU without re-fetching HTTP bytes.
+	avatarMu  sync.Mutex
+	avatarIDs map[string]string
 
 	// sheetMu guards the lyric sheets. The now-playing column reads a sheet
 	// every time it redraws, and a sheet is immutable for a track, so resolving
@@ -375,18 +375,19 @@ func ytmClient(log *slog.Logger) *ytm.Client {
 	return client
 }
 
-func newYTMProvider(index *ytmIndex, seamless bool, log *slog.Logger) *ytmProvider {
+func newYTMProvider(index *ytmIndex, art *artwork.Store, seamless bool, log *slog.Logger) *ytmProvider {
 	if log == nil {
 		log = slog.Default()
 	}
 	p := &ytmProvider{
-		index:      index,
-		artists:    newYTMArtistIndex(),
-		avatarData: make(map[string]string),
-		sheets:     make(map[string]*ytm.Lyrics),
-		log:        log,
-		http:       &http.Client{Timeout: ytmHTTPTimeout},
-		seamless:   seamless,
+		index:     index,
+		art:       art,
+		artists:   newYTMArtistIndex(),
+		avatarIDs: make(map[string]string),
+		sheets:    make(map[string]*ytm.Lyrics),
+		log:       log,
+		http:      &http.Client{Timeout: ytmHTTPTimeout},
+		seamless:  seamless,
 	}
 	p.installClient(ytmClient(log))
 	p.rotate = p.rotateIdentity

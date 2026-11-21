@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dlcuy22/molow/internal/artwork"
 	"github.com/godbus/dbus/v5"
 )
 
@@ -59,7 +60,11 @@ func startLiveBackend(t *testing.T) (*backend, *recorder) {
 		SetVolume: func(v float64) { rec.record("volume") },
 		SetLoop:   func(s string) { rec.record("loop:" + s) },
 	}
-	b, err := newBackend(cmd, slog.Default())
+	art, err := artwork.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("artwork.Open: %v", err)
+	}
+	b, err := newBackend(cmd, art, slog.Default())
 	if err != nil {
 		t.Fatalf("newBackend: %v", err)
 	}

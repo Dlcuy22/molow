@@ -19,8 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"runtime"
 	"sync"
 	"syscall"
@@ -28,7 +26,7 @@ import (
 	"unicode/utf16"
 	"unsafe"
 
-	"github.com/dlcuy22/molow/internal/artcache"
+	"github.com/dlcuy22/molow/internal/artwork"
 	"github.com/go-ole/go-ole"
 	"golang.org/x/sys/windows"
 )
@@ -566,6 +564,7 @@ func smtcInvoke(this, sender, args unsafe.Pointer) uintptr {
 // Go goroutine can otherwise be scheduled onto another thread between calls.
 type smtcSession struct {
 	log *slog.Logger
+	art *artwork.Store
 	cmd Commands
 
 	player   *ole.IInspectable
@@ -585,13 +584,13 @@ type smtcSession struct {
 	artKey   string
 }
 
-func newSMTCObjects(cmd Commands, log *slog.Logger) (*smtcSession, error) {
+func newSMTCObjects(cmd Commands, art *artwork.Store, log *slog.Logger) (*smtcSession, error) {
 	player, err := ole.RoActivateInstance("Windows.Media.Playback.MediaPlayer")
 	if err != nil {
 		return nil, fmt.Errorf("smtc: activate MediaPlayer: %w", err)
 	}
 
-	s := &smtcSession{log: log, cmd: cmd, player: player, status: -1, enabled: true}
+	s := &smtcSession{log: log, art: art, cmd: cmd, player: player, status: -1, enabled: true}
 	if err := s.init(); err != nil {
 		s.close()
 
@@ -868,10 +867,10 @@ func (s *smtcSession) setMetadata(t TrackInfo) error {
 	return hresultErr("update display", hr)
 }
 
-// setThumbnail points the shell at the cover file. The bytes are written once
-// per cover, keyed by content, and the reference is dropped straight away
-// because SetThumbnail keeps its own.
-func (s *smtcSession) setThumbnail(data []byte, mime string) error {
+// setThumbnail points the shell at the normalized cover file from the shared
+// artwork store. The reference is dropped straight away because SetThumbnail
+// keeps its own.
+func (s *smtcSession) setThumbnail(data []byte, _ string) error {
 	if len(data) == 0 {
 		if s.artKey == "" {
 			return nil
@@ -883,14 +882,21 @@ func (s *smtcSession) setThumbnail(data []byte, mime string) error {
 
 		return hresultErr("clear thumbnail", hr)
 	}
+	if s.art == nil {
+		return nil
+	}
 
-	key := artcache.Key(data)
+	key := artwork.ID(data)
 	if key == s.artKey {
 		return nil
 	}
-	file, err := writeArtFile(key, mime, data)
+	id, err := s.art.Put(data)
 	if err != nil {
 		return err
+	}
+	file, ok := s.art.FilePath(id)
+	if !ok {
+		return nil
 	}
 	ref, err := streamReferenceFromFile(file)
 	if err != nil {
@@ -906,24 +912,6 @@ func (s *smtcSession) setThumbnail(data []byte, mime string) error {
 	s.artKey = key
 
 	return nil
-}
-
-// writeArtFile puts the cover where the shell can read it and returns its path.
-// Art is decorative, so a failure is reported and the track publishes without a
-// cover.
-func writeArtFile(key, mime string, data []byte) (string, error) {
-	dir, err := artcache.Dir()
-	if err != nil {
-		return "", err
-	}
-	path := filepath.Join(dir, artFileName(key, mime))
-	if _, err := os.Stat(path); err != nil {
-		if err := os.WriteFile(path, data, 0o644); err != nil {
-			return "", err
-		}
-	}
-
-	return path, nil
 }
 
 // streamReferenceFromFile wraps a local file in the reference the display
@@ -1157,6 +1145,7 @@ func boolArg(v bool) uintptr {
 // unpublished snapshot; every WinRT object belongs to that goroutine alone.
 type backend struct {
 	log *slog.Logger
+	art *artwork.Store
 	cmd Commands
 
 	mu      sync.Mutex
@@ -1179,12 +1168,12 @@ type smtcPending struct {
 	seeked bool
 }
 
-func newBackend(cmd Commands, log *slog.Logger) (Backend, error) {
+func newBackend(cmd Commands, art *artwork.Store, log *slog.Logger) (Backend, error) {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	return &backend{cmd: cmd, log: log}, nil
+	return &backend{cmd: cmd, art: art, log: log}, nil
 }
 
 // Start creates the session on its own thread and waits for it to be live, so a
@@ -1323,7 +1312,7 @@ func (b *backend) run(ready chan<- error, stop <-chan struct{}, done chan<- stru
 	}
 	defer procRoUninitialize.Call()
 
-	session, err := newSMTCObjects(b.cmd, b.log)
+	session, err := newSMTCObjects(b.cmd, b.art, b.log)
 	if err != nil {
 		ready <- err
 

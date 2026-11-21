@@ -17,6 +17,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/dlcuy22/molow/internal/artwork"
 )
 
 // errUnsupported is what a host with no transport reports from Start. It is
@@ -132,6 +134,7 @@ type Backend interface {
 // goroutines deliver commands.
 type Manager struct {
 	log *slog.Logger
+	art *artwork.Store
 
 	mu        sync.Mutex
 	backend   Backend
@@ -140,12 +143,12 @@ type Manager struct {
 
 // New builds a manager for the host platform. It does not start the backend;
 // Start does. A nil logger falls back to the default.
-func New(log *slog.Logger) *Manager {
+func New(art *artwork.Store, log *slog.Logger) *Manager {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	return &Manager{log: log}
+	return &Manager{log: log, art: art}
 }
 
 // Start acquires the host transport and begins serving commands. It is
@@ -161,7 +164,7 @@ func (m *Manager) Start(cmd Commands) error {
 	}
 	m.mu.Unlock()
 
-	backend, err := newBackend(cmd, m.log)
+	backend, err := newBackend(cmd, m.art, m.log)
 	if err != nil {
 		return err
 	}

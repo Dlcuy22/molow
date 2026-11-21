@@ -1,22 +1,10 @@
 package color
 
 import (
-	"bytes"
 	"image"
 	"image/color"
-	"image/png"
 	"testing"
 )
-
-func encode(t *testing.T, img image.Image) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
-		t.Fatal(err)
-	}
-
-	return buf.Bytes()
-}
 
 func TestPaletteRanksByArea(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 10, 10))
@@ -30,10 +18,7 @@ func TestPaletteRanksByArea(t *testing.T) {
 		}
 	}
 
-	cs, err := Palette(encode(t, img), 2, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	cs := PaletteImage(img, 2, false)
 	if len(cs) != 2 {
 		t.Fatalf("palette: %v", cs)
 	}
@@ -60,10 +45,7 @@ func TestAccentDropsNeutrals(t *testing.T) {
 		}
 	}
 
-	cs, err := Palette(encode(t, img), 1, true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	cs := PaletteImage(img, 1, true)
 	if len(cs) != 1 || cs[0].Hex() != "#d15b5b" {
 		t.Fatalf("accent: %v", cs)
 	}

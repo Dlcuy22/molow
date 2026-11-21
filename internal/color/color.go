@@ -1,21 +1,11 @@
-// Package color extracts a deterministic palette from artwork.
+// Package color extracts a deterministic palette from a decoded image.
 package color
 
 import (
-	"bytes"
 	"fmt"
 	"image"
 	"sort"
 	"strconv"
-
-	// Decoders are registered here because this package is the one place that
-	// decodes arbitrary artwork bytes.
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
-
-	"golang.org/x/image/draw"
-	_ "golang.org/x/image/webp"
 )
 
 const (
@@ -23,7 +13,6 @@ const (
 	// and coarse enough that shading inside one region votes as one colour.
 	bits = 5
 
-	defaultMaxEdge  = 256
 	defaultAlphaMin = 128
 
 	minSaturation = 0.25
@@ -59,19 +48,15 @@ func (c Colour) Luma() float64 {
 	return (0.2126*float64(c.R) + 0.7152*float64(c.G) + 0.0722*float64(c.B)) / 255
 }
 
-// Palette returns the n most populous colours, most populous first. With
-// accent true, only colourful mid-bright pixels vote, which is the filter the
-// album player's backdrop uses.
-func Palette(data []byte, n int, accent bool) ([]Colour, error) {
-	if n <= 0 {
-		return nil, nil
-	}
-	img, _, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
-		return nil, fmt.Errorf("color: decode: %w", err)
+// PaletteImage returns the n most populous colours in img, most populous first.
+// Callers should downscale large artwork before sampling. With accent true,
+// only colourful mid-bright pixels vote, which is the filter the album player's
+// backdrop uses.
+func PaletteImage(img image.Image, n int, accent bool) []Colour {
+	if img == nil || n <= 0 {
+		return nil
 	}
 
-	img = thumbnail(img, defaultMaxEdge)
 	b := img.Bounds()
 	total := 0
 	type bin struct {
@@ -104,7 +89,7 @@ func Palette(data []byte, n int, accent bool) ([]Colour, error) {
 		}
 	}
 	if total == 0 {
-		return nil, nil
+		return nil
 	}
 
 	keys := make([]uint32, 0, len(bins))
@@ -138,59 +123,21 @@ func Palette(data []byte, n int, accent bool) ([]Colour, error) {
 		}
 	}
 
-	return out, nil
+	return out
 }
 
 // isAccent is the filter: HSV saturation and Rec. 709 luma in the usable band.
 func isAccent(r, g, b uint8) bool {
-	high := r
-	if g > high {
-		high = g
+	high := max(r, g, b)
+	low := min(r, g, b)
+	hi := float64(high)
+	if hi < 1 {
+		hi = 1
 	}
-	if b > high {
-		high = b
-	}
-	low := r
-	if g < low {
-		low = g
-	}
-	if b < low {
-		low = b
-	}
-	max := float64(high)
-	if max < 1 {
-		max = 1
-	}
-	saturation := float64(high-low) / max
+	saturation := float64(high-low) / hi
 	luma := (0.2126*float64(r) + 0.7152*float64(g) + 0.0722*float64(b)) / 255
 
 	return saturation >= minSaturation && luma >= minLuma && luma <= maxLuma
-}
-
-// thumbnail scales the longest edge to max, preserving aspect. A smaller image
-// is left alone, as the Python reference does.
-func thumbnail(src image.Image, max int) image.Image {
-	b := src.Bounds()
-	w, h := b.Dx(), b.Dy()
-	if w <= max && h <= max {
-		return src
-	}
-	scale := float64(max) / float64(w)
-	if h > w {
-		scale = float64(max) / float64(h)
-	}
-	dw := int(float64(w) * scale)
-	dh := int(float64(h) * scale)
-	if dw < 1 {
-		dw = 1
-	}
-	if dh < 1 {
-		dh = 1
-	}
-	dst := image.NewRGBA(image.Rect(0, 0, dw, dh))
-	draw.CatmullRom.Scale(dst, dst.Bounds(), src, b, draw.Src, nil)
-
-	return dst
 }
 
 // Gradient is the frame's two-stop read of a palette: the dark end is the most

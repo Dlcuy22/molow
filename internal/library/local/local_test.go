@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dlcuy22/molo"
+	"github.com/dlcuy22/molow/internal/artwork"
 	"github.com/dlcuy22/molow/internal/library"
 	"github.com/dlcuy22/molow/internal/library/sqlite"
 )
@@ -20,6 +21,11 @@ func newTestLocal(t *testing.T) (*Local, *sqlite.Store) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
+	art, err := artwork.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open artwork: %v", err)
+	}
+
 	row, err := store.AddLibrary(library.Library{
 		ID: "local:test", Kind: library.KindLocal, Name: "Test",
 	})
@@ -27,7 +33,7 @@ func newTestLocal(t *testing.T) (*Local, *sqlite.Store) {
 		t.Fatalf("add library: %v", err)
 	}
 
-	return New(store, row, nil), store
+	return New(store, row, art, nil), store
 }
 
 // testExt is one extension the running build can decode; the scanner filters on

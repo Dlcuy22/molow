@@ -1,15 +1,19 @@
 package backend
 
 import (
+	"bytes"
 	"errors"
-	"fmt"
+	"image"
+	imgcolor "image/color"
+	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/dlcuy22/molo"
-	"github.com/dlcuy22/molow/internal/cover"
+	"github.com/dlcuy22/molow/internal/artwork"
 )
 
 // TestExpandSkipsUnplayableFiles is the queue-building contract: a folder yields
@@ -262,54 +266,45 @@ func TestCoverIsEmptyWithoutArtwork(t *testing.T) {
 	}
 }
 
-// TestCoverCachesByIdentity checks the memoisation contract: the same bytes are
-// decoded once and served from the cache afterwards, which is what keeps a
-// repeated snapshot from re-encoding art.
+// TestCoverCachesByIdentity checks the memoisation contract: artwork put into
+// the store is served from memory on repeat calls without re-reading disk.
 func TestCoverCachesByIdentity(t *testing.T) {
+	artDir := t.TempDir()
+	art, err := artwork.Open(artDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	svc := newPlayerService()
+	svc.art = art
 
-	art := []byte("not really a png, but the cache does not care")
-	id := cover.ID(art)
-	if id == "" {
-		t.Fatal("cover.ID returned empty for non-empty bytes")
+	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	for y := range 8 {
+		for x := range 8 {
+			img.Set(x, y, imgcolor.NRGBA{R: 0xd1, G: 0x5b, B: 0x5b, A: 0xff})
+		}
 	}
-
-	// Seed the cache directly: Cover's own decode path is covered by the cover
-	// package, and this test is about the service's memoisation.
-	svc.coverCache[id] = "data:image/jpeg;base64,cached"
-
-	if got := svc.Cover(id); got != "data:image/jpeg;base64,cached" {
-		t.Fatalf("Cover(%q) = %q, want the cached value", id, got)
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
 	}
-}
-
-// TestCoverCacheEvictsOldest pins the bound: a session that plays more tracks
-// than the cap must not grow the cache without limit, and the most recent
-// entries must survive.
-func TestCoverCacheEvictsOldest(t *testing.T) {
-	svc := newPlayerService()
-	for i := 0; i < coverCacheMax+10; i++ {
-		svc.storeCover(fmt.Sprintf("id-%d", i), fmt.Sprintf("url-%d", i))
+	id, err := art.Put(buf.Bytes())
+	if err != nil {
+		t.Fatalf("Put: %v", err)
 	}
 
-	if len(svc.coverCache) != coverCacheMax {
-		t.Fatalf("cache holds %d entries, want the cap %d", len(svc.coverCache), coverCacheMax)
-	}
-	if _, ok := svc.coverCache["id-0"]; ok {
-		t.Error("oldest entry was not evicted")
-	}
-	last := fmt.Sprintf("id-%d", coverCacheMax+9)
-	if _, ok := svc.coverCache[last]; !ok {
-		t.Errorf("newest entry %q was evicted", last)
+	first := svc.Cover(id)
+	if !strings.HasPrefix(first, "data:image/jpeg;base64,") {
+		t.Fatalf("Cover(%q) = %q, want jpeg data URL", id, first)
 	}
 
-	// Re-storing an existing id must not duplicate it in the order list.
-	svc.storeCover(last, "updated")
-	if len(svc.coverOrder) != coverCacheMax {
-		t.Fatalf("order list grew to %d after a re-store, want %d", len(svc.coverOrder), coverCacheMax)
+	// Remove the disk file to prove the second call serves from the memory LRU.
+	if p, ok := art.FilePath(id); ok {
+		if err := os.Remove(p); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if svc.coverCache[last] != "updated" {
-		t.Errorf("re-store did not update the value: %q", svc.coverCache[last])
+	if second := svc.Cover(id); second != first {
+		t.Fatalf("second Cover(%q) = %q, want %q", id, second, first)
 	}
 }
 

@@ -33,8 +33,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dlcuy22/molow/internal/artcache"
-	"github.com/dlcuy22/molow/internal/cover"
+	"github.com/dlcuy22/molow/internal/artwork"
 )
 
 // uploadAPI is the temporary host raw artwork is posted to. Discord refuses a
@@ -84,6 +83,7 @@ type cachedUpload struct {
 type ImageUploader struct {
 	client *http.Client
 	log    *slog.Logger
+	art    *artwork.Store
 
 	// upload posts a resized cover and returns its link; alive reports whether a
 	// cached link still serves an image. They are fields so a test can drive the
@@ -104,21 +104,22 @@ type uploadCall struct {
 	err  error
 }
 
-// NewImageUploader returns an uploader backed by the on-disk upload cache. A nil
-// logger falls back to the default.
-func NewImageUploader(log *slog.Logger) *ImageUploader {
+// NewImageUploader returns an uploader backed by art and its on-disk upload
+// cache. A nil logger falls back to the default.
+func NewImageUploader(art *artwork.Store, log *slog.Logger) *ImageUploader {
 	if log == nil {
 		log = slog.Default()
 	}
 	u := &ImageUploader{
 		client:   &http.Client{Timeout: uploadTimeout},
 		log:      log,
+		art:      art,
 		urls:     make(map[string]cachedUpload),
 		inflight: make(map[string]*uploadCall),
 	}
 	u.upload = u.uploadCover
 	u.alive = u.urlAlive
-	if dir, err := artcache.Dir(); err == nil {
+	if dir := art.Dir(); dir != "" {
 		u.cachePath = filepath.Join(dir, "uploads.json")
 		u.load()
 	}
@@ -192,9 +193,26 @@ func (u *ImageUploader) cachedAlive(key string) (string, bool) {
 	return entry.URL, true
 }
 
-// uploadCover resizes the artwork and posts it, returning the direct link.
+// uploadCover ensures the artwork is normalized in the store and posts it,
+// returning the direct link without re-decoding already cached covers.
 func (u *ImageUploader) uploadCover(raw []byte) (string, error) {
-	thumb, mime, err := cover.EncodeThumb(raw, artEdge)
+	if u.art != nil {
+		id, err := u.art.Put(raw)
+		if err != nil {
+			return "", err
+		}
+		data, mime, ok := u.art.Bytes(id)
+		if !ok || len(data) == 0 {
+			return "", nil
+		}
+
+		return u.UploadImage(data, mime)
+	}
+	img, err := artwork.Decode(raw)
+	if err != nil {
+		return "", err
+	}
+	thumb, mime, err := artwork.Encode(artwork.Resize(img, artEdge))
 	if err != nil {
 		return "", err
 	}
@@ -358,12 +376,12 @@ func (u *ImageUploader) persist(m map[string]cachedUpload) {
 		return
 	}
 	if err := os.WriteFile(u.cachePath, raw, 0o644); err != nil {
-		u.log.Debug("artcache: could not persist upload map", "error", err)
+		u.log.Debug("artwork: could not persist upload map", "error", err)
 	}
 }
 
 // contentKey is a stable id for one blob of original cover bytes, so the same
 // artwork maps to one cached URL and one upload.
 func contentKey(raw []byte) string {
-	return artcache.Key(raw)
+	return artwork.ID(raw)
 }

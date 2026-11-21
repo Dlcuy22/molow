@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dlcuy22/molow/internal/cover"
+	"github.com/dlcuy22/molow/internal/artwork"
 )
 
 // jpegCover builds a small opaque PNG, which the encoder will turn into a JPEG
@@ -182,8 +182,8 @@ func TestUploaderCoalescesConcurrentAsks(t *testing.T) {
 }
 
 // TestEncodeThumbBoundsTheUpload pins the size rule: a large cover is downscaled
-// to the art edge before upload, so a multi-megabyte original never leaves the
-// machine.
+// by the artwork store before upload, so a multi-megabyte original never leaves
+// the machine.
 func TestEncodeThumbBoundsTheUpload(t *testing.T) {
 	// A 1000x1000 opaque image.
 	big := image.NewRGBA(image.Rect(0, 0, 1000, 1000))
@@ -197,9 +197,17 @@ func TestEncodeThumbBoundsTheUpload(t *testing.T) {
 		t.Fatalf("encode fixture: %v", err)
 	}
 
-	encoded, mime, err := cover.EncodeThumb(src.Bytes(), artEdge)
+	art, err := artwork.Open(t.TempDir())
 	if err != nil {
-		t.Fatalf("EncodeThumb: %v", err)
+		t.Fatal(err)
+	}
+	id, err := art.Put(src.Bytes())
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	encoded, mime, ok := art.Bytes(id)
+	if !ok {
+		t.Fatal("Bytes missed after Put")
 	}
 	if mime != "image/jpeg" {
 		t.Fatalf("mime = %q, want image/jpeg for opaque art", mime)
@@ -208,7 +216,7 @@ func TestEncodeThumbBoundsTheUpload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode result: %v", err)
 	}
-	if b := img.Bounds(); b.Dx() > artEdge || b.Dy() > artEdge {
-		t.Fatalf("bounds = %dx%d, want both <= %d", b.Dx(), b.Dy(), artEdge)
+	if b := img.Bounds(); b.Dx() > artwork.MaxEdge || b.Dy() > artwork.MaxEdge {
+		t.Fatalf("bounds = %dx%d, want both <= %d", b.Dx(), b.Dy(), artwork.MaxEdge)
 	}
 }

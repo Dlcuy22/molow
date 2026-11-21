@@ -12,8 +12,7 @@ import (
 	"testing"
 
 	"github.com/dlcuy22/molo"
-	"github.com/dlcuy22/molow/internal/artcache"
-	"github.com/dlcuy22/molow/internal/cover"
+	"github.com/dlcuy22/molow/internal/artwork"
 	"github.com/dlcuy22/molow/internal/library"
 	"github.com/dlcuy22/molow/internal/library/sqlite"
 )
@@ -228,7 +227,11 @@ func TestImportFolderRejectsOverlapAndReAdd(t *testing.T) {
 }
 
 func TestCoverAccentsCachesByCoverID(t *testing.T) {
-	cacheDir := isolateCache(t)
+	artDir := t.TempDir()
+	art, err := artwork.Open(artDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	for y := 0; y < 16; y++ {
@@ -240,21 +243,23 @@ func TestCoverAccentsCachesByCoverID(t *testing.T) {
 	if err := png.Encode(&buf, img); err != nil {
 		t.Fatal(err)
 	}
-	raw := buf.Bytes()
-	id := cover.ID(raw)
-	if err := artcache.Store(id, raw); err != nil {
-		t.Fatalf("store art: %v", err)
+	id, err := art.Put(buf.Bytes())
+	if err != nil {
+		t.Fatalf("Put art: %v", err)
 	}
 
 	svc := newPlayerService()
+	svc.art = art
 	first, err := svc.CoverAccents(id)
 	if err != nil || len(first) == 0 {
 		t.Fatalf("first CoverAccents: colors=%v err=%v", first, err)
 	}
 
 	// Remove cached art bytes from disk to prove the second call serves from memory.
-	if err := os.RemoveAll(filepath.Join(cacheDir, "molow")); err != nil {
-		t.Fatal(err)
+	if p, ok := art.FilePath(id); ok {
+		if err := os.Remove(p); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	second, err := svc.CoverAccents(id)

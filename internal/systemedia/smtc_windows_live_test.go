@@ -25,6 +25,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/dlcuy22/molow/internal/artwork"
 	"github.com/go-ole/go-ole"
 )
 
@@ -499,6 +500,10 @@ func TestLiveSMTC(t *testing.T) {
 		b.Update(track)
 	}
 
+	artStore, err := artwork.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("artwork.Open: %v", err)
+	}
 	transport, err := newBackend(Commands{
 		Play: func() {
 			pressed <- "play"
@@ -520,7 +525,7 @@ func TestLiveSMTC(t *testing.T) {
 			pressed <- "previous"
 			publish("playing")
 		},
-	}, slog.Default())
+	}, artStore, slog.Default())
 	if err != nil {
 		t.Fatalf("newBackend: %v", err)
 	}

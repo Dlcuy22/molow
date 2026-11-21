@@ -4,7 +4,7 @@ import (
 	"sync"
 
 	"github.com/dlcuy22/molo/meta"
-	"github.com/dlcuy22/molow/internal/cover"
+	"github.com/dlcuy22/molow/internal/artwork"
 )
 
 // tagIndexWorkers bounds how many tag readers run at once. Tag parsing opens
@@ -138,7 +138,7 @@ func (s *PlayerService) resolveTags(path string) {
 			Title:   m.Tags.Title,
 			Artist:  m.Tags.Artist,
 			Album:   m.Tags.Album,
-			CoverID: cover.ID(m.Tags.Cover),
+			CoverID: artwork.ID(m.Tags.Cover),
 		})
 	}()
 }

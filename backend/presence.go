@@ -139,7 +139,7 @@ func (s *PlayerService) SetDiscordEnabled(on bool) error {
 	mgr.IsPaused = func() bool { return s.player.Snapshot().State == molo.Paused }
 
 	if s.presence.uploader == nil {
-		s.presence.uploader = discordrpc.NewImageUploader(s.log)
+		s.presence.uploader = discordrpc.NewImageUploader(s.art, s.log)
 	}
 	s.presence.manager = mgr
 	s.presence.enabled = true

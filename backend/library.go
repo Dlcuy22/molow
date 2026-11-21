@@ -11,9 +11,8 @@ import (
 	"sync"
 
 	"github.com/dlcuy22/molo"
-	"github.com/dlcuy22/molow/internal/artcache"
+	"github.com/dlcuy22/molow/internal/artwork"
 	"github.com/dlcuy22/molow/internal/color"
-	"github.com/dlcuy22/molow/internal/cover"
 	"github.com/dlcuy22/molow/internal/library"
 	"github.com/dlcuy22/molow/internal/library/local"
 	"github.com/dlcuy22/molow/internal/library/sqlite"
@@ -108,7 +107,7 @@ func (s *PlayerService) initLibraries() {
 }
 
 func (s *PlayerService) registerLocal(row library.Library) {
-	src := local.New(s.libStore, row, func(p local.ScanProgress) {
+	src := local.New(s.libStore, row, s.art, func(p local.ScanProgress) {
 		s.emit(eventLibrary, LibraryProgress{
 			LibraryID: p.LibraryID, Done: p.Done, Total: p.Total, State: "scanning",
 		})
@@ -535,15 +534,17 @@ func (s *PlayerService) ImportYTM(libraryID string, hit YTMResult) (YTMImport, e
 // row without art, or a fetch that fails, returns "": the art is decorative, the
 // track is not.
 func (s *PlayerService) storeYTMCover(url string) string {
-	if url == "" {
+	if url == "" || s.art == nil {
 		return ""
 	}
 	data := s.ytmProv.thumbFor(s.ctx, url)
 	if len(data) == 0 {
 		return ""
 	}
-	id := cover.ID(data)
-	_ = artcache.Store(id, data)
+	id, err := s.art.Put(data)
+	if err != nil {
+		return ""
+	}
 
 	return id
 }
@@ -904,81 +905,17 @@ func ytmLyricsDocument(sheet *ytm.Lyrics) *lyrics.Document {
 	return doc
 }
 
-const accentCacheMax = 128
-
-type accentCall struct {
-	done   chan struct{}
-	colors []color.Colour
-	err    error
-}
-
-// CoverAccents returns the ranked accent palette for coverID, cached by cover
-// hash so tracks sharing album artwork do not re-decode or recompute it.
+// CoverAccents returns the ranked accent palette for coverID, backed by the
+// shared artwork store so tracks sharing album art reuse the extracted palette.
 func (s *PlayerService) CoverAccents(coverID string) ([]color.Colour, error) {
-	if coverID == "" {
+	if coverID == "" || s.art == nil {
 		return nil, nil
 	}
-
-	s.accentMu.Lock()
-	if s.accentCache == nil {
-		s.accentCache = make(map[string][]color.Colour)
-	}
-	if s.accentInflight == nil {
-		s.accentInflight = make(map[string]*accentCall)
-	}
-	if cached, ok := s.accentCache[coverID]; ok {
-		out := append([]color.Colour(nil), cached...)
-		s.accentMu.Unlock()
-
-		return out, nil
-	}
-	if call, ok := s.accentInflight[coverID]; ok {
-		s.accentMu.Unlock()
-		<-call.done
-
-		return append([]color.Colour(nil), call.colors...), call.err
-	}
-	call := &accentCall{done: make(chan struct{})}
-	s.accentInflight[coverID] = call
-	s.accentMu.Unlock()
-
-	colors, err := s.computeCoverAccents(coverID)
-
-	s.accentMu.Lock()
-	delete(s.accentInflight, coverID)
-	if err == nil && len(colors) > 0 {
-		s.storeAccentsLocked(coverID, colors)
-	}
-	call.colors = colors
-	call.err = err
-	s.accentMu.Unlock()
-	close(call.done)
-
-	return append([]color.Colour(nil), colors...), err
-}
-
-func (s *PlayerService) computeCoverAccents(coverID string) ([]color.Colour, error) {
-	data := artcache.Load(coverID)
-	if len(data) == 0 && s.player != nil {
-		if cover.ID(s.player.Snapshot().Meta.Tags.Cover) == coverID {
-			data = s.player.Snapshot().Meta.Tags.Cover
+	if !s.art.Has(coverID) && s.player != nil {
+		if data := s.player.Snapshot().Meta.Tags.Cover; artwork.ID(data) == coverID {
+			_, _ = s.art.Put(data)
 		}
 	}
-	if len(data) == 0 {
-		return nil, nil
-	}
 
-	return color.Palette(data, 5, true)
-}
-
-func (s *PlayerService) storeAccentsLocked(id string, colors []color.Colour) {
-	if _, ok := s.accentCache[id]; !ok {
-		if len(s.accentOrder) >= accentCacheMax {
-			oldest := s.accentOrder[0]
-			s.accentOrder = s.accentOrder[1:]
-			delete(s.accentCache, oldest)
-		}
-		s.accentOrder = append(s.accentOrder, id)
-	}
-	s.accentCache[id] = append([]color.Colour(nil), colors...)
+	return s.art.Accents(coverID, 5)
 }

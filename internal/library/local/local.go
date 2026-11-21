@@ -11,8 +11,7 @@ import (
 	"github.com/dlcuy22/molo/core"
 	"github.com/dlcuy22/molo/decode"
 	"github.com/dlcuy22/molo/meta"
-	"github.com/dlcuy22/molow/internal/artcache"
-	"github.com/dlcuy22/molow/internal/cover"
+	"github.com/dlcuy22/molow/internal/artwork"
 	"github.com/dlcuy22/molow/internal/library"
 	"github.com/dlcuy22/molow/internal/library/sqlite"
 	"io/fs"
@@ -42,6 +41,7 @@ type ScanResult struct {
 // Local is one browsable local library over its watched roots.
 type Local struct {
 	store *sqlite.Store
+	art   *artwork.Store
 	lib   library.Library
 	exts  map[string]bool
 
@@ -52,13 +52,13 @@ type Local struct {
 }
 
 // New builds a local source over an existing store row.
-func New(store *sqlite.Store, lib library.Library, onChange func(ScanProgress)) *Local {
+func New(store *sqlite.Store, lib library.Library, art *artwork.Store, onChange func(ScanProgress)) *Local {
 	exts := make(map[string]bool)
 	for _, ext := range molo.SupportedExtensions() {
 		exts[strings.ToLower(ext)] = true
 	}
 
-	return &Local{store: store, lib: lib, exts: exts, status: lib.Status, onChange: onChange}
+	return &Local{store: store, art: art, lib: lib, exts: exts, status: lib.Status, onChange: onChange}
 }
 
 // Describe reports the library with a live track count.
@@ -453,7 +453,11 @@ func (l *Local) index(ctx context.Context, path string) error {
 	if !hasIndex {
 		fDisc, fTrack = 0, 0
 	}
-	if _, ok, err := l.store.TouchIfUnchanged(l.lib.ID, f, fTrack, fDisc, artcache.Has); err != nil {
+	var hasCover func(string) bool
+	if l.art != nil {
+		hasCover = l.art.Has
+	}
+	if _, ok, err := l.store.TouchIfUnchanged(l.lib.ID, f, fTrack, fDisc, hasCover); err != nil {
 		return err
 	} else if ok {
 		return nil
@@ -483,10 +487,13 @@ func (l *Local) index(ctx context.Context, path string) error {
 
 	coverID := ""
 	if len(tags.Cover) > 0 {
-		coverID = cover.ID(tags.Cover)
-		// Keep the bytes so a library card and the album player can ask for
-		// this cover when the track is not the one playing.
-		_ = artcache.Store(coverID, tags.Cover)
+		if l.art != nil {
+			if id, err := l.art.Put(tags.Cover); err == nil {
+				coverID = id
+			}
+		} else {
+			coverID = artwork.ID(tags.Cover)
+		}
 	}
 
 	trackNo := tags.Track

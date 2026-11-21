@@ -110,6 +110,7 @@ export const appSettings = writable<AppSettings>({
     playPauseStyle: "default",
     lyrics: {
       providers: { petitlyrics: true, betterlyrics: true, lyricsplus: true, kugou: true, lrclib: true },
+      petitLyricsDelayMs: 0,
       saveLocation: "lyrics",
       folder: "",
       autoRomanization: false,

@@ -543,3 +543,40 @@ func TestLyricsTogglePersists(t *testing.T) {
 		t.Fatalf("saveLocation = %q, want beside", lyrics.SaveLocation)
 	}
 }
+
+func TestPetitLyricsDelayClampsAndPersists(t *testing.T) {
+	isolateConfig(t)
+
+	if got := defaultAppSettings().Playback.Lyrics.PetitLyricsDelayMs; got != 0 {
+		t.Fatalf("default petitLyricsDelayMs = %d, want 0", got)
+	}
+
+	svc := newPlayerService()
+	svc.player = newFakePlayer()
+
+	cases := []struct {
+		in   int
+		want int
+	}{
+		{-5000, -2000},
+		{-650, -650},
+		{0, 0},
+		{450, 450},
+		{9000, 2000},
+	}
+	for _, tc := range cases {
+		next := defaultAppSettings()
+		next.Playback.Lyrics.PetitLyricsDelayMs = tc.in
+		saved, err := svc.SetAppSettings(next)
+		if err != nil {
+			t.Fatalf("SetAppSettings(%d): %v", tc.in, err)
+		}
+		if saved.Playback.Lyrics.PetitLyricsDelayMs != tc.want {
+			t.Fatalf("saved(%d) = %d, want %d", tc.in, saved.Playback.Lyrics.PetitLyricsDelayMs, tc.want)
+		}
+		loaded := loadAppSettings(quietLog, "loaded").Playback.Lyrics.PetitLyricsDelayMs
+		if loaded != tc.want {
+			t.Fatalf("loaded(%d) = %d, want %d", tc.in, loaded, tc.want)
+		}
+	}
+}

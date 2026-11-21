@@ -251,9 +251,13 @@ export interface LyricsCacheClear {
  * original and the romaji, "original" keeps the romaji a static reading line.
  * The sweep is a display choice, so the backend only stores it; the pane reads
  * it directly.
+ * 
+ * PetitLyricsDelayMs shifts PetitLyrics timing in milliseconds (-2000 to 2000,
+ * default 0): negative moves late lyrics earlier, positive delays early ones.
  */
 export interface LyricsSettings {
     "providers": { [_ in string]?: boolean } | null;
+    "petitLyricsDelayMs": number;
     "saveLocation": string;
     "folder": string;
     "autoRomanization": boolean;

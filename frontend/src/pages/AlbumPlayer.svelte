@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { fade } from "svelte/transition";
+  import { Browser } from "@wailsio/runtime";
   import CaretDown from "phosphor-svelte/lib/CaretDown";
   import MusicNote from "phosphor-svelte/lib/MusicNote";
   import Pause from "phosphor-svelte/lib/Pause";
@@ -14,6 +15,14 @@
   import type { Lyrics, LyricLine, LyricWord } from "../lib/types";
   import { commands, spectrumConfig, appSettings } from "../lib/store";
   import { formatTime } from "../lib/format";
+  import {
+    activeLineAt,
+    JITTER_HOLD_MS,
+    lyricOffsetFor,
+    lyricProviderInfo,
+    lyricSyncLabel,
+    seekTargetMs,
+  } from "../lib/lyric-clock";
   import { sweepSegments } from "../lib/word-sweep";
   import SeekBar from "../lib/ui/SeekBar.svelte";
   import Marquee from "../lib/ui/Marquee.svelte";
@@ -51,6 +60,8 @@
   );
 
   const lines = $derived(lyrics?.lines ?? []);
+  const providerCredit = $derived(lyricProviderInfo(lyrics?.provider));
+  const syncLabel = $derived(lyrics ? lyricSyncLabel(lines, lyrics.synced) : null);
 
   // Fade the spinner out before mounting lyrics or the empty state so the two never overlap.
   const SPINNER_FADE_MS = 300;
@@ -76,31 +87,30 @@
     }, SPINNER_FADE_MS);
   });
 
-  let active = $state(0);
-  $effect(() => {
-    const pos = position;
-    let idx = 0;
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].timeMs >= 0 && lines[i].timeMs <= pos) {
-        idx = i;
-      }
-    }
-    active = idx;
-  });
+  const lyricOffsetMs = $derived(
+    lyricOffsetFor(lyrics?.provider, $appSettings.playback.lyrics.petitLyricsDelayMs),
+  );
 
-  // Interpolate the 4 Hz snapshot position at display rate and publish --clock
-  // once per frame on the active line so every word span updates via CSS.
+  // Interpolate the 4 Hz snapshot position at display rate so both active-line
+  // switches and per-word CSS --clock sweeps run at display frame rate.
+  let active = $state(0);
   let clockBase = 0;
   let clockAt = 0;
+  let clockPath = "";
   let clockRaf: number | undefined;
 
   const clockNow = (): number =>
     snap.state === "playing" ? clockBase + (performance.now() - clockAt) : clockBase;
 
-  function paintClock() {
-    const el = pairEls[active];
+  function paintClock(holdJitter = false) {
+    const t = clockNow() - lyricOffsetMs;
+    const idx = activeLineAt(lines, t, active, holdJitter ? JITTER_HOLD_MS : 0);
+    if (idx !== active) {
+      active = idx;
+    }
+    const el = pairEls[idx];
     if (!el || !el.isConnected) return;
-    el.style.setProperty("--clock", String(Math.round(clockNow())));
+    el.style.setProperty("--clock", String(Math.round(t)));
   }
 
   function stopClock() {
@@ -111,31 +121,32 @@
   }
 
   function stepClock() {
-    paintClock();
+    paintClock(true);
     clockRaf = requestAnimationFrame(stepClock);
   }
 
   // Re-anchor only on snapshot updates; tracking active here would stamp a stale position.
   $effect(() => {
     const pos = snap.position;
+    const sameTrack = snap.path === clockPath;
+    clockPath = snap.path;
     clockBase = pos;
     clockAt = performance.now();
-    untrack(paintClock);
+    untrack(() => paintClock(sameTrack && snap.state === "playing"));
   });
 
-  // Paint --clock when lyrics mount/reload or active changes while paused.
+  // Sync active and --clock when lyrics mount/reload, the spinner clears, or the offset changes.
   $effect(() => {
     void lines;
-    void active;
-    if (!showSpinner) {
-      paintClock();
-    }
+    void lyricOffsetMs;
+    void showSpinner;
+    untrack(() => paintClock(false));
   });
 
   $effect(() => {
     stopClock();
     if (!open || snap.state !== "playing") {
-      untrack(paintClock);
+      untrack(() => paintClock(false));
       return;
     }
     stepClock();
@@ -488,7 +499,7 @@
                 <button
                   class="cursor-pointer rounded-md border-0 bg-transparent p-0 text-left font-jp text-[28px] font-medium leading-[1.4] text-inherit transition-opacity hover:opacity-80"
                   onclick={() => {
-                    onseek(line.timeMs);
+                    onseek(seekTargetMs(line.timeMs, lyricOffsetMs));
                     endUserScroll();
                     const el = pairEls[i];
                     if (el && el.isConnected) centerOn(el);
@@ -530,6 +541,19 @@
               {/if}
             </div>
           {/each}
+          {#if providerCredit}
+            <p class="mt-6 text-center text-[13px] text-fg/50">
+              Lyrics provided by
+              <a
+                href={providerCredit.url}
+                class="underline decoration-fg/30 underline-offset-2 transition-colors hover:text-fg/85 hover:decoration-fg/70 focus-visible:rounded-sm focus-visible:text-fg/85 focus-visible:outline focus-visible:outline-1 focus-visible:outline-fg/60"
+                onclick={(e) => {
+                  e.preventDefault();
+                  void Browser.OpenURL(providerCredit.url);
+                }}
+              >{providerCredit.name}</a>{#if syncLabel} ({syncLabel}){/if}
+            </p>
+          {/if}
         </div>
       {/if}
     </div>

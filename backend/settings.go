@@ -80,8 +80,12 @@ type PlaybackSettings struct {
 // original and the romaji, "original" keeps the romaji a static reading line.
 // The sweep is a display choice, so the backend only stores it; the pane reads
 // it directly.
+//
+// PetitLyricsDelayMs shifts PetitLyrics timing in milliseconds (-2000 to 2000,
+// default 0): negative moves late lyrics earlier, positive delays early ones.
 type LyricsSettings struct {
 	Providers            map[string]bool `json:"providers"`
+	PetitLyricsDelayMs   int             `json:"petitLyricsDelayMs"`
 	SaveLocation         string          `json:"saveLocation"`
 	Folder               string          `json:"folder"`
 	AutoRomanization     bool            `json:"autoRomanization"`
@@ -174,6 +178,7 @@ func defaultLyricsSettings() LyricsSettings {
 
 	return LyricsSettings{
 		Providers:            providers,
+		PetitLyricsDelayMs:   0,
 		SaveLocation:         "lyrics",
 		Folder:               "",
 		AutoRomanization:     false,
@@ -358,13 +363,30 @@ func clampVisualizerDelayMs(ms int) int {
 	}
 }
 
+const (
+	minPetitLyricsDelayMs = -2000
+	maxPetitLyricsDelayMs = 2000
+)
+
+func clampPetitLyricsDelayMs(ms int) int {
+	switch {
+	case ms < minPetitLyricsDelayMs:
+		return minPetitLyricsDelayMs
+	case ms > maxPetitLyricsDelayMs:
+		return maxPetitLyricsDelayMs
+	default:
+		return ms
+	}
+}
+
 // normalizeLyricsSettings drops unknown providers, defaults omitted ones to on,
 // and falls back invalid save, language, or sweep values to def.
 func normalizeLyricsSettings(s LyricsSettings, def LyricsSettings) LyricsSettings {
 	out := LyricsSettings{
-		Providers:        make(map[string]bool, len(lyrics.ChainProviders)),
-		AutoRomanization: s.AutoRomanization,
-		AutoSpacing:      s.AutoSpacing,
+		Providers:          make(map[string]bool, len(lyrics.ChainProviders)),
+		PetitLyricsDelayMs: clampPetitLyricsDelayMs(s.PetitLyricsDelayMs),
+		AutoRomanization:   s.AutoRomanization,
+		AutoSpacing:        s.AutoSpacing,
 	}
 	for _, name := range lyrics.ChainProviders {
 		on, present := s.Providers[name]

@@ -10,7 +10,6 @@ require (
 	github.com/godbus/dbus/v5 v5.2.4
 	github.com/ikawaha/kagome-dict v1.1.7
 	github.com/ikawaha/kagome-dict/ipa v1.2.6
-	github.com/ikawaha/kagome/v2 v2.11.1
 	github.com/lmittmann/tint v1.2.1
 	github.com/mattn/go-isatty v0.0.24
 	github.com/ncruces/go-sqlite3 v0.37.0

@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func TestRomanizerSecondRunUnloadReturnsMemory(t *testing.T) {
+func TestRomanizerSecondRunMapsOffHeapAndUnloads(t *testing.T) {
 	isolateConfig(t)
 	isolateCache(t)
 
@@ -21,20 +21,25 @@ func TestRomanizerSecondRunUnloadReturnsMemory(t *testing.T) {
 	}
 	first.romanizer.shutdown()
 
+	before := heapMB()
+
 	second := newPlayerService()
 	second.appSettings.Playback.Lyrics.AutoRomanization = true
 	second.appSettings.Playback.Lyrics.RomanizationLanguage = lyricRomanizationJP
 	second.syncRomanizer()
-	if second.romanizer.ready() == nil {
+	eng := second.romanizer.ready()
+	if eng == nil {
 		t.Fatal("no engine on the second run")
 	}
 	if second.romanizer.pinned {
-		t.Fatal("a run reading the cache should own its dictionary")
+		t.Fatal("a run reading the cache should map ipa.mmap, not pin ipa.Dict")
+	}
+	if got := eng.Romanize("涙はそっと", nil).Line; got != "namidawasotto" {
+		t.Fatalf("mapped engine converted to %q", got)
 	}
 
-	loaded := heapMB()
-	if loaded < 55 {
-		t.Fatalf("the dictionary does not appear loaded: heap=%d MiB", loaded)
+	if delta := heapMB() - before; delta > 5 {
+		t.Fatalf("mmap open added %d MiB to the Go heap, want <= 5 MiB", delta)
 	}
 
 	second.appSettings.Playback.Lyrics.AutoRomanization = false
@@ -47,12 +52,9 @@ func TestRomanizerSecondRunUnloadReturnsMemory(t *testing.T) {
 		gone := second.romanizer.engine == nil
 		second.romanizer.mu.Unlock()
 		if gone {
-			break
+			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-
-	if n := heapMB(); n > loaded-40 {
-		t.Fatalf("the dictionary was not returned to the heap: %d MiB -> %d MiB", loaded, n)
-	}
+	t.Fatal("the mapped engine was not dropped after the idle window")
 }

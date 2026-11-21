@@ -1,17 +1,15 @@
-// Package romanize converts Japanese lyric lines to Hepburn romaji using kagome
-// and IPADIC. Lines are converted whole before cutting at timed word spans so
-// particles and compounds keep their sentence reading.
+// Package romanize converts Japanese lyric lines to Hepburn romaji using an
+// IPADIC Viterbi segmenter. Lines are converted whole before cutting at timed
+// word spans so particles and compounds keep their sentence reading.
 package romanize
 
 import (
 	"fmt"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"unicode"
 
-	"github.com/ikawaha/kagome-dict/dict"
 	"github.com/ikawaha/kagome-dict/ipa"
-	"github.com/ikawaha/kagome/v2/tokenizer"
 )
 
 // Word is one timed span of a line; its text must appear in order in the line.
@@ -35,51 +33,66 @@ type Options struct {
 	Spacing bool
 }
 
+var (
+	embeddedOnce sync.Once
+	embeddedDict *mmapDict
+)
+
+func loadEmbeddedDict() *mmapDict {
+	embeddedOnce.Do(func() {
+		d, err := buildTables(ipa.Dict())
+		if err != nil {
+			// Embedded dictionary cannot be repaired at runtime.
+			panic("romanize: build dictionary: " + err.Error())
+		}
+		embeddedDict = d
+	})
+
+	return embeddedDict
+}
+
 // Engine tokenizes Japanese text with an IPADIC dictionary. [New] uses the
-// package-pinned [ipa.Dict]; [Open] loads an owned file that [Engine.Close] can
-// reclaim.
+// package-pinned [ipa.Dict]; [Open] maps a flat cache file written by
+// [WriteCache] so [Engine.Close] can unmap it without touching the Go heap.
+//
+// Concurrency: [Engine.RomanizeWith] holds mu.RLock while reading mapped table
+// slices and returns Go-owned strings before unlocking; [Engine.Close] takes
+// mu.Lock before unmapping so readers can never observe an unmapped view.
 type Engine struct {
-	tk atomic.Pointer[tokenizer.Tokenizer]
+	mu   sync.RWMutex
+	dict *mmapDict
 }
 
 // New builds an engine over the embedded [ipa.Dict], which stays pinned for the
-// process lifetime. Prefer [Open] with [WriteCache] when memory must be freed.
+// process lifetime. Prefer [Open] with [WriteCache] to avoid pinning IPADIC on
+// the Go heap.
 func New() *Engine {
-	tk, err := tokenizer.New(ipa.Dict(), tokenizer.OmitBosEos())
-	if err != nil {
-		// Embedded dictionary cannot be repaired at runtime.
-		panic("romanize: build tokenizer: " + err.Error())
-	}
-	e := &Engine{}
-	e.tk.Store(tk)
-
-	return e
+	return &Engine{dict: loadEmbeddedDict()}
 }
 
-// Open builds an engine over a dictionary file such as one written by
-// [WriteCache], so [Engine.Close] can free the parsed tables.
+// Open maps a flat dictionary cache file written by [WriteCache].
 func Open(path string) (*Engine, error) {
-	d, err := dict.LoadDictFile(path)
+	d, err := openMmap(path)
 	if err != nil {
 		return nil, fmt.Errorf("romanize: load dictionary: %w", err)
 	}
-	tk, err := tokenizer.New(d, tokenizer.OmitBosEos())
-	if err != nil {
-		return nil, fmt.Errorf("romanize: build tokenizer: %w", err)
-	}
-	e := &Engine{}
-	e.tk.Store(tk)
 
-	return e, nil
+	return &Engine{dict: d}, nil
 }
 
-// Close releases the tokenizer so the parsed dictionary can be garbage-collected.
-// Safe to call concurrently with Romanize; later calls return an empty Result.
+// Close releases the mapped dictionary view. Safe to call concurrently with
+// Romanize; later calls return an empty Result.
 func (e *Engine) Close() {
 	if e == nil {
 		return
 	}
-	e.tk.Store(nil)
+	e.mu.Lock()
+	d := e.dict
+	e.dict = nil
+	if d != nil {
+		_ = d.close()
+	}
+	e.mu.Unlock()
 }
 
 // unit is one morpheme in rune offsets; read holds pronunciation when present
@@ -89,12 +102,6 @@ type unit struct {
 	surface, read string
 	romaji        string
 }
-
-// IPA feature indices; Token.Reading omits pronunciation and meta-key lookups.
-const (
-	featureReading = ipa.Reading
-	featurePron    = ipa.Pronunciation
-)
 
 // Romanize converts text and cuts the result at the timed word spans.
 func (e *Engine) Romanize(text string, words []Word) Result {
@@ -107,12 +114,17 @@ func (e *Engine) RomanizeWith(text string, words []Word, opts Options) Result {
 	if e == nil {
 		return Result{}
 	}
-	tk := e.tk.Load()
-	if tk == nil {
+	e.mu.RLock()
+	if e.dict == nil {
+		e.mu.RUnlock()
+
 		return Result{}
 	}
+	tokens := e.dict.tokenize(text)
+	e.mu.RUnlock()
+
 	src := []rune(text)
-	units := buildUnits(tk, text)
+	units := buildUnits(tokens)
 	line := assemble(src, units, opts.Spacing)
 
 	spans, ok := locate(src, words)
@@ -127,17 +139,16 @@ func (e *Engine) RomanizeWith(text string, words []Word, opts Options) Result {
 	return Result{Line: line, Words: out, OK: true}
 }
 
-// buildUnits tokenizes text and converts all readings in one pass so っ and ー
-// carry across morpheme boundaries.
-func buildUnits(tk *tokenizer.Tokenizer, text string) []unit {
-	tokens := tk.Tokenize(text)
+// buildUnits converts all token readings in one pass so っ and ー carry across
+// morpheme boundaries.
+func buildUnits(tokens []token) []unit {
 	starts := make([]int, len(tokens))
 	readings := make([]string, len(tokens))
 	at := 0
 	for i, t := range tokens {
-		readings[i] = readingOf(t)
+		readings[i] = t.reading
 		starts[i] = at
-		at += len([]rune(t.Surface))
+		at += len([]rune(t.surface))
 	}
 	romajis := Parts(readings)
 	out := make([]unit, len(tokens))
@@ -149,34 +160,13 @@ func buildUnits(tk *tokenizer.Tokenizer, text string) []unit {
 		out[i] = unit{
 			start:   starts[i],
 			end:     end,
-			surface: tokens[i].Surface,
+			surface: tokens[i].surface,
 			read:    readings[i],
 			romaji:  romajis[i],
 		}
 	}
 
 	return out
-}
-
-// readingOf prefers pronunciation over reading and falls back to surface for
-// latin, punctuation, and unknown kanji.
-func readingOf(t tokenizer.Token) string {
-	pick := func(i int) string {
-		v, ok := t.FeatureAt(i)
-		if !ok || v == "" || v == "*" {
-			return ""
-		}
-
-		return v
-	}
-	if v := pick(featurePron); v != "" {
-		return v
-	}
-	if v := pick(featureReading); v != "" {
-		return v
-	}
-
-	return t.Surface
 }
 
 // assemble joins converted units and copies any uncovered source runes verbatim.

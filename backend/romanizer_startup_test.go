@@ -18,6 +18,7 @@ func TestStartupWithSettingOnLoadsFromCache(t *testing.T) {
 	warm.romanizer.shutdown()
 
 	svc := newPlayerService()
+	t.Cleanup(svc.romanizer.shutdown)
 	svc.appSettings.Playback.Lyrics.AutoRomanization = true
 	svc.appSettings.Playback.Lyrics.RomanizationLanguage = lyricRomanizationJP
 	svc.syncRomanizer()

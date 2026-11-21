@@ -91,8 +91,9 @@ func TestGolden(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%v (run go test ./internal/romanize -update)", err)
 			}
-			if b.String() != string(want) {
-				t.Fatalf("output differs from %s\n--- got ---\n%s\n--- want ---\n%s", golden, b.String(), want)
+			wantStr := strings.ReplaceAll(string(want), "\r\n", "\n")
+			if b.String() != wantStr {
+				t.Fatalf("output differs from %s\n--- got ---\n%s\n--- want ---\n%s", golden, b.String(), wantStr)
 			}
 		})
 	}

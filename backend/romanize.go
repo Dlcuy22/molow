@@ -279,8 +279,14 @@ func (r *romanizer) open() (*romanize.Engine, error) {
 			if r.logf != nil {
 				r.logf("romanize: cache unavailable, using the embedded dictionary", "error", err)
 			}
-		} else if err := romanize.RecordCacheStamp(r.cachePath); err != nil && r.logf != nil {
-			r.logf("romanize: cache stamp", "error", err)
+		} else {
+			if err := romanize.RecordCacheStamp(r.cachePath); err != nil && r.logf != nil {
+				r.logf("romanize: cache stamp", "error", err)
+			}
+			// Clean up the pre-mmap zip cache if a previous build left one behind.
+			legacy := filepath.Join(filepath.Dir(r.cachePath), "ipa.dict")
+			_ = os.Remove(legacy)
+			_ = os.Remove(romanize.CacheStampPath(legacy))
 		}
 		if r.logf != nil {
 			r.logf("romanize: dictionary loaded from the embedded copy")
@@ -323,7 +329,7 @@ func romanizeCachePath() string {
 		return ""
 	}
 
-	return filepath.Join(base, "molow", "ipa.dict")
+	return filepath.Join(base, "molow", "ipa.mmap")
 }
 
 func newRomanizer(logf func(string, ...any)) *romanizer {

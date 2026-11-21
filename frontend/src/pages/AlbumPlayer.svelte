@@ -21,7 +21,9 @@
     lyricOffsetFor,
     lyricProviderInfo,
     lyricSyncLabel,
+    nextClockWakeMs,
     seekTargetMs,
+    wordOpacity,
   } from "../lib/lyric-clock";
   import { sweepSegments } from "../lib/word-sweep";
   import SeekBar from "../lib/ui/SeekBar.svelte";
@@ -91,26 +93,64 @@
     lyricOffsetFor(lyrics?.provider, $appSettings.playback.lyrics.petitLyricsDelayMs),
   );
 
-  // Interpolate the 4 Hz snapshot position at display rate so both active-line
-  // switches and per-word CSS --clock sweeps run at display frame rate.
+  // Cap word-sweep DOM writes to ~30 fps and sleep rAF between words/lines so
+  // high-refresh displays do not repaint idle frames or line-synced tracks.
+  const SWEEP_INTERVAL_MS = 33;
+
+  type WordEntry = {
+    el: HTMLSpanElement;
+    startMs: number;
+    endMs: number;
+    lastOpacity: string;
+  };
+
   let active = $state(0);
   let clockBase = 0;
   let clockAt = 0;
   let clockPath = "";
   let clockRaf: number | undefined;
+  let clockTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastWordPaint = 0;
+  const activeWords = new Set<WordEntry>();
 
   const clockNow = (): number =>
     snap.state === "playing" ? clockBase + (performance.now() - clockAt) : clockBase;
 
-  function paintClock(holdJitter = false) {
-    const t = clockNow() - lyricOffsetMs;
-    const idx = activeLineAt(lines, t, active, holdJitter ? JITTER_HOLD_MS : 0);
-    if (idx !== active) {
-      active = idx;
+  function applyWordOpacity(entry: WordEntry, t: number) {
+    const op = wordOpacity(t, entry.startMs, entry.endMs);
+    if (op !== entry.lastOpacity) {
+      entry.lastOpacity = op;
+      entry.el.style.opacity = op;
     }
-    const el = pairEls[idx];
-    if (!el || !el.isConnected) return;
-    el.style.setProperty("--clock", String(Math.round(t)));
+  }
+
+  function paintWords(t: number) {
+    for (const entry of activeWords) {
+      applyWordOpacity(entry, t);
+    }
+  }
+
+  function trackWord(el: HTMLSpanElement, word: LyricWord) {
+    const entry: WordEntry = {
+      el,
+      startMs: word.startMs,
+      endMs: word.endMs,
+      lastOpacity: "",
+    };
+    activeWords.add(entry);
+    applyWordOpacity(entry, clockNow() - lyricOffsetMs);
+
+    return {
+      update(next: LyricWord) {
+        entry.startMs = next.startMs;
+        entry.endMs = next.endMs;
+        entry.lastOpacity = "";
+        applyWordOpacity(entry, clockNow() - lyricOffsetMs);
+      },
+      destroy() {
+        activeWords.delete(entry);
+      },
+    };
   }
 
   function stopClock() {
@@ -118,11 +158,57 @@
       cancelAnimationFrame(clockRaf);
       clockRaf = undefined;
     }
+    if (clockTimer !== undefined) {
+      clearTimeout(clockTimer);
+      clockTimer = undefined;
+    }
   }
 
-  function stepClock() {
-    paintClock(true);
-    clockRaf = requestAnimationFrame(stepClock);
+  function syncClock(holdJitter: boolean, forcePaint: boolean): { t: number; idx: number } {
+    const t = clockNow() - lyricOffsetMs;
+    const idx = activeLineAt(lines, t, active, holdJitter ? JITTER_HOLD_MS : 0);
+    if (idx !== active) {
+      active = idx;
+    }
+    if (forcePaint) {
+      paintWords(t);
+      lastWordPaint = performance.now();
+    }
+
+    return { t, idx };
+  }
+
+  function scheduleClock(t: number, idx: number) {
+    stopClock();
+    if (!open || snap.state !== "playing") {
+      return;
+    }
+    const wake = nextClockWakeMs(lines, idx, t);
+    if (wake === null) {
+      return;
+    }
+    if (wake === 0) {
+      clockRaf = requestAnimationFrame(stepClock);
+      return;
+    }
+    clockTimer = setTimeout(() => {
+      clockTimer = undefined;
+      const next = syncClock(true, true);
+      scheduleClock(next.t, next.idx);
+    }, Math.ceil(wake));
+  }
+
+  function stepClock(now: number) {
+    clockRaf = undefined;
+    const shouldPaint = now - lastWordPaint >= SWEEP_INTERVAL_MS;
+    const { t, idx } = syncClock(true, shouldPaint);
+    const wake = nextClockWakeMs(lines, idx, t);
+    if (wake !== 0 && !shouldPaint) {
+      // Snap finished words to full opacity before sleeping rAF.
+      paintWords(t);
+      lastWordPaint = now;
+    }
+    scheduleClock(t, idx);
   }
 
   // Re-anchor only on snapshot updates; tracking active here would stamp a stale position.
@@ -132,32 +218,39 @@
     clockPath = snap.path;
     clockBase = pos;
     clockAt = performance.now();
-    untrack(() => paintClock(sameTrack && snap.state === "playing"));
+    untrack(() => {
+      const playing = sameTrack && snap.state === "playing";
+      const forcePaint = !playing || clockRaf === undefined;
+      const { t, idx } = syncClock(playing, forcePaint);
+      if (clockRaf === undefined) {
+        scheduleClock(t, idx);
+      }
+    });
   });
 
-  // Sync active and --clock when lyrics mount/reload, the spinner clears, or the offset changes.
+  // Sync active and words when lyrics mount/reload, the spinner clears, or the offset changes.
   $effect(() => {
     void lines;
     void lyricOffsetMs;
     void showSpinner;
-    untrack(() => paintClock(false));
+    untrack(() => {
+      const { t, idx } = syncClock(false, true);
+      scheduleClock(t, idx);
+    });
   });
 
   $effect(() => {
     stopClock();
     if (!open || snap.state !== "playing") {
-      untrack(() => paintClock(false));
+      untrack(() => syncClock(false, true));
       return;
     }
-    stepClock();
+    untrack(() => {
+      const { t, idx } = syncClock(false, true);
+      scheduleClock(t, idx);
+    });
     return stopClock;
   });
-
-  // Opacity slope (0.3 -> 1.0) over the word's duration; zero-length words snap.
-  const wordRate = (w: { startMs: number; endMs: number }): number => {
-    const span = w.endMs - w.startMs;
-    return span > 0 ? 0.7 / span : 1e6;
-  };
 
   // instrumentalMark is the line text the TTML pre-processing leaves in a long
   // instrumental gap. The pane draws notes for it instead of the character.
@@ -345,7 +438,7 @@
         {#if segment.word}
           <span
             class="lyric-word"
-            style="--from:{segment.word.startMs};--inv:{wordRate(segment.word)}"
+            use:trackWord={segment.word}
           >{segment.text}</span>
         {:else}{segment.text}{/if}
       {/each}
@@ -489,6 +582,7 @@
             <div
               bind:this={pairEls[i]}
               class="flex flex-col gap-[2px]"
+              class:lyric-line-active={i === active}
               class:opacity-100={i === active}
               class:opacity-[0.28]={i !== active}
             >
@@ -584,7 +678,14 @@
 </div>
 
 <style>
+  /* Isolate only the active line onto its own layer so word-sweep repaints do
+   * not invalidate the entire multi-thousand-pixel lyrics scroll layer. */
+  .lyric-line-active {
+    transform: translateZ(0);
+    contain: layout paint;
+  }
+
   .lyric-word {
-    opacity: clamp(0.3, calc(0.3 + (var(--clock, 0) - var(--from)) * var(--inv)), 1);
+    opacity: 0.3;
   }
 </style>

@@ -25,10 +25,21 @@
   let scrubbing = $state(false);
   let scrubValue = $state(0);
   let pendingSeek = $state<number | null>(null);
+  let hovered = $state(false);
+  let focused = $state(false);
 
   const value = $derived(scrubbing ? scrubValue : (pendingSeek ?? position));
   const fill = $derived(fillFrac(value, 0, duration));
   const disabled = $derived(duration === 0);
+
+  // Only reposition the thumb while the user is interacting with the bar, so
+  // 4 Hz playback ticks do not mutate `left` on an invisible (opacity: 0) node.
+  let thumbFill = $state(0);
+  $effect(() => {
+    if (hovered || focused || scrubbing) {
+      thumbFill = fill;
+    }
+  });
 
   // A seek the engine clamped or rejected must not hold the bar forever, so the
   // pending value also expires on its own.
@@ -85,7 +96,7 @@
     <div class="pointer-events-none absolute inset-x-[5px] top-[2px] h-0">
       <div
         class="seek-thumb absolute size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full {fillColor}"
-        style="left: {fill * 100}%"
+        style="left: {thumbFill * 100}%"
       ></div>
     </div>
     <input
@@ -98,19 +109,27 @@
       {disabled}
       aria-label="Seek"
       aria-valuetext="{formatTime(value)} of {formatTime(duration)}"
+      onpointerenter={() => (hovered = true)}
+      onpointerleave={() => (hovered = false)}
+      onfocus={() => (focused = true)}
+      onblur={() => (focused = false)}
       oninput={onInput}
       onchange={onCommit}
     />
   </div>
 {:else}
-  <div class="seek relative flex h-4 w-full items-center" class:seek-instant={scrubbing} class:opacity-40={disabled}>
+  <div
+    class="seek relative flex h-4 w-full items-center"
+    class:seek-instant={scrubbing}
+    class:opacity-40={disabled}
+  >
     <div class="pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-[2px] {trackColor}">
       <div class="seek-fill h-full {fillColor}" style="transform: scaleX({fill})"></div>
     </div>
     <div class="pointer-events-none absolute inset-x-[5px] top-1/2 h-0">
       <div
         class="seek-thumb absolute size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full {fillColor}"
-        style="left: {fill * 100}%"
+        style="left: {thumbFill * 100}%"
       ></div>
     </div>
     <input
@@ -123,6 +142,10 @@
       {disabled}
       aria-label="Seek"
       aria-valuetext="{formatTime(value)} of {formatTime(duration)}"
+      onpointerenter={() => (hovered = true)}
+      onpointerleave={() => (hovered = false)}
+      onfocus={() => (focused = true)}
+      onblur={() => (focused = false)}
       oninput={onInput}
       onchange={onCommit}
     />

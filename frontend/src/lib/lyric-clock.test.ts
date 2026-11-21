@@ -5,7 +5,9 @@ import {
   lyricOffsetFor,
   lyricProviderInfo,
   lyricSyncLabel,
+  nextClockWakeMs,
   seekTargetMs,
+  wordOpacity,
 } from "./lyric-clock";
 
 const lines = [
@@ -79,5 +81,42 @@ describe("lyricSyncLabel", () => {
     expect(lyricSyncLabel([{ timeMs: 1000, words: [{ text: "a" }] }], true)).toBe("word synced");
     expect(lyricSyncLabel([{ timeMs: 1000 }], true)).toBe("line synced");
     expect(lyricSyncLabel([{ timeMs: -1 }], false)).toBeNull();
+  });
+});
+
+describe("wordOpacity", () => {
+  it("interpolates from 0.3 to 1 and snaps zero-length words", () => {
+    expect(wordOpacity(900, 1000, 1200)).toBe("0.3");
+    expect(wordOpacity(1000, 1000, 1200)).toBe("0.3");
+    expect(wordOpacity(1100, 1000, 1200)).toBe("0.65");
+    expect(wordOpacity(1200, 1000, 1200)).toBe("1");
+    expect(wordOpacity(1001, 1000, 1000)).toBe("1");
+  });
+});
+
+describe("nextClockWakeMs", () => {
+  const sheet = [
+    {
+      timeMs: 1000,
+      words: [
+        { startMs: 1000, endMs: 1200 },
+        { startMs: 1500, endMs: 1800 },
+      ],
+    },
+    { timeMs: 3000 },
+  ];
+
+  it("returns 0 while a word is actively sweeping", () => {
+    expect(nextClockWakeMs(sheet, 0, 1000)).toBe(0);
+    expect(nextClockWakeMs(sheet, 0, 1150)).toBe(0);
+  });
+
+  it("returns exact ms until the next word start or next line boundary", () => {
+    expect(nextClockWakeMs(sheet, 0, 1250)).toBe(250);
+    expect(nextClockWakeMs(sheet, 0, 1800)).toBe(1200);
+  });
+
+  it("returns null once no further words or timed lines remain", () => {
+    expect(nextClockWakeMs(sheet, 1, 3500)).toBeNull();
   });
 });

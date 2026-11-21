@@ -48,6 +48,59 @@ export function seekTargetMs(lineTimeMs: number, offsetMs: number): number {
   return Math.max(0, lineTimeMs + offsetMs);
 }
 
+/**
+ * wordOpacity maps lyric clock t onto the 0.3..1.0 sweep opacity of one word.
+ * Returns a rounded string so callers can skip redundant DOM style writes.
+ */
+export function wordOpacity(t: number, startMs: number, endMs: number): string {
+  if (t <= startMs) {
+    return "0.3";
+  }
+  if (t >= endMs || endMs <= startMs) {
+    return "1";
+  }
+  const op = 0.3 + ((t - startMs) * 0.7) / (endMs - startMs);
+
+  return op >= 0.995 ? "1" : op.toFixed(2);
+}
+
+/**
+ * nextClockWakeMs returns how long the lyric clock can sleep before the next
+ * visual change: 0 when a word on the active line is currently sweeping, a
+ * positive ms delay until the next word start or line boundary, or null at the
+ * end of the sheet.
+ */
+export function nextClockWakeMs(
+  lines: readonly { timeMs: number; words?: readonly { startMs: number; endMs: number }[] }[],
+  active: number,
+  t: number,
+): number | null {
+  let nextMs = Infinity;
+  const words = lines[active]?.words;
+  if (words) {
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      if (w.startMs <= t && t < w.endMs) {
+        return 0;
+      }
+      if (w.startMs > t && w.startMs - t < nextMs) {
+        nextMs = w.startMs - t;
+      }
+    }
+  }
+  for (let i = active + 1; i < lines.length; i++) {
+    const timeMs = lines[i].timeMs;
+    if (timeMs >= 0 && timeMs > t) {
+      if (timeMs - t < nextMs) {
+        nextMs = timeMs - t;
+      }
+      break;
+    }
+  }
+
+  return Number.isFinite(nextMs) ? nextMs : null;
+}
+
 export interface LyricProviderInfo {
   name: string;
   url: string;

@@ -95,9 +95,12 @@
   let queuePinned = $state(false);
   let playerOpen = $state(false);
   // Mounted stays true through the closing transition, so the sheet can
-  // animate down before it is removed.
+  // animate down before it is removed. Covered hides the background shell once
+  // the opaque sheet has finished sliding in, stopping hidden layout/paint work.
   let playerMounted = $state(false);
+  let playerCovered = $state(false);
   let playerTimer: ReturnType<typeof setTimeout> | undefined;
+  let coverTimer: ReturnType<typeof setTimeout> | undefined;
 
   let lyricsDoc = $state<{ path: string; doc: Lyrics | null }>({ path: "", doc: null });
   let lyricsSettledPath = $state("");
@@ -354,23 +357,35 @@
     });
   }
 
+  function showPlayer() {
+    clearTimeout(playerTimer);
+    clearTimeout(coverTimer);
+    playerOpen = true;
+    playerMounted = true;
+    coverTimer = setTimeout(() => {
+      if (playerOpen) {
+        playerCovered = true;
+      }
+    }, 340);
+  }
+
   function openPlayer() {
     if (hasQueue) {
       closeQueue();
-      playerOpen = true;
-      playerMounted = true;
+      showPlayer();
     }
   }
 
   function openAlbum(album: Album) {
     void playAlbum(album);
-    playerOpen = true;
-    playerMounted = true;
+    showPlayer();
   }
 
   // closePlayer lowers the sheet before unmounting it: the CSS transition owns
   // the motion, and the timeout only decides when the node can go away.
   function closePlayer() {
+    clearTimeout(coverTimer);
+    playerCovered = false;
     playerOpen = false;
     clearTimeout(playerTimer);
     playerTimer = setTimeout(() => {
@@ -668,7 +683,11 @@
   }}
 />
 
-<div class="flex h-full flex-col bg-bg-dark text-fg" inert={playerMounted}>
+<div
+  class="flex h-full flex-col bg-bg-dark text-fg"
+  style={playerCovered ? "content-visibility: hidden" : ""}
+  inert={playerMounted}
+>
   <div class="flex min-h-0 flex-1">
     <Sidebar
       bind:width={sidebarWidth}

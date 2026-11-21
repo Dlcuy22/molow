@@ -396,8 +396,6 @@ body {
 .seek-fill {
   width: 100%;
   transform-origin: 0 50%;
-  transition: transform 300ms linear;
-  will-change: transform;
 }
 .seek-thumb {
   opacity: 0;
@@ -422,10 +420,6 @@ body {
 .seek-input:active {
   cursor: grabbing;
 }
-/* A drag must track the pointer exactly, not ease behind it. */
-.seek-instant .seek-fill {
-  transition: none;
-}
 .seek-instant .seek-thumb {
   transition:
     opacity 140ms ease,
@@ -439,7 +433,6 @@ body {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .seek-fill,
   .seek-thumb {
     transition: none;
   }

@@ -62,6 +62,7 @@ type Library struct {
 	ID           string       `json:"id"`
 	Kind         Kind         `json:"kind"`
 	Name         string       `json:"name"`
+	Description  string       `json:"description,omitempty"`
 	Root         string       `json:"root,omitempty"`
 	Roots        []string     `json:"roots,omitempty"`
 	Status       Status       `json:"status"`

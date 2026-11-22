@@ -30,9 +30,9 @@ const trackColumns = `
 	t.library_id, t.kind, t.native_id, t.title, t.artist, t.album, t.album_artist,
 	t.genre, t.year, t.track_no, t.disc_no, t.duration_ms, t.cover_id,
 	` + refSQL + ` AS ref,
-	(l.track_id IS NOT NULL) AS liked`
+	(l.ref IS NOT NULL) AS liked`
 
-const trackFrom = ` FROM track t LEFT JOIN like l ON l.track_id = t.id`
+const trackFrom = ` FROM track t LEFT JOIN like l ON l.ref = (` + refSQL + `)`
 
 func scanTrack(rows *sql.Rows) (library.Track, error) {
 	var t library.Track
@@ -218,7 +218,7 @@ func (s *Store) Search(libraryID, query string, limit int) ([]library.Track, err
 		`SELECT`+trackColumns+
 			` FROM track t
 			  JOIN track_fts ON track_fts.rowid = t.id
-			  LEFT JOIN like l ON l.track_id = t.id
+			  LEFT JOIN like l ON l.ref = (`+refSQL+`)
 			  WHERE t.library_id = ? AND track_fts MATCH ?
 			  ORDER BY rank LIMIT ?`,
 		libraryID, match, limit,
@@ -251,27 +251,27 @@ type rowQuerier interface {
 	QueryRow(query string, args ...any) *sql.Row
 }
 
-// refTrackID resolves a playable ref to its catalogue row. A local ref is a
-// file path; a remote ref is a kind and a native id, because a remote row has
-// no track_file. The engine only ever sees the ref, so when two libraries hold
-// the same provider id the earliest row is the one the ref means; ordering it
-// explicitly keeps TrackByRef and this lookup on the same row.
-func refTrackID(q rowQuerier, ref string) (int64, error) {
+// refTrackIDInLibrary resolves ref to its track row strictly within libraryID,
+// ensuring playlists in one library never link to tracks owned by another.
+func refTrackIDInLibrary(q rowQuerier, libraryID, ref string) (int64, error) {
 	var id int64
 	if kind, native, ok := remoteID(ref); ok {
 		err := q.QueryRow(
-			`SELECT id FROM track WHERE kind = ? AND native_id = ? ORDER BY id LIMIT 1`,
-			string(kind), native,
+			`SELECT id FROM track WHERE library_id = ? AND kind = ? AND native_id = ? LIMIT 1`,
+			libraryID, string(kind), native,
 		).Scan(&id)
 
 		return id, err
 	}
-	err := q.QueryRow(`SELECT track_id FROM track_file WHERE path = ?`, ref).Scan(&id)
+	err := q.QueryRow(
+		`SELECT track_id FROM track_file WHERE library_id = ? AND path = ? LIMIT 1`,
+		libraryID, ref,
+	).Scan(&id)
 
 	return id, err
 }
 
-// TrackByRef resolves a playable ref back to its catalogue row.
+// TrackByRef resolves a playable ref back to its earliest catalogue row.
 func (s *Store) TrackByRef(ref string) (library.Track, bool, error) {
 	var (
 		rows *sql.Rows
@@ -288,8 +288,8 @@ func (s *Store) TrackByRef(ref string) (library.Track, bool, error) {
 			`SELECT`+trackColumns+
 				` FROM track t
 				  JOIN track_file f ON f.track_id = t.id AND f.path = ?
-				  LEFT JOIN like l ON l.track_id = t.id
-				  LIMIT 1`, ref,
+				  LEFT JOIN like l ON l.ref = (`+refSQL+`)
+				  ORDER BY t.id LIMIT 1`, ref,
 		)
 	}
 	if err != nil {
@@ -304,60 +304,50 @@ func (s *Store) TrackByRef(ref string) (library.Track, bool, error) {
 	return out[0], true, nil
 }
 
-// SetLiked inserts or removes a like for a ref.
+// SetLiked inserts or removes a global like for ref.
 func (s *Store) SetLiked(ref string, liked bool) error {
-	_, ok, err := s.TrackByRef(ref)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("library: unknown ref %q", ref)
-	}
-	id, err := refTrackID(s.db, ref)
-	if err != nil {
-		return err
+	if ref == "" {
+		return fmt.Errorf("library: empty ref")
 	}
 	if liked {
-		_, err = s.db.Exec(
-			`INSERT INTO like (track_id, created_at) VALUES (?, ?)
-			 ON CONFLICT(track_id) DO NOTHING`, id, time.Now().Unix(),
+		_, err := s.db.Exec(
+			`INSERT INTO like (ref, created_at) VALUES (?, ?)
+			 ON CONFLICT(ref) DO NOTHING`, ref, time.Now().Unix(),
 		)
 
 		return err
 	}
-	_, err = s.db.Exec(`DELETE FROM like WHERE track_id = ?`, id)
+	_, err := s.db.Exec(`DELETE FROM like WHERE ref = ?`, ref)
 
 	return err
 }
 
-// Liked reports whether a ref carries a like.
+// Liked reports whether ref carries a global like.
 func (s *Store) Liked(ref string) (bool, error) {
-	id, err := refTrackID(s.db, ref)
-	if err != nil {
-		return false, err
+	if ref == "" {
+		return false, nil
 	}
 	var n int
-	err = s.db.QueryRow(`SELECT COUNT(*) FROM like WHERE track_id = ?`, id).Scan(&n)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM like WHERE ref = ?`, ref).Scan(&n)
 
 	return n > 0, err
 }
 
-// ToggleLiked flips one like and returns the state it now has.
+// ToggleLiked flips one global like and returns the state it now has.
 func (s *Store) ToggleLiked(ref string) (bool, error) {
-	id, err := refTrackID(s.db, ref)
-	if err != nil {
-		return false, err
+	if ref == "" {
+		return false, fmt.Errorf("library: empty ref")
 	}
 	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM like WHERE track_id = ?`, id).Scan(&n); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM like WHERE ref = ?`, ref).Scan(&n); err != nil {
 		return false, err
 	}
 	if n > 0 {
-		_, err = s.db.Exec(`DELETE FROM like WHERE track_id = ?`, id)
+		_, err := s.db.Exec(`DELETE FROM like WHERE ref = ?`, ref)
 
 		return false, err
 	}
-	_, err = s.db.Exec(`INSERT INTO like (track_id, created_at) VALUES (?, ?)`, id, time.Now().Unix())
+	_, err := s.db.Exec(`INSERT INTO like (ref, created_at) VALUES (?, ?)`, ref, time.Now().Unix())
 
 	return true, err
 }
@@ -471,7 +461,7 @@ func (s *Store) PlaylistTracks(playlistID string, limit, offset int) ([]library.
 		`SELECT`+trackColumns+
 			` FROM playlist_entry e
 			  JOIN track t ON t.id = e.track_id
-			  LEFT JOIN like l ON l.track_id = t.id
+			  LEFT JOIN like l ON l.ref = (`+refSQL+`)
 			  WHERE e.playlist_id = ?
 			  ORDER BY e.position LIMIT ? OFFSET ?`,
 		playlistID, limit, offset,
@@ -554,13 +544,19 @@ func (s *Store) DeletePlaylist(libraryID, playlistID string) error {
 	return nil
 }
 
-// AddToPlaylist appends refs, skipping ones already present.
+// AddToPlaylist appends refs from the playlist's owning library, skipping ones
+// already present.
 func (s *Store) AddToPlaylist(playlistID string, refs []string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	var libraryID string
+	if err := tx.QueryRow(`SELECT library_id FROM playlist WHERE id = ?`, playlistID).Scan(&libraryID); err != nil {
+		return err
+	}
 
 	var pos int
 	if err := tx.QueryRow(
@@ -570,7 +566,7 @@ func (s *Store) AddToPlaylist(playlistID string, refs []string) error {
 	}
 
 	for _, ref := range refs {
-		id, err := refTrackID(tx, ref)
+		id, err := refTrackIDInLibrary(tx, libraryID, ref)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -602,7 +598,8 @@ func (s *Store) AddToPlaylist(playlistID string, refs []string) error {
 	return tx.Commit()
 }
 
-// RemoveFromPlaylist deletes refs and closes the position gaps.
+// RemoveFromPlaylist deletes refs belonging to the playlist's owning library
+// and closes the position gaps.
 func (s *Store) RemoveFromPlaylist(playlistID string, refs []string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -610,8 +607,13 @@ func (s *Store) RemoveFromPlaylist(playlistID string, refs []string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	var libraryID string
+	if err := tx.QueryRow(`SELECT library_id FROM playlist WHERE id = ?`, playlistID).Scan(&libraryID); err != nil {
+		return err
+	}
+
 	for _, ref := range refs {
-		id, err := refTrackID(tx, ref)
+		id, err := refTrackIDInLibrary(tx, libraryID, ref)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				continue

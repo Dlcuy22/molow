@@ -1,7 +1,6 @@
 package sqlite
 
 import (
-	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -117,29 +116,41 @@ func TestRenameKeepsTrackAndLike(t *testing.T) {
 	}
 }
 
-// TestForeignPathStaysWithItsLibrary pins the one-owner rule: a path already
-// catalogued under another library is refused, and the refusal leaves both
-// catalogues as they were.
-func TestForeignPathStaysWithItsLibrary(t *testing.T) {
+// TestSharedPathOwnedIndependentlyPerLibrary pins per-library file ownership:
+// two libraries can import the same file path with separate track/playlist rows,
+// and removing one library never touches the other's tracks or playlists.
+func TestSharedPathOwnedIndependentlyPerLibrary(t *testing.T) {
 	s := newTestStore(t)
 	seed(t, s)
 	if _, err := s.AddLibrary(library.Library{
-		ID: "local:second", Kind: library.KindLocal, Name: "Second", Root: "/other",
+		ID: "local:second", Kind: library.KindLocal, Name: "Second", Description: "Copy",
 	}); err != nil {
 		t.Fatalf("add library: %v", err)
 	}
 
-	_, err := s.UpsertTrack("local:second", File{
-		Path: "/music/a/01.flac", Dev: 1, Ino: 999, Size: 20, Mtime: 2000,
-	}, TrackRow{NativeID: "id:2", Title: "Taken", Album: "Alpha"})
-	if !errors.Is(err, ErrForeignFile) {
-		t.Fatalf("upsert = %v, want ErrForeignFile", err)
+	if _, err := s.UpsertTrack("local:second", File{
+		Path: "/music/a/01.flac", Dev: 1, Ino: 101, Size: 10, Mtime: 1000,
+	}, TrackRow{NativeID: "id:2:/music/a/01.flac", Title: "First", Album: "Alpha"}); err != nil {
+		t.Fatalf("upsert into second library: %v", err)
 	}
-	if n := count(t, s, `SELECT COUNT(*) FROM track WHERE library_id = 'local:second'`); n != 0 {
-		t.Fatalf("second library has %d tracks, want none", n)
+	pl, err := s.CreatePlaylist("local:second", "Kept")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if n := count(t, s, `SELECT COUNT(*) FROM track`); n != 3 {
-		t.Fatalf("track count = %d, want the original 3", n)
+	if err := s.AddToPlaylist(pl.ID, []string{"/music/a/01.flac"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Removing the first library must not cascade into the second library's playlist.
+	if err := s.RemoveLibrary("local:test"); err != nil {
+		t.Fatal(err)
+	}
+	tracks, err := s.PlaylistTracks(pl.ID, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tracks) != 1 || tracks[0].Ref != "/music/a/01.flac" {
+		t.Fatalf("second library playlist after removing first = %+v, want 1 track", tracks)
 	}
 }
 
@@ -338,10 +349,10 @@ func TestRemotePlaylistKeepsItsEntries(t *testing.T) {
 	}
 }
 
-// TestRemoteRefMeansTheEarliestRow pins the tie-break. The engine only ever
-// sees a ref, so when two libraries hold the same provider id the ref means the
-// row that imported it first, and a like lands on that row.
-func TestRemoteRefMeansTheEarliestRow(t *testing.T) {
+// TestLikesApplyGloballyAcrossLibraries pins global ref-keyed likes: liking a
+// track marks every library copy of that ref liked and survives removing one
+// of those libraries.
+func TestLikesApplyGloballyAcrossLibraries(t *testing.T) {
 	s := newTestStore(t)
 	seed(t, s)
 	if _, err := s.AddLibrary(library.Library{
@@ -359,26 +370,35 @@ func TestRemoteRefMeansTheEarliestRow(t *testing.T) {
 	}
 
 	ref := library.RemoteRef(library.KindYTM, "vidX")
-	tr, ok, err := s.TrackByRef(ref)
-	if err != nil || !ok {
-		t.Fatalf("resolve: ok=%v err=%v", ok, err)
-	}
-	if tr.LibraryID != "local:test" || tr.Title != "First" {
-		t.Fatalf("ref resolved to %+v", tr)
-	}
-
 	if err := s.SetLiked(ref, true); err != nil {
 		t.Fatalf("like: %v", err)
 	}
-	var n int
-	if err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM like l JOIN track t ON t.id = l.track_id
-		 WHERE t.library_id = 'local:other' AND t.native_id = 'vidX'`,
-	).Scan(&n); err != nil {
+
+	for _, lib := range []string{"local:test", "local:other"} {
+		rows, _, err := s.Tracks(lib, 50, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, r := range rows {
+			if r.Ref == ref {
+				found = true
+				if !r.Liked {
+					t.Fatalf("library %s copy of %s was not liked", lib, ref)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("library %s missing %s", lib, ref)
+		}
+	}
+
+	if err := s.RemoveLibrary("local:test"); err != nil {
 		t.Fatal(err)
 	}
-	if n != 0 {
-		t.Fatal("the like landed on the second library's row")
+	liked, err := s.Liked(ref)
+	if err != nil || !liked {
+		t.Fatalf("Liked after removing first library = (%v, %v), want true", liked, err)
 	}
 }
 
@@ -642,12 +662,12 @@ func TestTouchIfUnchanged(t *testing.T) {
 		t.Fatalf("backfill needed: ok=%v err=%v, want miss", ok, err)
 	}
 
-	// Foreign owner returns ErrForeignFile.
+	// Another library does not hit a file indexed only under local:test.
 	if _, err := s.AddLibrary(library.Library{ID: "local:other", Kind: library.KindLocal, Name: "Other"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.TouchIfUnchanged("local:other", f, 0, 0, nil); !errors.Is(err, ErrForeignFile) {
-		t.Fatalf("foreign owner: err=%v, want ErrForeignFile", err)
+	if _, ok, err := s.TouchIfUnchanged("local:other", f, 0, 0, nil); err != nil || ok {
+		t.Fatalf("other library touch = (ok=%v, err=%v), want miss", ok, err)
 	}
 }
 
@@ -768,5 +788,91 @@ func TestRemoteTrackMetaPersistsAndBackfills(t *testing.T) {
 	meta, ok, err = s.TrackRemoteMeta("ytm:vid1")
 	if err != nil || !ok || meta.ThumbnailURL != "https://lh3.googleusercontent.com/cover" || meta.ArtistID != "UCartist1" {
 		t.Fatalf("re-import lost remote meta: (%+v, %v, %v)", meta, ok, err)
+	}
+}
+
+func TestUpdateLibraryPersistsNameAndDescription(t *testing.T) {
+	s := newTestStore(t)
+	created, err := s.AddLibrary(library.Library{
+		ID:          "local:custom",
+		Kind:        library.KindLocal,
+		Name:        "Original",
+		Description: "First note",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Name != "Original" || created.Description != "First note" {
+		t.Fatalf("created = %+v", created)
+	}
+
+	updated, err := s.UpdateLibrary("local:custom", "Renamed", "Updated description")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "Renamed" || updated.Description != "Updated description" {
+		t.Fatalf("updated = %+v", updated)
+	}
+}
+
+func TestMigration005MigratesTrackFilesAndLikes(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "library.db")
+	dsn := "file:" + filepath.ToSlash(p) + "?_pragma=foreign_keys(1)"
+	db, err := driver.Open(dsn, func(c *sqlite3.Conn) error {
+		return fts5.Register(c)
+	})
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	for i, name := range []string{
+		"migrations/001_init.sql",
+		"migrations/002_library_roots.sql",
+		"migrations/003_cover_ids.sql",
+		"migrations/004_track_remote_meta.sql",
+	} {
+		body, err := migrationFS.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("apply %s: %v", name, err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = " + string(rune('1'+i))); err != nil {
+			t.Fatalf("version %d: %v", i+1, err)
+		}
+	}
+
+	now := time.Now().Unix()
+	if _, err := db.Exec(`INSERT INTO library (id, kind, name, root, created_at) VALUES ('local:a', 'local', 'A', '/a', ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO track (id, library_id, kind, native_id, title, added_at) VALUES (1, 'local:a', 'local', 'n1', 'LocalSong', ?), (2, 'local:a', 'ytm', 'vid9', 'RemoteSong', ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO track_file (path, track_id, size, mtime, seen_at) VALUES ('/a/song.flac', 1, 10, 20, ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO like (track_id, created_at) VALUES (1, ?), (2, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(p)
+	if err != nil {
+		t.Fatalf("open migrated: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	for _, ref := range []string{"/a/song.flac", "ytm:vid9"} {
+		liked, err := s.Liked(ref)
+		if err != nil || !liked {
+			t.Fatalf("Liked(%q) after migration 005 = (%v, %v), want true", ref, liked, err)
+		}
+		tr, ok, err := s.TrackByRef(ref)
+		if err != nil || !ok || !tr.Liked {
+			t.Fatalf("TrackByRef(%q) after migration 005 = (%+v, %v, %v)", ref, tr, ok, err)
+		}
 	}
 }

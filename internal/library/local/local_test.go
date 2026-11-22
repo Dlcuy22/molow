@@ -133,10 +133,10 @@ func TestScanSkipsHiddenAndSystemDirs(t *testing.T) {
 	}
 }
 
-// TestScanSkipsAPathAnotherLibraryOwns pins the one-owner rule at the
-// catalogue: a scan leaves a file row that belongs to another library alone
-// instead of moving or duplicating it, and does not count it as unreadable.
-func TestScanSkipsAPathAnotherLibraryOwns(t *testing.T) {
+// TestScanIndexesSharedPathIndependently pins per-library ownership: a scan
+// indexes files under its own library even when another library already
+// imported the same path, leaving the other library's row untouched.
+func TestScanIndexesSharedPathIndependently(t *testing.T) {
 	src, store := newTestLocal(t)
 	ext := testExt(t)
 
@@ -152,7 +152,7 @@ func TestScanSkipsAPathAnotherLibraryOwns(t *testing.T) {
 	if _, err := store.UpsertTrack("local:other", sqlite.File{
 		Path: shared, Size: 1, Mtime: 1,
 	}, sqlite.TrackRow{NativeID: "other:1", Title: "Taken"}); err != nil {
-		t.Fatalf("seed foreign row: %v", err)
+		t.Fatalf("seed other library row: %v", err)
 	}
 	if _, err := store.AddRoot("local:test", root); err != nil {
 		t.Fatalf("add root: %v", err)
@@ -162,14 +162,14 @@ func TestScanSkipsAPathAnotherLibraryOwns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import scan: %v", err)
 	}
-	if res.Count != 1 || len(res.Refs) != 1 || res.Refs[0] == shared {
-		t.Fatalf("scan = %+v, want only the unowned file", res)
+	if res.Count != 2 || len(res.Refs) != 2 {
+		t.Fatalf("scan = %+v, want both files indexed independently", res)
 	}
 	if _, total, _ := store.Tracks("local:other", 10, 0); total != 1 {
 		t.Fatalf("other library lost its row")
 	}
-	if _, total, _ := store.Tracks("local:test", 10, 0); total != 1 {
-		t.Fatalf("test library has %d tracks, want only its own file", total)
+	if _, total, _ := store.Tracks("local:test", 10, 0); total != 2 {
+		t.Fatalf("test library has %d tracks, want 2", total)
 	}
 }
 

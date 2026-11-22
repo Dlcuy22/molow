@@ -138,24 +138,43 @@ func (s *Store) migrate() error {
 	return nil
 }
 
-// AddLibrary registers a root and returns its row. A duplicate root returns the
-// existing library rather than a second row.
+// AddLibrary registers a library and returns its row.
 func (s *Store) AddLibrary(lib library.Library) (library.Library, error) {
 	if lib.ID == "" {
 		return library.Library{}, errors.New("library: empty id")
 	}
 	now := time.Now().Unix()
 	_, err := s.db.Exec(
-		`INSERT INTO library (id, kind, name, root, account_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET name = excluded.name, root = excluded.root`,
-		lib.ID, string(lib.Kind), lib.Name, lib.Root, lib.Root, now,
+		`INSERT INTO library (id, kind, name, description, root, account_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, root = excluded.root`,
+		lib.ID, string(lib.Kind), lib.Name, lib.Description, lib.Root, lib.Root, now,
 	)
 	if err != nil {
 		return library.Library{}, err
 	}
 
 	return s.Library(lib.ID)
+}
+
+// UpdateLibrary changes a library's name and description and returns the updated row.
+func (s *Store) UpdateLibrary(id, name, description string) (library.Library, error) {
+	res, err := s.db.Exec(
+		`UPDATE library SET name = ?, description = ? WHERE id = ?`,
+		name, description, id,
+	)
+	if err != nil {
+		return library.Library{}, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return library.Library{}, err
+	}
+	if n == 0 {
+		return library.Library{}, fmt.Errorf("library: unknown id %q", id)
+	}
+
+	return s.Library(id)
 }
 
 // AddRoot registers one more watched folder. It reports whether the root is
@@ -236,10 +255,10 @@ func (s *Store) Library(id string) (library.Library, error) {
 		customCover int
 	)
 	err := s.db.QueryRow(
-		`SELECT l.id, l.kind, l.name, l.root, l.last_scan_at, l.cover_id, l.custom_cover,
+		`SELECT l.id, l.kind, l.name, l.description, l.root, l.last_scan_at, l.cover_id, l.custom_cover,
 		        (SELECT COUNT(*) FROM track t WHERE t.library_id = l.id)
 		 FROM library l WHERE l.id = ?`, id,
-	).Scan(&out.ID, &kind, &out.Name, &out.Root, new(int64), &out.CoverID, &customCover, &out.TrackCount)
+	).Scan(&out.ID, &kind, &out.Name, &out.Description, &out.Root, new(int64), &out.CoverID, &customCover, &out.TrackCount)
 	if err != nil {
 		return library.Library{}, err
 	}
@@ -263,7 +282,7 @@ func (s *Store) Library(id string) (library.Library, error) {
 // Libraries lists every registered library.
 func (s *Store) Libraries() ([]library.Library, error) {
 	rows, err := s.db.Query(
-		`SELECT l.id, l.kind, l.name, l.root, l.cover_id, l.custom_cover,
+		`SELECT l.id, l.kind, l.name, l.description, l.root, l.cover_id, l.custom_cover,
 		        (SELECT COUNT(*) FROM track t WHERE t.library_id = l.id)
 		 FROM library l ORDER BY l.created_at`,
 	)
@@ -279,7 +298,7 @@ func (s *Store) Libraries() ([]library.Library, error) {
 			kind        string
 			customCover int
 		)
-		if err := rows.Scan(&l.ID, &kind, &l.Name, &l.Root, &l.CoverID, &customCover, &l.TrackCount); err != nil {
+		if err := rows.Scan(&l.ID, &kind, &l.Name, &l.Description, &l.Root, &l.CoverID, &customCover, &l.TrackCount); err != nil {
 			return nil, err
 		}
 		l.Kind = library.Kind(kind)
@@ -370,19 +389,13 @@ type RemoteMeta struct {
 	ArtistID     string
 }
 
-// ErrForeignFile reports a path the catalogue already indexes under another
-// library. A scan skips it: a file path is the ref a like or a playlist stores,
-// so the catalogue can hold it under one library only.
-var ErrForeignFile = errors.New("library: file belongs to another library")
-
-// TouchIfUnchanged checks whether f.Path belongs to libraryID with matching
-// size and mtime. When unchanged, it updates seen_at and clears missing without
-// requiring tag metadata, returning (trackID, true, nil).
+// TouchIfUnchanged checks whether f.Path is indexed under libraryID with
+// matching size and mtime. When unchanged, it updates seen_at and clears
+// missing without requiring tag metadata, returning (trackID, true, nil).
 //
-// It returns ErrForeignFile if another library owns the path. It returns
-// (0, false, nil) when the path is unknown, changed, missing its cached cover
-// according to hasCover, or missing a track or disc index that fallbackTrack or
-// fallbackDisc can supply.
+// It returns (0, false, nil) when the path is unknown in libraryID, changed,
+// missing its cached cover according to hasCover, or missing a track or disc
+// index that fallbackTrack or fallbackDisc can supply.
 func (s *Store) TouchIfUnchanged(
 	libraryID string,
 	f File,
@@ -393,24 +406,20 @@ func (s *Store) TouchIfUnchanged(
 		trackID    int64
 		oldSize    int64
 		oldMtime   int64
-		owner      string
 		coverID    string
 		oldTrackNo int
 		oldDiscNo  int
 	)
 	err := s.db.QueryRow(
-		`SELECT f.track_id, f.size, f.mtime, t.library_id, t.cover_id, t.track_no, t.disc_no
+		`SELECT f.track_id, f.size, f.mtime, t.cover_id, t.track_no, t.disc_no
 		   FROM track_file f JOIN track t ON t.id = f.track_id
-		  WHERE f.path = ?`, f.Path,
-	).Scan(&trackID, &oldSize, &oldMtime, &owner, &coverID, &oldTrackNo, &oldDiscNo)
+		  WHERE f.library_id = ? AND f.path = ?`, libraryID, f.Path,
+	).Scan(&trackID, &oldSize, &oldMtime, &coverID, &oldTrackNo, &oldDiscNo)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
 	if err != nil {
 		return 0, false, err
-	}
-	if owner != libraryID {
-		return 0, false, ErrForeignFile
 	}
 	if oldSize != f.Size || oldMtime != f.Mtime {
 		return 0, false, nil
@@ -423,8 +432,8 @@ func (s *Store) TouchIfUnchanged(
 	}
 
 	if _, err := s.db.Exec(
-		`UPDATE track_file SET seen_at = ?, missing = 0 WHERE path = ?`,
-		time.Now().Unix(), f.Path,
+		`UPDATE track_file SET seen_at = ?, missing = 0 WHERE library_id = ? AND path = ?`,
+		time.Now().Unix(), libraryID, f.Path,
 	); err != nil {
 		return 0, false, err
 	}
@@ -432,11 +441,11 @@ func (s *Store) TouchIfUnchanged(
 	return trackID, true, nil
 }
 
-// UpsertTrack writes one file into the catalogue.
+// UpsertTrack writes one file into libraryID's catalogue.
 //
-// The rules are the plan's: size+mtime means unchanged; a known (dev, ino) at a
-// new path is a move and keeps the track id, so a like survives a rename; a new
-// path with a new identity is a new track.
+// Size and mtime matching means unchanged; a known (dev, ino) at a new path
+// within the same library is a move and keeps the track id and global like; a
+// new path with a new identity is a new track.
 func (s *Store) UpsertTrack(libraryID string, f File, t TrackRow) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -449,18 +458,15 @@ func (s *Store) UpsertTrack(libraryID string, f File, t TrackRow) (int64, error)
 		trackID    int64
 		oldSize    int64
 		oldMtime   int64
-		owner      string
 		oldTrackNo int
 		oldDiscNo  int
 	)
 	err = tx.QueryRow(
-		`SELECT f.track_id, f.size, f.mtime, t.library_id, t.track_no, t.disc_no
+		`SELECT f.track_id, f.size, f.mtime, t.track_no, t.disc_no
 		   FROM track_file f JOIN track t ON t.id = f.track_id
-		  WHERE f.path = ?`, f.Path,
-	).Scan(&trackID, &oldSize, &oldMtime, &owner, &oldTrackNo, &oldDiscNo)
+		  WHERE f.library_id = ? AND f.path = ?`, libraryID, f.Path,
+	).Scan(&trackID, &oldSize, &oldMtime, &oldTrackNo, &oldDiscNo)
 	switch {
-	case err == nil && owner != libraryID:
-		return 0, ErrForeignFile
 	case err == nil && oldSize == f.Size && oldMtime == f.Mtime:
 		// Backfill missing track/disc indices on rescan without rewriting tags.
 		if (oldTrackNo == 0 && t.TrackNo > 0) || (oldDiscNo == 0 && t.DiscNo > 0) {
@@ -480,7 +486,7 @@ func (s *Store) UpsertTrack(libraryID string, f File, t TrackRow) (int64, error)
 			}
 		}
 		_, err = tx.Exec(
-			`UPDATE track_file SET seen_at = ?, missing = 0 WHERE path = ?`, now, f.Path,
+			`UPDATE track_file SET seen_at = ?, missing = 0 WHERE library_id = ? AND path = ?`, now, libraryID, f.Path,
 		)
 		if err != nil {
 			return 0, err
@@ -496,8 +502,9 @@ func (s *Store) UpsertTrack(libraryID string, f File, t TrackRow) (int64, error)
 			return 0, err
 		}
 		_, err = tx.Exec(
-			`UPDATE track_file SET dev=?, ino=?, size=?, mtime=?, seen_at=?, missing=0 WHERE path=?`,
-			f.Dev, f.Ino, f.Size, f.Mtime, now, f.Path,
+			`UPDATE track_file SET dev=?, ino=?, size=?, mtime=?, seen_at=?, missing=0
+			 WHERE library_id=? AND path=?`,
+			f.Dev, f.Ino, f.Size, f.Mtime, now, libraryID, f.Path,
 		)
 		if err != nil {
 			return 0, err
@@ -511,29 +518,39 @@ func (s *Store) UpsertTrack(libraryID string, f File, t TrackRow) (int64, error)
 		return 0, err
 	}
 
-	// A move on the same filesystem is a path change on an existing track.
+	// A move on the same filesystem is a path change on an existing track in
+	// this library. Move its global like ref along with the path.
 	if f.Dev != 0 && f.Ino != 0 {
+		var oldPath string
 		err = tx.QueryRow(
-			`SELECT f.track_id FROM track_file f JOIN track t ON t.id = f.track_id
-			  WHERE f.dev = ? AND f.ino = ? AND t.library_id = ? LIMIT 1`,
-			f.Dev, f.Ino, libraryID,
-		).Scan(&trackID)
+			`SELECT f.track_id, f.path FROM track_file f
+			  WHERE f.library_id = ? AND f.dev = ? AND f.ino = ? LIMIT 1`,
+			libraryID, f.Dev, f.Ino,
+		).Scan(&trackID, &oldPath)
 		if err == nil {
-			// The old path may still be there; a move means this one now owns
-			// the identity, so the old row goes.
 			if _, err := tx.Exec(
-				`DELETE FROM track_file WHERE dev = ? AND ino = ? AND path <> ? AND track_id = ?`,
-				f.Dev, f.Ino, f.Path, trackID,
+				`DELETE FROM track_file WHERE library_id = ? AND dev = ? AND ino = ? AND path <> ? AND track_id = ?`,
+				libraryID, f.Dev, f.Ino, f.Path, trackID,
 			); err != nil {
 				return 0, err
 			}
 			_, err = tx.Exec(
-				`INSERT INTO track_file (path, track_id, dev, ino, size, mtime, seen_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-				f.Path, trackID, f.Dev, f.Ino, f.Size, f.Mtime, now,
+				`INSERT INTO track_file (library_id, path, track_id, dev, ino, size, mtime, seen_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				libraryID, f.Path, trackID, f.Dev, f.Ino, f.Size, f.Mtime, now,
 			)
 			if err != nil {
 				return 0, err
+			}
+			if oldPath != "" && oldPath != f.Path {
+				if _, err := tx.Exec(
+					`UPDATE OR IGNORE like SET ref = ? WHERE ref = ?`, f.Path, oldPath,
+				); err != nil {
+					return 0, err
+				}
+				if _, err := tx.Exec(`DELETE FROM like WHERE ref = ?`, oldPath); err != nil {
+					return 0, err
+				}
 			}
 			if err := updateTrack(tx, trackID, t, now); err != nil {
 				return 0, err
@@ -565,9 +582,9 @@ func (s *Store) UpsertTrack(libraryID string, f File, t TrackRow) (int64, error)
 		return 0, err
 	}
 	_, err = tx.Exec(
-		`INSERT INTO track_file (path, track_id, dev, ino, size, mtime, seen_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		f.Path, trackID, f.Dev, f.Ino, f.Size, f.Mtime, now,
+		`INSERT INTO track_file (library_id, path, track_id, dev, ino, size, mtime, seen_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		libraryID, f.Path, trackID, f.Dev, f.Ino, f.Size, f.Mtime, now,
 	)
 	if err != nil {
 		return 0, err
@@ -679,12 +696,11 @@ func (s *Store) BackfillTrackRemoteMeta(ref, thumbnailURL, artistID, album strin
 	return err
 }
 
-// MarkMissing flags every file row a scan did not see.
+// MarkMissing flags every file row in libraryID that a scan did not see.
 func (s *Store) MarkMissing(libraryID string, scanStart int64) error {
 	_, err := s.db.Exec(
-		`UPDATE track_file SET missing = 1
-		 WHERE seen_at < ? AND track_id IN (SELECT id FROM track WHERE library_id = ?)`,
-		scanStart, libraryID,
+		`UPDATE track_file SET missing = 1 WHERE library_id = ? AND seen_at < ?`,
+		libraryID, scanStart,
 	)
 
 	return err

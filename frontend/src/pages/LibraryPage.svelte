@@ -6,28 +6,51 @@
   import Chip from "../lib/ui/Chip.svelte";
   import Cover from "../lib/ui/Cover.svelte";
   import PlaylistCard from "../lib/ui/PlaylistCard.svelte";
+  import PlaylistView from "../lib/ui/PlaylistView.svelte";
   import TrackTile from "../lib/ui/TrackTile.svelte";
 
   let {
     shelves = [],
     filter = "all",
     loading = false,
+    activePlaylist = null,
+    playlistTracks = [],
+    playlistLoading = false,
+    playlistError = "",
+    currentPath = "",
     onfilter = (_f: string) => {},
     onadd = () => {},
     onopenAlbum = (_a: Album) => {},
     onplayAlbum = (_a: Album) => {},
     onplay = (_t: Track) => {},
-    onopenPlaylist = (_id: string) => {},
+    onopenPlaylist = (_list: Playlist) => {},
+    onclosePlaylist = () => {},
+    onretryPlaylist = () => {},
+    onplayPlaylist = (_tracks: Track[]) => {},
+    onplayPlaylistTrack = (_track: Track, _index: number, _ordered: Track[]) => {},
+    onlikeTrack = (_track: Track, _liked: boolean) => {},
+    onrenamePlaylist = (_list: Playlist) => {},
   }: {
     shelves?: Shelf[];
     filter?: string;
     loading?: boolean;
+    activePlaylist?: Playlist | null;
+    playlistTracks?: Track[];
+    playlistLoading?: boolean;
+    playlistError?: string;
+    currentPath?: string;
     onfilter?: (f: string) => void;
     onadd?: () => void;
     onopenAlbum?: (a: Album) => void;
     onplayAlbum?: (a: Album) => void;
     onplay?: (t: Track) => void;
-    onopenPlaylist?: (id: string) => void;
+    onopenPlaylist?: (list: Playlist) => void;
+    onclosePlaylist?: () => void;
+    onretryPlaylist?: () => void;
+    onplayPlaylist?: (tracks: Track[]) => void;
+    onplayPlaylistTrack?: (track: Track, index: number, ordered: Track[]) => void;
+    onlikeTrack?: (track: Track, liked: boolean) => void;
+    onrenamePlaylist?: (list: Playlist) => void;
   } = $props();
 
   const filters = [
@@ -61,9 +84,24 @@
 </script>
 
 {#snippet playlistCard(list: Playlist)}
-  <PlaylistCard list={list} onopen={onopenPlaylist} />
+  <PlaylistCard list={list} onopen={() => onopenPlaylist(list)} />
 {/snippet}
 
+{#if activePlaylist}
+  <PlaylistView
+    playlist={activePlaylist}
+    tracks={playlistTracks}
+    loading={playlistLoading}
+    error={playlistError}
+    {currentPath}
+    onback={onclosePlaylist}
+    onretry={onretryPlaylist}
+    onplayAll={onplayPlaylist}
+    onplayTrack={onplayPlaylistTrack}
+    onlike={onlikeTrack}
+    onrename={onrenamePlaylist}
+  />
+{:else}
 <div class="flex h-full flex-col overflow-hidden pl-[50px] pr-9 pt-[41px]">
   <div class="flex items-start justify-between">
     <h1 class="font-display text-[40px] font-bold leading-none tracking-tight">Your Library</h1>
@@ -182,3 +220,4 @@
     {/if}
   </div>
 </div>
+{/if}

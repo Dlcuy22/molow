@@ -20,9 +20,15 @@
     libraryLoading,
     libraries,
     libraryId,
-    playlistRows,
+    libraryPlaylists,
+    activePlaylist,
+    activePlaylistTracks,
+    activePlaylistLoading,
+    activePlaylistError,
     loadLibrary,
     selectLibrary,
+    openPlaylist,
+    closePlaylist,
     playTrack,
     playAlbum,
     playRefs,
@@ -58,7 +64,7 @@
   import ContextMenu from "./lib/ui/ContextMenu.svelte";
   import RenameDialog from "./lib/ui/RenameDialog.svelte";
   import ConfirmDialog from "./lib/ui/ConfirmDialog.svelte";
-  import { contextMenu } from "./lib/ui/context-menu.svelte";
+  import { closeContextMenu, contextMenu } from "./lib/ui/context-menu.svelte";
   import { menuItemsFor, type MenuDeps } from "./lib/ui/menu-items";
   import HomePage from "./pages/HomePage.svelte";
   import LibraryPage from "./pages/LibraryPage.svelte";
@@ -412,19 +418,27 @@
     }
   }
 
-  // Read from the open library's shelf so menu actions match visible playlists.
-  const menuPlaylists = $derived(
-    $libraryPage.shelves.find((s) => s.kind === "playlists")?.playlists ?? [],
-  );
-
   let renaming = $state<Playlist | null>(null);
   let confirming = $state<{ title: string; body: string; run: () => void } | null>(null);
 
+  function handleLikeTrack(track: Track, nextLiked: boolean) {
+    void setLiked(track, nextLiked).then((ok) => {
+      if (ok && track.ref === snap.path) {
+        liked = nextLiked;
+      }
+    });
+  }
+
+  function playPlaylistTracks(tracks: Track[], startIndex = 0) {
+    const refs = tracks.slice(startIndex).map((t) => t.ref);
+    void playRefs(refs);
+  }
+
   const menuDeps = $derived<MenuDeps>({
-    playlists: menuPlaylists,
+    playlists: $libraryPlaylists,
     next: (refs) => void queueNext(refs),
     last: (refs) => void queueLast(refs),
-    like: (track, liked) => void setLiked(track, liked),
+    like: (track, liked) => handleLikeTrack(track, liked),
     addToPlaylist: (id, refs) => void addToPlaylist(id, refs),
     albumRefs,
     play: (refs) => {
@@ -434,7 +448,7 @@
     openAlbum,
     openPlaylist: (id) => {
       tab = "library";
-      void loadLibrary("playlist:" + id);
+      void openPlaylist(id);
     },
     renamePlaylist: (list) => {
       renaming = list;
@@ -671,7 +685,9 @@
     // A surface opened over the sheet owns Escape, so the sheet does not
     // minimize under it. A dialog with focus closes itself and stops the
     // event; this chain covers a press while focus sits outside the dialog.
-    if (settingsOpen) {
+    if (contextMenu.open) {
+      closeContextMenu(true);
+    } else if (settingsOpen) {
       settingsOpen = false;
     } else if (paletteOpen) {
       closePalette();
@@ -679,6 +695,8 @@
       closePlayer();
     } else if (searchOpen) {
       searchOpen = false;
+    } else if (tab === "library" && $activePlaylist !== null) {
+      closePlaylist();
     }
   }}
 />
@@ -692,7 +710,6 @@
     <Sidebar
       bind:width={sidebarWidth}
       active={tab}
-      playlists={$playlistRows}
       libraries={$libraries.map((l) => ({
         id: l.id,
         name: l.name,
@@ -703,7 +720,12 @@
       onnewlibrary={() => void createLibrary()}
       onwidthcommit={commitSidebarWidth}
       onnav={(next) => {
-        tab = next === "library" ? "library" : "home";
+        if (next === "library") {
+          closePlaylist();
+          tab = "library";
+        } else {
+          tab = "home";
+        }
         searchOpen = false;
       }}
       onsearch={() => {
@@ -729,12 +751,27 @@
           shelves={$libraryPage.shelves}
           {filter}
           loading={$libraryLoading}
+          activePlaylist={$activePlaylist}
+          playlistTracks={$activePlaylistTracks}
+          playlistLoading={$activePlaylistLoading}
+          playlistError={$activePlaylistError}
+          currentPath={snap.path}
           onfilter={setFilter}
           onadd={() => (addOpen = !addOpen)}
           onopenAlbum={openAlbum}
           onplayAlbum={(a) => void playAlbum(a)}
           onplay={playLibraryTrack}
-          onopenPlaylist={(id) => void loadLibrary("playlist:" + id)}
+          onopenPlaylist={(list) => void openPlaylist(list)}
+          onclosePlaylist={closePlaylist}
+          onretryPlaylist={() => {
+            if ($activePlaylist) {
+              void openPlaylist($activePlaylist);
+            }
+          }}
+          onplayPlaylist={(tracks) => playPlaylistTracks(tracks, 0)}
+          onplayPlaylistTrack={(_track, index, ordered) => playPlaylistTracks(ordered, index)}
+          onlikeTrack={handleLikeTrack}
+          onrenamePlaylist={(list) => (renaming = list)}
         />
       {/if}
 

@@ -17,7 +17,7 @@ import type {
   Shelf as GenShelf,
   Track as GenTrack,
 } from "../../bindings/github.com/dlcuy22/molow/internal/library/models";
-import type { Album, Artist, LibraryInfo, Page, Shelf, Track } from "./types";
+import type { Album, Artist, LibraryInfo, Page, Playlist, Shelf, Track } from "./types";
 import { showToast } from "./toast";
 
 export const libraries = writable<LibraryInfo[]>([]);
@@ -26,10 +26,17 @@ export const homePage = writable<Page>({ shelves: [], cursor: "" });
 export const libraryPage = writable<Page>({ shelves: [], cursor: "" });
 export const searchPage = writable<Page>({ shelves: [], cursor: "" });
 export const libraryLoading = writable(false);
-export const playlistRows = writable<{ id: string; name: string; coverId?: string }[]>([]);
+export const libraryPlaylists = writable<Playlist[]>([]);
 export const libraryProgress = writable<{ done: number; total: number; state: string } | null>(
   null,
 );
+export const activePlaylist = writable<Playlist | null>(null);
+export const activePlaylistTracks = writable<Track[]>([]);
+export const activePlaylistLoading = writable(false);
+export const activePlaylistError = writable("");
+
+let currentLibraryTab = "all";
+let playlistSeq = 0;
 
 function toTrack(t: GenTrack): Track {
   return {
@@ -87,6 +94,7 @@ function toShelf(s: GenShelf): Shelf {
       name: p.name,
       description: p.description ?? "",
       trackCount: p.trackCount,
+      coverIds: p.coverIds ?? [],
     })),
     cursor: s.cursor ?? "",
     total: s.total ?? 0,
@@ -131,8 +139,97 @@ export async function selectLibrary(id: string): Promise<void> {
   if (get(libraryId) === id) {
     return;
   }
+  closePlaylist();
   libraryId.set(id);
-  await Promise.all([loadHome(), loadLibrary()]);
+  await Promise.all([loadHome(), loadLibrary(currentLibraryTab)]);
+}
+
+/** closePlaylist exits the dedicated playlist view without disturbing the library grid. */
+export function closePlaylist(): void {
+  playlistSeq++;
+  activePlaylist.set(null);
+  activePlaylistTracks.set([]);
+  activePlaylistLoading.set(false);
+  activePlaylistError.set("");
+}
+
+/** openPlaylist loads a playlist's metadata and all of its tracks into the dedicated view. */
+export async function openPlaylist(target: Playlist | string): Promise<void> {
+  const id = typeof target === "string" ? target : target.id;
+  const libId = typeof target === "string" ? get(libraryId) : target.libraryId || get(libraryId);
+  if (libId === "" || id === "") {
+    return;
+  }
+
+  let meta: Playlist | undefined = typeof target === "string" ? undefined : target;
+  if (meta === undefined) {
+    const shelf = get(libraryPage).shelves.find((s) => s.kind === "playlists");
+    meta = shelf?.playlists.find((p) => p.id === id);
+  }
+  if (meta === undefined) {
+    try {
+      const lists = (await PlayerService.Playlists(libId)) ?? [];
+      const found = lists.find((p) => p.id === id);
+      if (found) {
+        meta = {
+          id: found.id,
+          libraryId: found.libraryId,
+          name: found.name,
+          description: found.description ?? "",
+          trackCount: found.trackCount,
+          coverIds: found.coverIds ?? [],
+        };
+      }
+    } catch {
+      // Fall through to the minimal placeholder below; the feed call will report any error.
+    }
+  }
+  if (meta === undefined) {
+    meta = { id, libraryId: libId, name: "Playlist", description: "", trackCount: 0 };
+  }
+
+  const seq = ++playlistSeq;
+  activePlaylist.set(meta);
+  activePlaylistTracks.set([]);
+  activePlaylistError.set("");
+  activePlaylistLoading.set(true);
+
+  try {
+    const collected: Track[] = [];
+    let cursor = "";
+    // Paginate until the backend clears the cursor so large playlists load completely.
+    for (;;) {
+      const page = toPage(await PlayerService.LibraryFeed(libId, "playlist:" + id, cursor, 200));
+      if (seq !== playlistSeq) {
+        return;
+      }
+      const shelf = page.shelves[0];
+      if (!shelf || shelf.items.length === 0) {
+        break;
+      }
+      collected.push(...shelf.items);
+      if (!shelf.cursor) {
+        break;
+      }
+      cursor = shelf.cursor;
+    }
+    if (seq !== playlistSeq) {
+      return;
+    }
+    activePlaylistTracks.set(collected);
+    activePlaylist.update((cur) =>
+      cur && cur.id === id ? { ...cur, trackCount: collected.length } : cur,
+    );
+  } catch (err) {
+    if (seq !== playlistSeq) {
+      return;
+    }
+    activePlaylistError.set(libraryErrorText(err, "Could not load this playlist"));
+  } finally {
+    if (seq === playlistSeq) {
+      activePlaylistLoading.set(false);
+    }
+  }
 }
 
 export async function loadHome(): Promise<void> {
@@ -152,11 +249,12 @@ export async function loadHome(): Promise<void> {
   }
 }
 
-export async function loadLibrary(tab = "all"): Promise<void> {
+export async function loadLibrary(tab = currentLibraryTab): Promise<void> {
+  currentLibraryTab = tab;
   const id = get(libraryId);
   if (id === "") {
     libraryPage.set({ shelves: [], cursor: "" });
-    playlistRows.set([]);
+    libraryPlaylists.set([]);
 
     return;
   }
@@ -167,12 +265,19 @@ export async function loadLibrary(tab = "all"): Promise<void> {
       PlayerService.Playlists(id).catch(() => []),
     ]);
     libraryPage.set(toPage(page));
-    playlistRows.set(
-      (lists ?? []).map((p) => ({ id: p.id, name: p.name, coverId: undefined })),
+    libraryPlaylists.set(
+      (lists ?? []).map((p) => ({
+        id: p.id,
+        libraryId: p.libraryId,
+        name: p.name,
+        description: p.description ?? "",
+        trackCount: p.trackCount,
+        coverIds: p.coverIds ?? [],
+      })),
     );
   } catch {
     libraryPage.set({ shelves: [], cursor: "" });
-    playlistRows.set([]);
+    libraryPlaylists.set([]);
   } finally {
     libraryLoading.set(false);
   }
@@ -423,15 +528,25 @@ export async function queueLast(refs: string[]): Promise<void> {
 }
 
 /** Writes the explicit target state instead of toggling against stale store state. */
-export async function setLiked(track: Track, liked: boolean): Promise<void> {
+export async function setLiked(track: Track, liked: boolean): Promise<boolean> {
   if (track.ref === "") {
-    return;
+    return false;
   }
+  const previous = track.liked;
+  activePlaylistTracks.update((rows) =>
+    rows.map((row) => (row.ref === track.ref ? { ...row, liked } : row)),
+  );
   try {
     await PlayerService.SetLiked(track.libraryId, track.ref, liked);
     await Promise.all([loadHome(), loadLibrary()]);
+
+    return true;
   } catch {
-    // Leave the row unchanged on a failed write.
+    activePlaylistTracks.update((rows) =>
+      rows.map((row) => (row.ref === track.ref ? { ...row, liked: previous } : row)),
+    );
+
+    return false;
   }
 }
 
@@ -443,6 +558,10 @@ export async function addToPlaylist(playlistID: string, refs: string[]): Promise
   try {
     await PlayerService.AddToPlaylist(id, playlistID, refs);
     await loadLibrary();
+    const open = get(activePlaylist);
+    if (open && open.id === playlistID) {
+      await openPlaylist(open);
+    }
   } catch {
     // Leave the playlist unchanged on a failed write.
   }
@@ -456,6 +575,9 @@ export async function renamePlaylist(playlistID: string, name: string): Promise<
   }
   try {
     await PlayerService.RenamePlaylist(id, playlistID, trimmed);
+    activePlaylist.update((cur) =>
+      cur && cur.id === playlistID ? { ...cur, name: trimmed } : cur,
+    );
     await Promise.all([loadHome(), loadLibrary()]);
   } catch (err) {
     showToast({
@@ -474,6 +596,9 @@ export async function deletePlaylist(playlistID: string): Promise<void> {
   }
   try {
     await PlayerService.DeletePlaylist(id, playlistID);
+    if (get(activePlaylist)?.id === playlistID) {
+      closePlaylist();
+    }
     await Promise.all([loadHome(), loadLibrary()]);
   } catch (err) {
     showToast({

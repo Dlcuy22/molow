@@ -44,6 +44,9 @@ export interface Playlist {
   name: string;
   description: string;
   trackCount: number;
+  coverIds?: string[];
+  creator?: string;
+  coverId?: string;
 }
 
 export type ShelfLayout = "list" | "grid";

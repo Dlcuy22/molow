@@ -9,12 +9,6 @@
   import Cover from "./Cover.svelte";
   import { openContextMenu } from "./context-menu.svelte";
 
-  export interface PlaylistRow {
-    id: string;
-    name: string;
-    coverId?: string;
-  }
-
   export interface LibraryCard {
     id: string;
     name: string;
@@ -24,7 +18,6 @@
   let {
     active = "home",
     width = $bindable(200),
-    playlists = [],
     libraries = [],
     activeLibrary = "",
     onnav = (_tab: "home" | "library" | "search") => {},
@@ -37,7 +30,6 @@
   }: {
     active?: "home" | "library" | "search";
     width?: number;
-    playlists?: PlaylistRow[];
     libraries?: LibraryCard[];
     activeLibrary?: string;
     onnav?: (tab: "home" | "library" | "search") => void;
@@ -235,27 +227,6 @@
             {/if}
           </span>
           {#if !collapsed}<span class="truncate">{lib.name}</span>{/if}
-        </button>
-      {/each}
-
-      {#each playlists as row (row.id)}
-        <button
-          class="flex h-8 shrink-0 items-center gap-2 rounded-md text-[12px] text-fg transition-colors hover:bg-hover"
-          class:justify-center={collapsed}
-          title={row.name}
-          onclick={() => onnav("library")}
-        >
-          {#if row.coverId}
-            <Cover id={row.coverId} size={collapsed ? 28 : 32} radius={4} class="shrink-0" />
-          {:else}
-            <span
-              class="grid shrink-0 place-items-center rounded-[4px]"
-              style="width:{collapsed ? 28 : 32}px;height:{collapsed ? 28 : 32}px;background:linear-gradient(135deg,hsl(240 3.1% 26%),hsl(240 3.1% 17%))"
-            >
-              <span class="size-1.5 rounded-full bg-muted"></span>
-            </span>
-          {/if}
-          {#if !collapsed}<span class="truncate">{row.name}</span>{/if}
         </button>
       {/each}
     </div>

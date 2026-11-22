@@ -20,6 +20,7 @@ export interface MenuDeps {
   /** Library actions take libraryID directly so right-clicking a rail row does
    *  not switch the active library first. */
   openLibrary: (libraryID: string) => void;
+  editLibrary: (libraryID: string) => void;
   rescanLibrary: (libraryID: string) => void;
   removeLibrary: (libraryID: string) => void;
 }
@@ -105,12 +106,12 @@ function playlistItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
   ];
 }
 
-// A folder keeps its name on disk, so a library row has no Rename action.
 function libraryItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
   const id = target.libraryId;
 
   return [
     { kind: "item", label: "Open", run: () => deps.openLibrary(id) },
+    { kind: "item", label: "Edit", run: () => deps.editLibrary(id) },
     { kind: "item", label: "Rescan files", run: () => deps.rescanLibrary(id) },
     { kind: "separator" },
     { kind: "item", label: "Remove from Molow", danger: true, run: () => deps.removeLibrary(id) },

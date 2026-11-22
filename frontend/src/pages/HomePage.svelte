@@ -5,19 +5,23 @@
   import { cachedAccents, loadAccents } from "../lib/library";
 
   let {
+    hasLibraries = true,
     shelves = [],
     greeting = "For you this morning",
     onplay = (_t: Track) => {},
     onopenAlbum = (_a: Album) => {},
     onplayAlbum = (_a: Album) => {},
     onadd = () => {},
+    oncreateLibrary = () => {},
   }: {
+    hasLibraries?: boolean;
     shelves?: Shelf[];
     greeting?: string;
     onplay?: (t: Track) => void;
     onopenAlbum?: (a: Album) => void;
     onplayAlbum?: (a: Album) => void;
     onadd?: () => void;
+    oncreateLibrary?: () => void;
   } = $props();
 
   const recent = $derived(shelves.find((s) => s.id === "recent")?.items.slice(0, 9) ?? []);
@@ -60,16 +64,28 @@
 <div class="scroll-thin flex h-full flex-col overflow-y-auto pl-[50px] pr-9 pt-[41px]">
   <h1 class="shrink-0 font-display text-[40px] font-bold leading-none tracking-tight">{greeting}</h1>
 
-  {#if shelves.length === 0}
+  {#if !hasLibraries}
     <div class="mt-10 max-w-[420px]">
-      <p class="text-[12px] text-muted">
-        Nothing in the library yet. Add a folder and its albums, tracks and artists appear here.
+      <p class="text-[12px] leading-relaxed text-muted">
+        No libraries yet. Create a library to store your albums, folders with songs, or YouTube Music playlists.
       </p>
       <button
-        class="mt-4 h-8 rounded-md bg-fg px-3 text-[12px] font-medium text-bg-dark"
+        class="mt-4 h-8 rounded-md bg-fg px-3 text-[12px] font-medium text-bg-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+        onclick={oncreateLibrary}
+      >
+        Create a library
+      </button>
+    </div>
+  {:else if shelves.length === 0}
+    <div class="mt-10 max-w-[420px]">
+      <p class="text-[12px] leading-relaxed text-muted">
+        Nothing in this library yet. Import a folder from your computer and its albums, tracks, and playlists will appear here.
+      </p>
+      <button
+        class="mt-4 h-8 rounded-md bg-fg px-3 text-[12px] font-medium text-bg-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
         onclick={onadd}
       >
-        Add a library folder
+        Import from computer
       </button>
     </div>
   {:else}

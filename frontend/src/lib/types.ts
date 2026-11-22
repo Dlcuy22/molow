@@ -47,6 +47,7 @@ export interface Playlist {
   coverIds?: string[];
   creator?: string;
   coverId?: string;
+  customCover?: boolean;
 }
 
 export type ShelfLayout = "list" | "grid";
@@ -75,9 +76,11 @@ export interface LibraryInfo {
   id: string;
   kind: string;
   name: string;
+  description: string;
   root: string;
   roots: string[];
   coverId: string;
+  customCover?: boolean;
   logoCovers: string[];
   status: string;
   message: string;

@@ -1,7 +1,7 @@
 <script lang="ts">
   import CaretDown from "phosphor-svelte/lib/CaretDown";
   import Plus from "phosphor-svelte/lib/Plus";
-  import type { Album, Playlist, Shelf, Track } from "../lib/types";
+  import type { Album, LibraryInfo, Playlist, Shelf, Track } from "../lib/types";
   import AlbumCard from "../lib/ui/AlbumCard.svelte";
   import Chip from "../lib/ui/Chip.svelte";
   import Cover from "../lib/ui/Cover.svelte";
@@ -10,6 +10,7 @@
   import TrackTile from "../lib/ui/TrackTile.svelte";
 
   let {
+    library = null,
     shelves = [],
     filter = "all",
     loading = false,
@@ -20,6 +21,9 @@
     currentPath = "",
     onfilter = (_f: string) => {},
     onadd = () => {},
+    oncreateLibrary = () => {},
+    onimportFolder = () => {},
+    onimportYTM = () => {},
     onopenAlbum = (_a: Album) => {},
     onplayAlbum = (_a: Album) => {},
     onplay = (_t: Track) => {},
@@ -31,6 +35,7 @@
     onlikeTrack = (_track: Track, _liked: boolean) => {},
     onrenamePlaylist = (_list: Playlist) => {},
   }: {
+    library?: LibraryInfo | null;
     shelves?: Shelf[];
     filter?: string;
     loading?: boolean;
@@ -41,6 +46,9 @@
     currentPath?: string;
     onfilter?: (f: string) => void;
     onadd?: () => void;
+    oncreateLibrary?: () => void;
+    onimportFolder?: () => void;
+    onimportYTM?: () => void;
     onopenAlbum?: (a: Album) => void;
     onplayAlbum?: (a: Album) => void;
     onplay?: (t: Track) => void;
@@ -103,18 +111,43 @@
   />
 {:else}
 <div class="flex h-full flex-col overflow-hidden pl-[50px] pr-9 pt-[41px]">
-  <div class="flex items-start justify-between">
-    <h1 class="font-display text-[40px] font-bold leading-none tracking-tight">Your Library</h1>
-    <button
-      class="mt-1.5 flex h-8 items-center gap-2 rounded-md bg-fg px-3 text-bg-dark"
-      aria-haspopup="menu"
-      data-add
-      onclick={onadd}
-    >      <Plus size="14" weight="bold" />
-      <span class="text-[12px] font-medium leading-none">Add</span>
-    </button>
+  <div class="flex items-start justify-between gap-4">
+    <div class="min-w-0">
+      <h1 class="truncate font-display text-[40px] font-bold leading-none tracking-tight">
+        {library ? library.name : "Your Library"}
+      </h1>
+      {#if library?.description}
+        <p class="mt-2 max-w-[600px] text-[12px] leading-relaxed text-muted">
+          {library.description}
+        </p>
+      {/if}
+    </div>
+    {#if library}
+      <button
+        class="mt-1.5 flex h-8 shrink-0 items-center gap-2 rounded-md bg-fg px-3 text-bg-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+        aria-haspopup="menu"
+        data-add
+        onclick={onadd}
+      >
+        <Plus size="14" weight="bold" />
+        <span class="text-[12px] font-medium leading-none">Add</span>
+      </button>
+    {/if}
   </div>
 
+  {#if !library}
+    <div class="mt-10 max-w-[420px]">
+      <p class="text-[12px] leading-relaxed text-muted">
+        No libraries yet. Create a library to organize your albums, folders with songs, or YouTube Music playlists.
+      </p>
+      <button
+        class="mt-4 h-8 rounded-md bg-fg px-3 text-[12px] font-medium text-bg-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+        onclick={oncreateLibrary}
+      >
+        Create a library
+      </button>
+    </div>
+  {:else}
   <div class="mt-[31px] flex items-center justify-between">
     <div class="flex gap-2">
       {#each filters as f (f.id)}
@@ -127,7 +160,7 @@
     </div>
     <div class="relative">
       <button
-        class="flex items-center gap-2 text-[12px] text-muted hover:text-fg"
+        class="flex items-center gap-2 text-[12px] text-muted hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
         aria-haspopup="menu"
         aria-expanded={sortOpen}
         onclick={() => (sortOpen = !sortOpen)}
@@ -190,7 +223,25 @@
       {/if}
     {:else if filter === "all"}
       {#if tracks.length === 0 && albums.length === 0 && playlists.length === 0}
-        <p class="text-[12px] text-muted">The catalogue is empty.</p>
+        <div class="max-w-[440px]">
+          <p class="text-[12px] leading-relaxed text-muted">
+            This library is empty. Import a folder from your computer or add tracks from YouTube Music.
+          </p>
+          <div class="mt-4 flex flex-wrap gap-2">
+            <button
+              class="h-8 rounded-md bg-fg px-3 text-[12px] font-medium text-bg-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+              onclick={onimportFolder}
+            >
+              Import from computer
+            </button>
+            <button
+              class="h-8 rounded-md border border-line bg-surface px-3 text-[12px] text-fg transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+              onclick={onimportYTM}
+            >
+              Import from YTM
+            </button>
+          </div>
+        </div>
       {:else}
         <div class="flex flex-wrap gap-x-4 gap-y-5">
           {#each playlists as list (list.id)}
@@ -219,5 +270,6 @@
       </div>
     {/if}
   </div>
+  {/if}
 </div>
 {/if}

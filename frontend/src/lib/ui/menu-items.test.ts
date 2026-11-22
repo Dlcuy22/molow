@@ -56,8 +56,10 @@ function deps(over: Partial<MenuDeps> = {}): MenuDeps {
     renamePlaylist: () => {},
     deletePlaylist: () => {},
     openLibrary: (_id: string) => {},
+    editLibrary: (_id: string) => {},
     rescanLibrary: (_id: string) => {},
-    removeLibrary: (_id: string) => {},    ...over,
+    removeLibrary: (_id: string) => {},
+    ...over,
   };
 }
 
@@ -151,12 +153,12 @@ describe("menuItemsFor catalogue", () => {
 });
 
 describe("menuItemsFor library", () => {
-  it("offers open, rescan and remove", () => {
+  it("offers open, edit, rescan and remove", () => {
     const items = menuItemsFor(
       { kind: "library", id: "local:test", label: "Test", libraryId: "local:test" },
       deps(),
     );
 
-    expect(labels(items)).toEqual(["Open", "Rescan files", "Remove from Molow"]);
+    expect(labels(items)).toEqual(["Open", "Edit", "Rescan files", "Remove from Molow"]);
   });
 });

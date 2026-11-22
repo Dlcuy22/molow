@@ -62,9 +62,11 @@
   const fallbackCover = $derived(
     (tracks.length > 0 ? playlistCovers(tracks) : (playlist.coverIds ?? []))[0] ?? "",
   );
-  const coverId = $derived(playlist.coverId || fallbackCover);
-  const creator = $derived((playlist.creator ?? "").trim());
   const trackCount = $derived(loading && tracks.length === 0 ? playlist.trackCount : tracks.length);
+  const coverId = $derived(
+    trackCount === 0 && !playlist.customCover ? "" : playlist.coverId || fallbackCover,
+  );
+  const creator = $derived((playlist.creator ?? "").trim());
   const totalTime = $derived(formatTotalDuration(totalDurationMs(tracks)));
 
   // Close the sort dropdown on outside pointer clicks or Escape without letting

@@ -95,6 +95,7 @@ function toShelf(s: GenShelf): Shelf {
       description: p.description ?? "",
       trackCount: p.trackCount,
       coverId: p.coverId ?? "",
+      customCover: p.customCover ?? false,
       coverIds: p.coverIds ?? [],
     })),
     cursor: s.cursor ?? "",
@@ -111,9 +112,11 @@ function toInfo(l: GenLibrary): LibraryInfo {
     id: l.id,
     kind: String(l.kind),
     name: l.name,
+    description: l.description ?? "",
     root: l.root ?? "",
     roots: l.roots ?? [],
     coverId: l.coverId ?? "",
+    customCover: l.customCover ?? false,
     logoCovers: l.logoCovers ?? [],
     status: String(l.status),
     message: l.message ?? "",
@@ -180,6 +183,7 @@ export async function openPlaylist(target: Playlist | string): Promise<void> {
           description: found.description ?? "",
           trackCount: found.trackCount,
           coverId: found.coverId ?? "",
+          customCover: found.customCover ?? false,
           coverIds: found.coverIds ?? [],
         };
       }
@@ -276,6 +280,7 @@ export async function loadLibrary(tab = currentLibraryTab): Promise<void> {
         description: p.description ?? "",
         trackCount: p.trackCount,
         coverId: p.coverId ?? "",
+        customCover: p.customCover ?? false,
         coverIds: p.coverIds ?? [],
       })),
     );
@@ -315,25 +320,28 @@ function libraryErrorText(err: unknown, fallback = "Could not add that folder"):
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-/** addLibrary opens the folder picker and merges the choice into the selected
- *  library as one more root — one playlist per import, named after the folder.
- *  The backend always has at least one library (a fresh install creates the
- *  default), so an empty selection falls back to the first row. A folder the
- *  catalogue already assigns to another library is refused, and that refusal
- *  is the one thing this flow has to say out loud. */
+/** addLibrary opens the folder picker and imports the chosen folder into the
+ *  active library as a watched root and folder playlist. */
 export async function addLibrary(): Promise<LibraryInfo | null> {
   try {
-    const path = await PlayerService.PickLibraryFolder();
-    if (!path) {
-      return null;
-    }
     let target = get(libraryId);
     if (target === "") {
       await refreshLibraries();
       target = get(libraryId);
       if (target === "") {
+        showToast({
+          key: "library-import",
+          kind: "message",
+          label: "Create a library before importing.",
+          icon: WarningCircle,
+        });
+
         return null;
       }
+    }
+    const path = await PlayerService.PickLibraryFolder();
+    if (!path) {
+      return null;
     }
     const info = toInfo(await PlayerService.ImportFolder(target, path));
     await refreshLibraries();
@@ -353,30 +361,37 @@ export async function addLibrary(): Promise<LibraryInfo | null> {
   }
 }
 
-/** createLibrary picks a folder and registers it as its own library, the way
- *  the sidebar's new-library button means it. Merging into the open library is
- *  addLibrary's job. */
-export async function createLibrary(): Promise<LibraryInfo | null> {
+/** createLibrary creates a new virtual local library and switches to it. */
+export async function createLibrary(
+  name: string,
+  description: string,
+): Promise<{ info: LibraryInfo | null; error: string }> {
   try {
-    const path = await PlayerService.PickLibraryFolder();
-    if (!path) {
-      return null;
-    }
-    const info = toInfo(await PlayerService.AddLocalLibrary(path));
+    const info = toInfo(await PlayerService.CreateLibrary(name, description));
     await refreshLibraries();
+    closePlaylist();
     libraryId.set(info.id);
-    await Promise.all([loadHome(), loadLibrary()]);
+    await Promise.all([loadHome(), loadLibrary("all")]);
 
-    return info;
+    return { info, error: "" };
   } catch (err) {
-    showToast({
-      key: "library-create",
-      kind: "message",
-      label: libraryErrorText(err),
-      icon: WarningCircle,
-    });
+    return { info: null, error: libraryErrorText(err, "Could not create that library") };
+  }
+}
 
-    return null;
+/** updateLibrary saves a new name and optional description for a library. */
+export async function updateLibrary(
+  id: string,
+  name: string,
+  description: string,
+): Promise<{ info: LibraryInfo | null; error: string }> {
+  try {
+    const info = toInfo(await PlayerService.UpdateLibrary(id, name, description));
+    await refreshLibraries();
+
+    return { info, error: "" };
+  } catch (err) {
+    return { info: null, error: libraryErrorText(err, "Could not update that library") };
   }
 }
 
@@ -426,6 +441,9 @@ export async function removeLibrary(id: string): Promise<void> {
   try {
     await PlayerService.RemoveLibrary(id);
   } finally {
+    if (get(libraryId) === id) {
+      closePlaylist();
+    }
     await refreshLibraries();
     await Promise.all([loadHome(), loadLibrary()]);
   }

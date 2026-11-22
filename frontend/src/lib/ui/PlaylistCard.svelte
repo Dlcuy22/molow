@@ -9,7 +9,9 @@
     onopen = (_id: string) => {},
   }: { list: Playlist; onopen?: (id: string) => void } = $props();
 
-  const coverId = $derived(list.coverId || list.coverIds?.[0] || "");
+  const coverId = $derived(
+    list.trackCount === 0 && !list.customCover ? "" : list.coverId || list.coverIds?.[0] || "",
+  );
 
   function menu(e: MouseEvent) {
     openContextMenu(e, {

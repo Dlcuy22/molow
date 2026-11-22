@@ -46,10 +46,11 @@
     loadLyrics,
     addLibrary,
     createLibrary,
+    updateLibrary,
     removeLibrary,
     rescanLibrary,
   } from "./lib/library";
-  import type { Album, Lyrics, Playlist, Track } from "./lib/types";
+  import type { Album, LibraryInfo, Lyrics, Playlist, Track } from "./lib/types";
   import { percent } from "./lib/format";
   import { installKeyboard, shouldIgnoreTarget, type ShortcutAction } from "./lib/shortcuts";
   import { showToast } from "./lib/toast";
@@ -62,6 +63,7 @@
   import AddMenu from "./lib/ui/AddMenu.svelte";
   import QueueWindow from "./lib/ui/QueueWindow.svelte";
   import ContextMenu from "./lib/ui/ContextMenu.svelte";
+  import LibraryDialog from "./lib/ui/LibraryDialog.svelte";
   import RenameDialog from "./lib/ui/RenameDialog.svelte";
   import ConfirmDialog from "./lib/ui/ConfirmDialog.svelte";
   import { closeContextMenu, contextMenu } from "./lib/ui/context-menu.svelte";
@@ -420,6 +422,65 @@
 
   let renaming = $state<Playlist | null>(null);
   let confirming = $state<{ title: string; body: string; run: () => void } | null>(null);
+  let libraryDialog = $state<{ mode: "create" } | { mode: "edit"; library: LibraryInfo } | null>(
+    null,
+  );
+  let libraryDialogBusy = $state(false);
+  let libraryDialogError = $state("");
+
+  const activeLibraryInfo = $derived($libraries.find((l) => l.id === $libraryId) ?? null);
+
+  function openCreateLibrary() {
+    addOpen = false;
+    libraryDialogError = "";
+    libraryDialogBusy = false;
+    libraryDialog = { mode: "create" };
+  }
+
+  function openEditLibrary(id: string) {
+    const lib = $libraries.find((l) => l.id === id);
+    if (!lib) {
+      return;
+    }
+    libraryDialogError = "";
+    libraryDialogBusy = false;
+    libraryDialog = { mode: "edit", library: lib };
+  }
+
+  function closeLibraryDialog() {
+    if (libraryDialogBusy) {
+      return;
+    }
+    libraryDialog = null;
+    libraryDialogError = "";
+  }
+
+  async function submitLibraryDialog(name: string, description: string) {
+    const dialog = libraryDialog;
+    if (!dialog || libraryDialogBusy) {
+      return;
+    }
+    libraryDialogBusy = true;
+    libraryDialogError = "";
+    try {
+      const res =
+        dialog.mode === "create"
+          ? await createLibrary(name, description)
+          : await updateLibrary(dialog.library.id, name, description);
+      if (res.error !== "") {
+        libraryDialogError = res.error;
+
+        return;
+      }
+      libraryDialog = null;
+      if (dialog.mode === "create") {
+        filter = "all";
+        tab = "library";
+      }
+    } finally {
+      libraryDialogBusy = false;
+    }
+  }
 
   function handleLikeTrack(track: Track, nextLiked: boolean) {
     void setLiked(track, nextLiked).then((ok) => {
@@ -464,6 +525,7 @@
       tab = "library";
       void selectLibrary(id);
     },
+    editLibrary: (id) => openEditLibrary(id),
     rescanLibrary: (id) => void rescanLibrary(id),
     removeLibrary: (id) => {
       const name = $libraries.find((l) => l.id === id)?.name ?? "this library";
@@ -667,7 +729,8 @@
       // The album player sheet is not a modal to the keyboard: it is the
       // playback view, so the playback keys belong to it. Only the surfaces
       // that actually take the keyboard (the palette, settings) gate it.
-      isModalOpen: () => paletteOpen || settingsOpen,
+      isModalOpen: () =>
+        paletteOpen || settingsOpen || libraryDialog !== null || renaming !== null || confirming !== null,
       isPaletteOpen: () => paletteOpen,
       ownsKey: (k) => shouldIgnoreTarget(document.activeElement, k),
       openSettings: () => (settingsOpen = !settingsOpen),
@@ -687,6 +750,12 @@
     // event; this chain covers a press while focus sits outside the dialog.
     if (contextMenu.open) {
       closeContextMenu(true);
+    } else if (libraryDialog !== null) {
+      closeLibraryDialog();
+    } else if (renaming !== null) {
+      renaming = null;
+    } else if (confirming !== null) {
+      confirming = null;
     } else if (settingsOpen) {
       settingsOpen = false;
     } else if (paletteOpen) {
@@ -713,11 +782,12 @@
       libraries={$libraries.map((l) => ({
         id: l.id,
         name: l.name,
+        description: l.description,
         coverId: l.coverId || l.logoCovers[0] || "",
       }))}
       activeLibrary={$libraryId}
       onswitch={(id) => void selectLibrary(id)}
-      onnewlibrary={() => void createLibrary()}
+      onnewlibrary={openCreateLibrary}
       onwidthcommit={commitSidebarWidth}
       onnav={(next) => {
         if (next === "library") {
@@ -739,15 +809,18 @@
     <main class="relative min-w-0 flex-1 overflow-hidden">
       {#if tab === "home"}
         <HomePage
+          hasLibraries={$libraries.length > 0}
           shelves={$homePage.shelves}
           {greeting}
           onplay={playLibraryTrack}
           onopenAlbum={openAlbum}
           onplayAlbum={(a) => void playAlbum(a)}
           onadd={() => void addLibrary()}
+          oncreateLibrary={openCreateLibrary}
         />
       {:else}
         <LibraryPage
+          library={activeLibraryInfo}
           shelves={$libraryPage.shelves}
           {filter}
           loading={$libraryLoading}
@@ -758,6 +831,9 @@
           currentPath={snap.path}
           onfilter={setFilter}
           onadd={() => (addOpen = !addOpen)}
+          oncreateLibrary={openCreateLibrary}
+          onimportFolder={() => void addLibrary()}
+          onimportYTM={() => openPalette("ytm", false, "import")}
           onopenAlbum={openAlbum}
           onplayAlbum={(a) => void playAlbum(a)}
           onplay={playLibraryTrack}
@@ -856,6 +932,18 @@
   <ContextMenu
     target={contextMenu.target}
     items={menuItemsFor(contextMenu.target, menuDeps)}
+  />
+{/if}
+
+{#if libraryDialog}
+  <LibraryDialog
+    mode={libraryDialog.mode}
+    initialName={libraryDialog.mode === "edit" ? libraryDialog.library.name : ""}
+    initialDescription={libraryDialog.mode === "edit" ? libraryDialog.library.description : ""}
+    busy={libraryDialogBusy}
+    error={libraryDialogError}
+    onsubmit={(name, description) => void submitLibraryDialog(name, description)}
+    oncancel={closeLibraryDialog}
   />
 {/if}
 

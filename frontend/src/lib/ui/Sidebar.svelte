@@ -1,7 +1,6 @@
 <script lang="ts">
   import Books from "phosphor-svelte/lib/Books";
   import Faders from "phosphor-svelte/lib/Faders";
-  import FolderSimplePlus from "phosphor-svelte/lib/FolderSimplePlus";
   import GearSix from "phosphor-svelte/lib/GearSix";
   import House from "phosphor-svelte/lib/House";
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
@@ -12,6 +11,7 @@
   export interface LibraryCard {
     id: string;
     name: string;
+    description?: string;
     coverId: string;
   }
 
@@ -40,36 +40,6 @@
     onsettings?: () => void;
     onwidthcommit?: (width: number) => void;
   } = $props();
-
-  let newOpen = $state(false);
-
-  // While the menu is open, one listener pair closes it: a pointerdown
-  // outside the header's unit (the button and the panel are one unit, the
-  // same rule the App's other menus follow) and Escape from anywhere.
-  $effect(() => {
-    if (!newOpen) {
-      return;
-    }
-    const close = (e: PointerEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target?.closest('[data-newlibrary]')) {
-        return;
-      }
-      newOpen = false;
-    };
-    const escape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        newOpen = false;
-      }
-    };
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("keydown", escape);
-
-    return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("keydown", escape);
-    };
-  });
 
   const collapsed = $derived(width < 100);
   const nav = [
@@ -150,46 +120,26 @@
 
   <div class="mt-5 flex min-h-0 flex-1 flex-col">
     {#if !collapsed}
-      <div class="relative flex items-center justify-between pr-2 pl-3" data-newlibrary>
+      <div class="relative flex items-center justify-between pr-2 pl-3">
         <h2 class="text-[10px] text-muted">Your Library</h2>
         <button
-          class="grid size-6 place-items-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg"
+          class="grid size-6 place-items-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
           aria-label="New library"
           title="New library"
-          aria-haspopup="menu"
-          aria-expanded={newOpen}
-          onclick={() => (newOpen = !newOpen)}
+          onclick={onnewlibrary}
         >
           <Plus size="14" />
         </button>
-        {#if newOpen}
-          <div
-            class="absolute left-0 right-0 top-7 z-30 rounded-lg bg-surface p-1.5 shadow-menu"
-            role="menu"
-          >
-            <button
-              class="flex h-[30px] w-full items-center gap-2 rounded-md px-2 text-left text-[12px] text-fg hover:bg-hover"
-              role="menuitem"
-              onclick={() => {
-                newOpen = false;
-                onnewlibrary();
-              }}
-            >
-              <FolderSimplePlus size="16" class="text-muted" />
-              <span>New library folder</span>
-            </button>
-          </div>
-        {/if}
       </div>
     {/if}
     <div class="scroll-thin mt-2 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3">
       {#each libraries as lib (lib.id)}
         <button
-          class="flex h-8 shrink-0 items-center gap-2 rounded-md text-[12px] transition-colors {lib.id === activeLibrary
+          class="flex h-8 shrink-0 items-center gap-2 rounded-md text-[12px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus {lib.id === activeLibrary
             ? 'bg-selected text-fg'
             : 'text-fg hover:bg-hover'}"
           class:justify-center={collapsed}
-          title={lib.name}
+          title={lib.description ? `${lib.name}: ${lib.description}` : lib.name}
           aria-current={lib.id === activeLibrary ? "true" : undefined}
           onclick={() => onswitch(lib.id)}
           oncontextmenu={(e) => {

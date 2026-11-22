@@ -362,3 +362,56 @@ func TestAwaitSkipsUnsolicitedDispatchUntilMatchingNonce(t *testing.T) {
 		t.Fatalf("setActivity: %v", err)
 	}
 }
+
+func TestActivityReasonClassifiesUpdates(t *testing.T) {
+	now := time.Date(2026, 11, 23, 2, 0, 0, 0, time.UTC)
+	base := TrackInfo{
+		Title:        "Mesmerizer",
+		Artist:       "32ki",
+		LargeImage:   "https://lh3.googleusercontent.com/cover",
+		SmallImage:   "https://lh3.googleusercontent.com/avatar",
+		ActivityType: 2,
+	}
+
+	m := New(Config{AppID: "1"}, nil)
+	if got := m.activityReason(base, false, 155_000, 1000, now); got != "track" {
+		t.Fatalf("initial reason = %q, want track", got)
+	}
+
+	m.lastSent = sentActivity{
+		valid:      true,
+		track:      base,
+		paused:     false,
+		durationMs: 155_000,
+		startMs:    1000,
+		at:         now,
+	}
+
+	if got := m.activityReason(base, false, 155_000, 1500, now.Add(5*time.Second)); got != "" {
+		t.Fatalf("unchanged reason = %q, want empty", got)
+	}
+
+	withArt := base
+	withArt.LargeText = "Mesmerizer EP"
+	if got := m.activityReason(withArt, false, 155_000, 1000, now.Add(5*time.Second)); got != "art" {
+		t.Fatalf("art reason = %q, want art", got)
+	}
+	if got := m.activityReason(base, true, 155_000, 1000, now.Add(5*time.Second)); got != "pause" {
+		t.Fatalf("pause reason = %q, want pause", got)
+	}
+	if got := m.activityReason(base, false, 160_000, 1000, now.Add(5*time.Second)); got != "duration" {
+		t.Fatalf("duration reason = %q, want duration", got)
+	}
+	if got := m.activityReason(base, false, 155_000, 10_000, now.Add(5*time.Second)); got != "seek" {
+		t.Fatalf("seek reason = %q, want seek", got)
+	}
+	if got := m.activityReason(base, false, 155_000, 1000, now.Add(refreshInterval)); got != "refresh" {
+		t.Fatalf("refresh reason = %q, want refresh", got)
+	}
+
+	next := base
+	next.Title = "Dramaturgy"
+	if got := m.activityReason(next, false, 155_000, 1000, now.Add(refreshInterval)); got != "track" {
+		t.Fatalf("track change after refreshInterval = %q, want track", got)
+	}
+}

@@ -343,7 +343,8 @@ func (m *Manager) setActivity() {
 		startMs = card.Timestamps.Start.UnixMilli()
 	}
 	now := time.Now()
-	if m.activityUnchanged(track, paused, durationMs, startMs, now) {
+	reason := m.activityReason(track, paused, durationMs, startMs, now)
+	if reason == "" {
 		return
 	}
 
@@ -360,36 +361,48 @@ func (m *Manager) setActivity() {
 		startMs:    startMs,
 		at:         now,
 	}
-	m.log.Debug("discordrpc: activity set", "title", track.Title, "large", card.LargeImage, "small", card.SmallImage)
+	m.log.Debug("discordrpc: activity set", "reason", reason, "title", track.Title, "large", card.LargeImage, "small", card.SmallImage)
 }
 
-func (m *Manager) activityUnchanged(track TrackInfo, paused bool, durationMs, startMs int64, now time.Time) bool {
+func (m *Manager) activityReason(track TrackInfo, paused bool, durationMs, startMs int64, now time.Time) string {
 	prev := m.lastSent
 	if !prev.valid || prev.cleared {
-		return false
+		return "track"
 	}
-	if now.Sub(prev.at) >= refreshInterval {
-		return false
+	if !sameTrackIdentity(prev.track, track) {
+		return "track"
 	}
-	if prev.paused != paused || prev.durationMs != durationMs || !sameTrack(prev.track, track) {
-		return false
+	if !sameTrackArt(prev.track, track) {
+		return "art"
+	}
+	if prev.paused != paused {
+		return "pause"
+	}
+	if prev.durationMs != durationMs {
+		return "duration"
 	}
 	if !paused && abs64(startMs-prev.startMs) > seekDriftMs {
-		return false
+		return "seek"
+	}
+	if now.Sub(prev.at) >= refreshInterval {
+		return "refresh"
 	}
 
-	return true
+	return ""
 }
 
-func sameTrack(a, b TrackInfo) bool {
+func sameTrackIdentity(a, b TrackInfo) bool {
 	return a.Title == b.Title &&
 		a.Artist == b.Artist &&
-		a.LargeImage == b.LargeImage &&
-		a.LargeText == b.LargeText &&
-		a.SmallImage == b.SmallImage &&
-		a.SmallText == b.SmallText &&
 		a.ActivityType == b.ActivityType &&
 		slices.Equal(a.Buttons, b.Buttons)
+}
+
+func sameTrackArt(a, b TrackInfo) bool {
+	return a.LargeImage == b.LargeImage &&
+		a.LargeText == b.LargeText &&
+		a.SmallImage == b.SmallImage &&
+		a.SmallText == b.SmallText
 }
 
 func abs64(v int64) int64 {

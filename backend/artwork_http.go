@@ -182,7 +182,7 @@ func (s *PlayerService) materializeQueueCover(ctx context.Context, id, trackPath
 	return s.art.FilePath(id)
 }
 
-func (s *PlayerService) ytmSearchCoverBytes(_ context.Context, ref string) ([]byte, string, bool) {
+func (s *PlayerService) ytmSearchCoverBytes(ctx context.Context, ref string) ([]byte, string, bool) {
 	t, ok := s.ytm.lookup(ref)
 	if !ok {
 		if cat, found := s.catalogYTMTrack(ref); found {
@@ -193,24 +193,15 @@ func (s *PlayerService) ytmSearchCoverBytes(_ context.Context, ref string) ([]by
 	if !ok {
 		return nil, "", false
 	}
-	if s.art != nil {
-		if cid := t.coverID(); cid != "" {
-			if data, mime, ok := s.art.Bytes(cid); ok {
-				return data, mime, true
-			}
-		}
-	}
-	data := s.ytmProv.fetchThumb(ref)
-	if len(data) == 0 {
-		return nil, "", false
-	}
-	if s.art != nil {
-		if cid, err := s.art.Put(data); err == nil {
-			return s.art.Bytes(cid)
+	// Reuse already-stored canonical art for tracks in the library catalogue
+	// without triggering a network request or a new disk write.
+	if s.art != nil && t.CoverID != "" {
+		if data, mime, ok := s.art.Bytes(t.CoverID); ok {
+			return data, mime, true
 		}
 	}
 
-	return data, http.DetectContentType(data), true
+	return s.ytmProv.searchThumbBytes(ctx, ref, t.ThumbnailURL)
 }
 
 func writeImageBytes(w http.ResponseWriter, r *http.Request, data []byte, mime, cacheControl string) {

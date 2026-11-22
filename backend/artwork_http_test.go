@@ -7,7 +7,9 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/dlcuy22/molo/meta"
@@ -102,5 +104,71 @@ func TestArtworkMiddlewareServesCachedAndActiveCovers(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/art/"+id, nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /art/%s status = %d, want 405", id, rec.Code)
+	}
+}
+
+func TestYTMSearchThumbnailStaysInMemoryOnly(t *testing.T) {
+	artDir := t.TempDir()
+	art, err := artwork.Open(artDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Build a 300x300 PNG so we also verify downscaling to <= ytmSearchThumbEdge.
+	big := image.NewNRGBA(image.Rect(0, 0, 300, 300))
+	for y := range 300 {
+		for x := range 300 {
+			big.Set(x, y, imgcolor.NRGBA{R: 0x35, G: 0x84, B: 0xe4, A: 0xff})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, big); err != nil {
+		t.Fatal(err)
+	}
+	bigBytes := buf.Bytes()
+
+	var fetches atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetches.Add(1)
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(bigBytes)
+	}))
+	t.Cleanup(srv.Close)
+
+	svc := newPlayerService()
+	svc.art = art
+	svc.ytmProv.art = art
+	svc.ytmProv.http = srv.Client()
+	svc.ytm.put(ytmTrack{ID: "vid123", Title: "Search Hit", ThumbnailURL: srv.URL + "/thumb.png"})
+
+	handler := svc.artworkMiddleware()(http.NotFoundHandler())
+
+	// First request fetches, downscales to <= 128px, and writes zero disk files.
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, httptest.NewRequest(http.MethodGet, "/art/ytm-search/vid123", nil))
+	if rec1.Code != http.StatusOK || rec1.Body.Len() == 0 {
+		t.Fatalf("GET /art/ytm-search/vid123 = (%d, len=%d)", rec1.Code, rec1.Body.Len())
+	}
+	img, err := artwork.Decode(rec1.Body.Bytes())
+	if err != nil {
+		t.Fatalf("Decode response: %v", err)
+	}
+	if b := img.Bounds(); b.Dx() > ytmSearchThumbEdge || b.Dy() > ytmSearchThumbEdge {
+		t.Fatalf("search thumb bounds = %dx%d, want <= %d", b.Dx(), b.Dy(), ytmSearchThumbEdge)
+	}
+
+	entries, err := os.ReadDir(artDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("search thumbnail wrote %d files to art dir, want 0", len(entries))
+	}
+
+	// Second request hits the in-memory LRU without another HTTP fetch.
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/art/ytm-search/vid123", nil))
+	if rec2.Code != http.StatusOK || fetches.Load() != 1 {
+		t.Fatalf("second request = (status=%d, fetches=%d), want (200, 1)", rec2.Code, fetches.Load())
 	}
 }

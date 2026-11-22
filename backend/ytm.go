@@ -21,6 +21,7 @@ package backend
 
 import (
 	"bytes"
+	"container/list"
 	"context"
 	"errors"
 	"fmt"
@@ -69,6 +70,12 @@ const (
 	// ytmIndexMax bounds the catalogue metadata cache. Search results fill it,
 	// so without a bound a long session would grow it with every query.
 	ytmIndexMax = 512
+
+	// ytmSearchThumbMax and ytmSearchThumbEdge bound the in-memory LRU for
+	// ephemeral Ctrl+F search result thumbnails so unselected hits never write
+	// to artwork.Store on disk.
+	ytmSearchThumbMax  = 64
+	ytmSearchThumbEdge = 128
 
 	// ytmPlaylistMaxTracks and ytmPlaylistMaxPages bound one playlist add. A
 	// long playlist is still bounded work: the walk stops at the track cap, or
@@ -302,6 +309,11 @@ type ytmProvider struct {
 	avatarMu  sync.Mutex
 	avatarIDs map[string]string
 
+	// searchThumbs keeps ephemeral Ctrl+F search thumbnails in RAM only so
+	// browsing search results never writes unselected artwork to disk.
+	searchThumbMu sync.Mutex
+	searchThumbs  *memThumbLRU
+
 	// sheetMu guards the lyric sheets. The now-playing column reads a sheet
 	// every time it redraws, and a sheet is immutable for a track, so resolving
 	// one twice only costs requests. A nil entry records a track known to have
@@ -394,14 +406,15 @@ func newYTMProvider(index *ytmIndex, art *artwork.Store, seamless bool, log *slo
 		log = slog.Default()
 	}
 	p := &ytmProvider{
-		index:     index,
-		art:       art,
-		artists:   newYTMArtistIndex(),
-		avatarIDs: make(map[string]string),
-		sheets:    make(map[string]*ytm.Lyrics),
-		log:       log,
-		http:      &http.Client{Timeout: ytmHTTPTimeout},
-		seamless:  seamless,
+		index:        index,
+		art:          art,
+		artists:      newYTMArtistIndex(),
+		avatarIDs:    make(map[string]string),
+		searchThumbs: newMemThumbLRU(ytmSearchThumbMax),
+		sheets:       make(map[string]*ytm.Lyrics),
+		log:          log,
+		http:         &http.Client{Timeout: ytmHTTPTimeout},
+		seamless:     seamless,
 	}
 	p.installClient(ytmClient(log))
 	p.rotate = p.rotateIdentity
@@ -1408,4 +1421,93 @@ func firstNonEmpty(values ...string) string {
 	}
 
 	return ""
+}
+
+type memThumb struct {
+	key  string
+	data []byte
+	mime string
+}
+
+type memThumbLRU struct {
+	cap   int
+	order *list.List
+	items map[string]*list.Element
+}
+
+func newMemThumbLRU(capacity int) *memThumbLRU {
+	return &memThumbLRU{
+		cap:   capacity,
+		order: list.New(),
+		items: make(map[string]*list.Element, capacity),
+	}
+}
+
+func (c *memThumbLRU) get(key string) ([]byte, string, bool) {
+	if elem, ok := c.items[key]; ok {
+		c.order.MoveToFront(elem)
+		v := elem.Value.(*memThumb)
+
+		return v.data, v.mime, true
+	}
+
+	return nil, "", false
+}
+
+func (c *memThumbLRU) put(key string, data []byte, mime string) {
+	if elem, ok := c.items[key]; ok {
+		v := elem.Value.(*memThumb)
+		v.data = data
+		v.mime = mime
+		c.order.MoveToFront(elem)
+
+		return
+	}
+	if c.order.Len() >= c.cap {
+		if back := c.order.Back(); back != nil {
+			c.order.Remove(back)
+			delete(c.items, back.Value.(*memThumb).key)
+		}
+	}
+	elem := c.order.PushFront(&memThumb{key: key, data: data, mime: mime})
+	c.items[key] = elem
+}
+
+// searchThumbBytes fetches and downscales a search result thumbnail into the
+// bounded in-memory LRU without writing to artwork.Store on disk.
+func (p *ytmProvider) searchThumbBytes(ctx context.Context, ref, url string) ([]byte, string, bool) {
+	if ref == "" || url == "" {
+		return nil, "", false
+	}
+
+	p.searchThumbMu.Lock()
+	if p.searchThumbs == nil {
+		p.searchThumbs = newMemThumbLRU(ytmSearchThumbMax)
+	}
+	if data, mime, ok := p.searchThumbs.get(ref); ok {
+		p.searchThumbMu.Unlock()
+
+		return data, mime, true
+	}
+	p.searchThumbMu.Unlock()
+
+	raw := p.thumbFor(ctx, url)
+	if len(raw) == 0 {
+		return nil, "", false
+	}
+
+	encoded := raw
+	mime := http.DetectContentType(raw)
+	if img, err := artwork.Decode(raw); err == nil {
+		if out, m, err := artwork.Encode(artwork.Resize(img, ytmSearchThumbEdge)); err == nil {
+			encoded = out
+			mime = m
+		}
+	}
+
+	p.searchThumbMu.Lock()
+	p.searchThumbs.put(ref, encoded, mime)
+	p.searchThumbMu.Unlock()
+
+	return encoded, mime, true
 }

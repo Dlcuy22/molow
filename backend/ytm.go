@@ -40,6 +40,7 @@ import (
 	"github.com/dlcuy22/molo/provider"
 	"github.com/dlcuy22/molo/stream"
 	"github.com/dlcuy22/molow/internal/artwork"
+	"github.com/dlcuy22/molow/internal/trackcache"
 	ytm "github.com/dlcuy22/ytm-go"
 )
 
@@ -287,9 +288,10 @@ func (x *ytmIndex) prune(protected map[string]struct{}) {
 // ytmProvider resolves YouTube Music references. It implements
 // provider.AudioProvider.
 type ytmProvider struct {
-	index *ytmIndex
-	art   *artwork.Store
-	http  *http.Client
+	index  *ytmIndex
+	art    *artwork.Store
+	tracks *trackcache.Store
+	http   *http.Client
 
 	// artists caches resolved artist avatars for the presence's small image. It
 	// is separate from the track index because one artist can front many tracks.
@@ -450,10 +452,10 @@ func (p *ytmProvider) Name() string { return "ytm" }
 
 func (p *ytmProvider) Match(ref string) bool { return isYTMRef(ref) }
 
-// Open resolves a reference into a playable Source. The stream lookup and the
-// artwork fetch happen here, on the session's build worker; the audio fetch is
-// deferred to the Opener, which the streamer also calls again on a seek
-// fallback, so the fetch always starts from the beginning.
+// Open resolves a reference into a playable Source. A track already cached on
+// disk opens directly from the cache without calling YouTube. On a cache miss,
+// the stream lookup and artwork fetch happen here on the build worker and the
+// audio download runs in Opener, caching completed streams for later replays.
 func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, error) {
 	if err := ctx.Err(); err != nil {
 		return provider.Source{}, err
@@ -461,6 +463,29 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 	id := ytmID(ref)
 	if id == "" {
 		return provider.Source{}, fmt.Errorf("ytm: %q carries no track id", ref)
+	}
+
+	if p.tracks != nil && p.tracks.Has(id) {
+		track := p.hydrateTrackThumb(ctx, ref, p.trackFor(ref, nil))
+		src := ytmSourceMeta(track)
+		src.Opener = func(stop <-chan struct{}) (decode.Decoder, error) {
+			if rc, _, ok := p.tracks.Get(id); ok {
+				dec, err := decode.NewWebMOpusFactory().OpenReader(rc)
+				if err != nil {
+					_ = rc.Close()
+
+					return nil, err
+				}
+
+				return wrapClosingDecoder(dec, rc), nil
+			}
+
+			// The file was evicted between Open and Opener; fall back to a
+			// fresh remote fetch.
+			return p.fetchRemoteDecoder(ctx, stop, id)
+		}
+
+		return src, nil
 	}
 
 	calls := p.calls()
@@ -473,48 +498,8 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 		return provider.Source{}, fmt.Errorf("ytm: no audio format for %s", id)
 	}
 
-	track := p.trackFor(ref, streams)
-	if len(track.Thumb) == 0 && track.CoverID != "" && p.art != nil {
-		if data, _, ok := p.art.Bytes(track.CoverID); ok {
-			track.Thumb = data
-		}
-	}
-	if len(track.Thumb) == 0 {
-		if thumb := p.thumbFor(ctx, track.ThumbnailURL); len(thumb) > 0 {
-			track.Thumb = thumb
-			if p.art != nil {
-				if cid, err := p.art.Put(thumb); err == nil && cid != "" {
-					track.CoverID = cid
-				}
-			}
-			p.index.setThumb(ref, thumb)
-		}
-	}
-	p.index.put(track)
-
-	src := provider.Source{
-		Meta: meta.Meta{
-			Container: "webm",
-			Codec:     "opus",
-			Tags: meta.Tags{
-				Title:  track.Title,
-				Artist: track.Artist,
-				Album:  track.Album,
-			},
-		},
-	}
-	// The now-playing artwork rides in the meta the way a tagged file's does,
-	// so the existing cover path needs no special case for a remote track.
-	if len(track.Thumb) > 0 {
-		src.Meta.Tags.Cover = track.Thumb
-		src.Meta.Tags.CoverMIME = http.DetectContentType(track.Thumb)
-	}
-	if frames := ytmFrames(track.DurationMs); frames >= 0 {
-		src.Meta.Stream = core.StreamInfo{Format: core.CanonicalFormat, TotalFrames: frames}
-		src.Probe = func(core.DurationMode) (core.StreamInfo, error) {
-			return core.StreamInfo{Format: core.CanonicalFormat, TotalFrames: frames}, nil
-		}
-	}
+	track := p.hydrateTrackThumb(ctx, ref, p.trackFor(ref, streams))
+	src := ytmSourceMeta(track)
 
 	url := best.URL
 	expires := best.ExpiresAt
@@ -576,6 +561,15 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 						err = p.download(ctx, stop, url, ytmMaxTrackBytes, buf)
 					}
 					buf.finish(err)
+					// Persist only complete downloads so a skipped or failed
+					// track never writes partial audio to disk.
+					if err == nil && p.tracks != nil {
+						if data := buf.bytes(); len(data) > 0 {
+							if perr := p.tracks.Put(id, data); perr != nil {
+								p.logger().Warn("trackcache: store failed", "id", id, "error", perr)
+							}
+						}
+					}
 				}()
 			})
 		}
@@ -617,11 +611,131 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 		if err != nil {
 			return nil, err
 		}
+		if p.tracks != nil && len(data) > 0 {
+			if perr := p.tracks.Put(id, data); perr != nil {
+				p.logger().Warn("trackcache: store failed", "id", id, "error", perr)
+			}
+		}
 
 		return decode.NewWebMOpusFactory().OpenReader(bytes.NewReader(data))
 	}
 
 	return src, nil
+}
+
+func (p *ytmProvider) hydrateTrackThumb(ctx context.Context, ref string, track ytmTrack) ytmTrack {
+	if len(track.Thumb) == 0 && track.CoverID != "" && p.art != nil {
+		if data, _, ok := p.art.Bytes(track.CoverID); ok {
+			track.Thumb = data
+		}
+	}
+	if len(track.Thumb) == 0 && track.ThumbnailURL != "" {
+		if thumb := p.thumbFor(ctx, track.ThumbnailURL); len(thumb) > 0 {
+			track.Thumb = thumb
+			if p.art != nil {
+				if cid, err := p.art.Put(thumb); err == nil && cid != "" {
+					track.CoverID = cid
+				}
+			}
+			p.index.setThumb(ref, thumb)
+		}
+	}
+	p.index.put(track)
+
+	return track
+}
+
+func ytmSourceMeta(track ytmTrack) provider.Source {
+	src := provider.Source{
+		Meta: meta.Meta{
+			Container: "webm",
+			Codec:     "opus",
+			Tags: meta.Tags{
+				Title:  track.Title,
+				Artist: track.Artist,
+				Album:  track.Album,
+			},
+		},
+	}
+	// The now-playing artwork rides in the meta the way a tagged file's does,
+	// so the existing cover path needs no special case for a remote track.
+	if len(track.Thumb) > 0 {
+		src.Meta.Tags.Cover = track.Thumb
+		src.Meta.Tags.CoverMIME = http.DetectContentType(track.Thumb)
+	}
+	if frames := ytmFrames(track.DurationMs); frames >= 0 {
+		src.Meta.Stream = core.StreamInfo{Format: core.CanonicalFormat, TotalFrames: frames}
+		src.Probe = func(core.DurationMode) (core.StreamInfo, error) {
+			return core.StreamInfo{Format: core.CanonicalFormat, TotalFrames: frames}, nil
+		}
+	}
+
+	return src
+}
+
+func (p *ytmProvider) fetchRemoteDecoder(ctx context.Context, stop <-chan struct{}, id string) (decode.Decoder, error) {
+	streams, err := p.calls().resolve(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	best, ok := streams.Best()
+	if !ok {
+		return nil, fmt.Errorf("ytm: no audio format for %s", id)
+	}
+	data, err := p.fetch(ctx, stop, best.URL, ytmMaxTrackBytes)
+	if err != nil {
+		return nil, err
+	}
+	if p.tracks != nil && len(data) > 0 {
+		_ = p.tracks.Put(id, data)
+	}
+
+	return decode.NewWebMOpusFactory().OpenReader(bytes.NewReader(data))
+}
+
+type closingDecoder struct {
+	decode.Decoder
+	closer io.Closer
+}
+
+func (d closingDecoder) Close() error {
+	decErr := d.Decoder.Close()
+	closeErr := d.closer.Close()
+	if decErr != nil {
+		return decErr
+	}
+
+	return closeErr
+}
+
+func (d closingDecoder) DecoderName() string {
+	name, _ := decode.Describe(d.Decoder)
+
+	return name
+}
+
+func (d closingDecoder) ParserName() string {
+	_, parser := decode.Describe(d.Decoder)
+
+	return parser
+}
+
+type seekableClosingDecoder struct {
+	closingDecoder
+	seeker decode.Seeker
+}
+
+func (d seekableClosingDecoder) SeekFrame(frame int64) error {
+	return d.seeker.SeekFrame(frame)
+}
+
+func wrapClosingDecoder(dec decode.Decoder, c io.Closer) decode.Decoder {
+	base := closingDecoder{Decoder: dec, closer: c}
+	if s, ok := dec.(decode.Seeker); ok {
+		return seekableClosingDecoder{closingDecoder: base, seeker: s}
+	}
+
+	return base
 }
 
 // playlist walks a playlist's pages, flattening each into the rows the service
@@ -691,11 +805,15 @@ func (p *ytmProvider) trackFor(ref string, streams *ytm.Streams) ytmTrack {
 			}
 		}
 	}
-	t.ID = firstNonEmpty(t.ID, streams.VideoID, ytmID(ref))
-	t.Title = firstNonEmpty(t.Title, streams.Title)
-	t.Artist = firstNonEmpty(t.Artist, streams.Author)
-	if t.DurationMs <= 0 {
-		t.DurationMs = streams.DurationMs
+	if streams != nil {
+		t.ID = firstNonEmpty(t.ID, streams.VideoID, ytmID(ref))
+		t.Title = firstNonEmpty(t.Title, streams.Title)
+		t.Artist = firstNonEmpty(t.Artist, streams.Author)
+		if t.DurationMs <= 0 {
+			t.DurationMs = streams.DurationMs
+		}
+	} else {
+		t.ID = firstNonEmpty(t.ID, ytmID(ref))
 	}
 
 	return t
@@ -953,6 +1071,17 @@ func (b *ytmStreamBuffer) finish(err error) {
 	b.err = err
 	b.cond.Broadcast()
 	b.mu.Unlock()
+}
+
+// bytes returns the complete downloaded body once finish(nil) has run.
+func (b *ytmStreamBuffer) bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.done || b.err != nil {
+		return nil
+	}
+
+	return b.data
 }
 
 // reader returns a fresh forward reader over the body. It starts at the

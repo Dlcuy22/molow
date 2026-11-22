@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/dlcuy22/molo/core"
+	"github.com/dlcuy22/molo/decode"
 	"github.com/dlcuy22/molo/provider"
+	"github.com/dlcuy22/molow/internal/trackcache"
 	ytm "github.com/dlcuy22/ytm-go"
 )
 
@@ -707,5 +709,134 @@ func TestAddYTMPlaylistKeepsPlainListsOnBrowse(t *testing.T) {
 	}
 	if got := fp.Queue(); len(got) != 1 || got[0] != "ytm:s1" {
 		t.Fatalf("queue = %v, want [ytm:s1]", got)
+	}
+}
+
+func TestYTMProviderTrackCacheHitSkipsNetworkAndSeeks(t *testing.T) {
+	data := fixtureBytes(t)
+	var httpHits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpHits.Add(1)
+		w.Header().Set("Content-Type", "audio/webm")
+		_, _ = w.Write(data)
+	}))
+	t.Cleanup(srv.Close)
+
+	tc, err := trackcache.Open(t.TempDir(), int64(len(data)*4))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var resolveCalls atomic.Int32
+	index := newYTMIndex()
+	index.put(ytmTrack{ID: "cached1", Title: "Cached Song", Artist: "Artist", DurationMs: 2000})
+	p := &ytmProvider{
+		index:    index,
+		tracks:   tc,
+		http:     srv.Client(),
+		seamless: true,
+		resolve: func(context.Context, string) (*ytm.Streams, error) {
+			resolveCalls.Add(1)
+
+			return ytmStreams(srv.URL+"/media", time.Now().Add(time.Hour)), nil
+		},
+	}
+
+	// First play resolves and downloads once, populating trackcache.
+	src1, err := p.Open(context.Background(), "ytm:cached1")
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+	upgrade, err := src1.Upgrade(context.Background())
+	if err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+	dec1, err := upgrade(nil)
+	if err != nil {
+		t.Fatalf("upgrade decode: %v", err)
+	}
+	_ = dec1.Close()
+
+	// Wait briefly for the post-finish Put goroutine to commit.
+	deadline := time.Now().Add(2 * time.Second)
+	for !tc.Has("cached1") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !tc.Has("cached1") {
+		t.Fatal("completed stream was not written to trackcache")
+	}
+	if resolveCalls.Load() != 1 || httpHits.Load() != 1 {
+		t.Fatalf("first play calls = (resolve %d, http %d), want (1, 1)", resolveCalls.Load(), httpHits.Load())
+	}
+
+	// Second play hits disk with zero network resolve or HTTP calls, and
+	// exposes native decode.Seeker.
+	src2, err := p.Open(context.Background(), "ytm:cached1")
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	if src2.Upgrade != nil {
+		t.Fatal("cached source should not need Upgrade")
+	}
+	dec2, err := src2.Opener(nil)
+	if err != nil {
+		t.Fatalf("cached Opener: %v", err)
+	}
+	seeker, ok := dec2.(decode.Seeker)
+	if !ok {
+		t.Fatal("cached decoder does not preserve decode.Seeker")
+	}
+	if err := seeker.SeekFrame(24000); err != nil {
+		t.Fatalf("SeekFrame: %v", err)
+	}
+	pcm := make([]float32, 1024)
+	n, err := dec2.ReadFrames(pcm)
+	if err != nil || n == 0 {
+		t.Fatalf("ReadFrames = (%d, %v), want frames > 0", n, err)
+	}
+	if err := dec2.Close(); err != nil {
+		t.Fatalf("Close cached decoder: %v", err)
+	}
+	if resolveCalls.Load() != 1 || httpHits.Load() != 1 {
+		t.Fatalf("second play hit network: resolve=%d http=%d", resolveCalls.Load(), httpHits.Load())
+	}
+	// Closing the decoder released the pin, so Clear removes the file cleanly.
+	if err := tc.Clear(); err != nil {
+		t.Fatalf("Clear after Close: %v", err)
+	}
+	if tc.Has("cached1") {
+		t.Fatal("cached1 remained pinned after decoder Close")
+	}
+}
+
+func TestYTMProviderAbortedDownloadDoesNotCache(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	tc, err := trackcache.Open(t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &ytmProvider{
+		index:    newYTMIndex(),
+		tracks:   tc,
+		http:     srv.Client(),
+		seamless: true,
+		resolve: func(context.Context, string) (*ytm.Streams, error) {
+			return ytmStreams(srv.URL+"/fail", time.Now().Add(time.Hour)), nil
+		},
+	}
+
+	src, err := p.Open(context.Background(), "ytm:broken1")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := src.Upgrade(context.Background()); err == nil {
+		t.Fatal("expected failed download error")
+	}
+	if tc.Has("broken1") || tc.Stats().Count != 0 {
+		t.Fatalf("failed download polluted trackcache: %+v", tc.Stats())
 	}
 }

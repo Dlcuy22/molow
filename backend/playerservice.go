@@ -24,6 +24,7 @@ import (
 	"github.com/dlcuy22/molow/internal/library"
 	"github.com/dlcuy22/molow/internal/library/sqlite"
 	"github.com/dlcuy22/molow/internal/spectrum"
+	"github.com/dlcuy22/molow/internal/trackcache"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -102,6 +103,9 @@ type PlayerService struct {
 
 	// art owns canonical <= 512px cover storage, data URLs, and accent palettes.
 	art *artwork.Store
+
+	// tracks owns the size-bounded on-disk LRU cache for streamed online tracks.
+	tracks *trackcache.Store
 
 	// spectrumMu guards the runner, which the tick goroutine reads and
 	// ConfigureSpectrum replaces. It also guards the last emitted frame, so
@@ -205,6 +209,10 @@ func newPlayerService() *PlayerService {
 	if err != nil {
 		slog.Default().Warn("artwork: cache dir unavailable", "error", err)
 	}
+	tracks, err := trackcache.Open("", trackcache.DefaultMaxBytes)
+	if err != nil {
+		slog.Default().Warn("trackcache: cache dir unavailable", "error", err)
+	}
 
 	s := &PlayerService{
 		closing:         make(chan struct{}),
@@ -217,6 +225,7 @@ func newPlayerService() *PlayerService {
 		effectWindowPresent: effectWindowPresent,
 		rateChanged:         make(chan struct{}, 1),
 		art:                 art,
+		tracks:              tracks,
 		index:               newTagIndex(),
 		ytm:                 ytmIndex,
 		ytmProv:             newYTMProvider(ytmIndex, art, ytmSeamlessSwap, nil),
@@ -230,6 +239,7 @@ func newPlayerService() *PlayerService {
 		s.logger().Info(msg, args...)
 	})
 	s.romanizer.wants = s.romanizationWanted
+	s.ytmProv.tracks = tracks
 	s.ytmProv.catalogTrack = s.catalogYTMTrack
 
 	return s

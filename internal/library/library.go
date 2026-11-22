@@ -68,6 +68,8 @@ type Library struct {
 	Message      string       `json:"message,omitempty"`
 	Capabilities []Capability `json:"capabilities"`
 	TrackCount   int          `json:"trackCount"`
+	CoverID      string       `json:"coverId,omitempty"`
+	CustomCover  bool         `json:"customCover,omitempty"`
 	LogoCovers   []string     `json:"logoCovers,omitempty"`
 }
 
@@ -126,6 +128,8 @@ type Playlist struct {
 	Description string   `json:"description,omitempty"`
 	RemoteID    string   `json:"remoteId,omitempty"`
 	TrackCount  int      `json:"trackCount"`
+	CoverID     string   `json:"coverId,omitempty"`
+	CustomCover bool     `json:"customCover,omitempty"`
 	CoverIDs    []string `json:"coverIds,omitempty"`
 }
 

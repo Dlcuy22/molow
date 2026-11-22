@@ -365,7 +365,7 @@ func (s *Store) ToggleLiked(ref string) (bool, error) {
 // Playlists lists a library's playlists with their entry counts.
 func (s *Store) Playlists(libraryID string) ([]library.Playlist, error) {
 	rows, err := s.db.Query(
-		`SELECT p.id, p.name, p.description, p.remote_id,
+		`SELECT p.id, p.name, p.description, p.remote_id, p.cover_id, p.custom_cover,
 		        (SELECT COUNT(*) FROM playlist_entry e WHERE e.playlist_id = p.id)
 		 FROM playlist p WHERE p.library_id = ?
 		 ORDER BY p.updated_at DESC, p.name COLLATE NOCASE`,
@@ -378,11 +378,15 @@ func (s *Store) Playlists(libraryID string) ([]library.Playlist, error) {
 
 	var out []library.Playlist
 	for rows.Next() {
-		var p library.Playlist
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RemoteID, &p.TrackCount); err != nil {
+		var (
+			p           library.Playlist
+			customCover int
+		)
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RemoteID, &p.CoverID, &customCover, &p.TrackCount); err != nil {
 			return nil, err
 		}
 		p.LibraryID = libraryID
+		p.CustomCover = customCover != 0
 		out = append(out, p)
 	}
 	if err := rows.Err(); err != nil {
@@ -393,7 +397,10 @@ func (s *Store) Playlists(libraryID string) ([]library.Playlist, error) {
 		return nil, err
 	}
 	for i := range out {
-		covers, err := s.playlistCovers(out[i].ID, 4)
+		if out[i].CoverID != "" {
+			continue
+		}
+		covers, err := s.PlaylistCoverIDs(out[i].ID, 4)
 		if err != nil {
 			return nil, err
 		}
@@ -403,8 +410,8 @@ func (s *Store) Playlists(libraryID string) ([]library.Playlist, error) {
 	return out, nil
 }
 
-// playlistCovers returns up to limit distinct non-empty track cover ids in playlist order.
-func (s *Store) playlistCovers(playlistID string, limit int) ([]string, error) {
+// PlaylistCoverIDs returns up to limit distinct non-empty track cover ids in playlist order.
+func (s *Store) PlaylistCoverIDs(playlistID string, limit int) ([]string, error) {
 	rows, err := s.db.Query(
 		`SELECT t.cover_id
 		 FROM playlist_entry e
@@ -436,6 +443,26 @@ func (s *Store) playlistCovers(playlistID string, limit int) ([]string, error) {
 	}
 
 	return out, rows.Err()
+}
+
+// SetPlaylistCover updates a playlist's stored cover_id. When custom is false,
+// rows with custom_cover = 1 are left untouched so automatic mutations never
+// overwrite user-selected artwork.
+func (s *Store) SetPlaylistCover(playlistID, coverID string, custom bool) error {
+	if custom {
+		_, err := s.db.Exec(
+			`UPDATE playlist SET cover_id = ?, custom_cover = 1 WHERE id = ?`,
+			coverID, playlistID,
+		)
+
+		return err
+	}
+	_, err := s.db.Exec(
+		`UPDATE playlist SET cover_id = ? WHERE id = ? AND custom_cover = 0`,
+		coverID, playlistID,
+	)
+
+	return err
 }
 
 // PlaylistTracks reads a playlist in position order.
@@ -638,10 +665,17 @@ func (s *Store) RemoveFromPlaylist(playlistID string, refs []string) error {
 	return tx.Commit()
 }
 
-// ReferencedCoverIDs returns every non-empty cover_id referenced by the
-// catalogue so artwork cache pruning never removes an active cover.
+// ReferencedCoverIDs returns every non-empty cover_id referenced by tracks,
+// libraries, or playlists so artwork cache pruning never removes an active or
+// composite cover.
 func (s *Store) ReferencedCoverIDs() (map[string]struct{}, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT cover_id FROM track WHERE cover_id <> ''`)
+	rows, err := s.db.Query(`
+		SELECT cover_id FROM track WHERE cover_id <> ''
+		UNION
+		SELECT cover_id FROM library WHERE cover_id <> ''
+		UNION
+		SELECT cover_id FROM playlist WHERE cover_id <> ''
+	`)
 	if err != nil {
 		return nil, err
 	}

@@ -320,3 +320,60 @@ func TestPruneProtectsReferencedAndEvictsOldestOrphans(t *testing.T) {
 		t.Fatalf("non-image sidecar should remain: %v", err)
 	}
 }
+
+func TestComposeMosaicSingleAndQuad(t *testing.T) {
+	if data, err := ComposeMosaic(nil); err != nil || data != nil {
+		t.Fatalf("ComposeMosaic(nil) = (%d bytes, %v), want (nil, nil)", len(data), err)
+	}
+
+	red := makePNG(t, 80, 60, imgcolor.NRGBA{R: 220, G: 30, B: 30, A: 255})
+	green := makePNG(t, 60, 80, imgcolor.NRGBA{R: 30, G: 210, B: 40, A: 255})
+	blue := makePNG(t, 64, 64, imgcolor.NRGBA{R: 30, G: 60, B: 220, A: 255})
+	yellow := makePNG(t, 64, 64, imgcolor.NRGBA{R: 230, G: 210, B: 30, A: 255})
+
+	// Fewer than four tiles returns the first valid tile normalized.
+	single, err := ComposeMosaic([][]byte{[]byte("bad"), red, green})
+	if err != nil || len(single) == 0 {
+		t.Fatalf("ComposeMosaic(<4) = (%d bytes, %v)", len(single), err)
+	}
+	simg, err := Decode(single)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := simg.Bounds(); b.Dx() != 80 || b.Dy() != 60 {
+		t.Fatalf("single mosaic bounds = %dx%d, want 80x60", b.Dx(), b.Dy())
+	}
+
+	// Four valid tiles compose into a MaxEdge x MaxEdge 2x2 square.
+	quad, err := ComposeMosaic([][]byte{red, green, blue, yellow})
+	if err != nil || len(quad) == 0 {
+		t.Fatalf("ComposeMosaic(4) = (%d bytes, %v)", len(quad), err)
+	}
+	qimg, err := Decode(quad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := qimg.Bounds(); b.Dx() != MaxEdge || b.Dy() != MaxEdge {
+		t.Fatalf("quad mosaic bounds = %dx%d, want %dx%d", b.Dx(), b.Dy(), MaxEdge, MaxEdge)
+	}
+
+	// Verify each quadrant carries its expected dominant channel.
+	checkQuad := func(name string, x, y int, wantR, wantG, wantB uint8) {
+		r, g, b, _ := qimg.At(x, y).RGBA()
+		gotR, gotG, gotB := uint8(r>>8), uint8(g>>8), uint8(b>>8)
+		diff := func(a, b uint8) int {
+			if a > b {
+				return int(a - b)
+			}
+
+			return int(b - a)
+		}
+		if diff(gotR, wantR) > 30 || diff(gotG, wantG) > 30 || diff(gotB, wantB) > 30 {
+			t.Errorf("%s pixel (%d,%d) = (%d,%d,%d), want ~(%d,%d,%d)", name, x, y, gotR, gotG, gotB, wantR, wantG, wantB)
+		}
+	}
+	checkQuad("top-left", 64, 64, 220, 30, 30)
+	checkQuad("top-right", 384, 64, 30, 210, 40)
+	checkQuad("bottom-left", 64, 384, 30, 60, 220)
+	checkQuad("bottom-right", 384, 384, 230, 210, 30)
+}

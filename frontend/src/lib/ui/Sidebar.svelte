@@ -12,7 +12,7 @@
   export interface LibraryCard {
     id: string;
     name: string;
-    logoCovers: string[];
+    coverId: string;
   }
 
   let {
@@ -205,20 +205,8 @@
             class="relative shrink-0 overflow-hidden rounded-[4px]"
             style="width:{collapsed ? 28 : 32}px;height:{collapsed ? 28 : 32}px"
           >
-            {#if lib.logoCovers.length === 1}
-              <Cover id={lib.logoCovers[0]} size={collapsed ? 28 : 32} radius={4} class="absolute inset-0" />
-            {:else if lib.logoCovers.length >= 2}
-              <span
-                class="absolute inset-0 grid gap-px bg-bg-dark {lib.logoCovers.length === 2
-                  ? 'grid-rows-2'
-                  : 'grid-cols-2 grid-rows-2'}"
-              >
-                {#each lib.logoCovers.slice(0, 4) as cid, i (cid + i)}
-                  <span class="overflow-hidden">
-                    <Cover id={cid} fill radius={0} class="block" />
-                  </span>
-                {/each}
-              </span>
+            {#if lib.coverId}
+              <Cover id={lib.coverId} size={collapsed ? 28 : 32} radius={4} class="absolute inset-0" />
             {:else}
               <span
                 class="absolute inset-0 rounded-[4px]"

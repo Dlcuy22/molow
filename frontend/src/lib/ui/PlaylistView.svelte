@@ -59,7 +59,10 @@
     PLAYLIST_SORTS.find((opt) => opt.id === sortBy)?.label ?? "Playlist order",
   );
   const sortedTracks = $derived(sortPlaylistTracks(tracks, sortBy));
-  const covers = $derived(tracks.length > 0 ? playlistCovers(tracks) : (playlist.coverIds ?? []));
+  const fallbackCover = $derived(
+    (tracks.length > 0 ? playlistCovers(tracks) : (playlist.coverIds ?? []))[0] ?? "",
+  );
+  const coverId = $derived(playlist.coverId || fallbackCover);
   const creator = $derived((playlist.creator ?? "").trim());
   const trackCount = $derived(loading && tracks.length === 0 ? playlist.trackCount : tracks.length);
   const totalTime = $derived(formatTotalDuration(totalDurationMs(tracks)));
@@ -131,18 +134,8 @@
         class="relative size-[220px] shrink-0 overflow-hidden rounded-lg bg-surface @max-[680px]:size-[180px]"
         aria-hidden="true"
       >
-        {#if playlist.coverId}
-          <Cover id={playlist.coverId} fill radius={0} class="block h-full w-full" />
-        {:else if covers.length >= 4}
-          <div class="grid h-full w-full grid-cols-2 grid-rows-2">
-            {#each covers as cid (cid)}
-              <div class="overflow-hidden">
-                <Cover id={cid} fill radius={0} class="block h-full w-full" />
-              </div>
-            {/each}
-          </div>
-        {:else if covers.length > 0}
-          <Cover id={covers[0]} fill radius={0} class="block h-full w-full" />
+        {#if coverId}
+          <Cover id={coverId} fill radius={0} class="block h-full w-full" />
         {:else}
           <div class="grid h-full w-full place-items-center text-muted">
             <MusicNotes size="48" />

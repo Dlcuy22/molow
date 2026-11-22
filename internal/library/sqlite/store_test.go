@@ -650,3 +650,60 @@ func TestTouchIfUnchanged(t *testing.T) {
 		t.Fatalf("foreign owner: err=%v, want ErrForeignFile", err)
 	}
 }
+
+func TestCoverIDsRespectCustomCoverAndProtectInGC(t *testing.T) {
+	s := newTestStore(t)
+	seed(t, s)
+
+	pl, err := s.CreatePlaylist("local:test", "Mix")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Automatic cover updates write when custom_cover = 0.
+	if err := s.SetLibraryCover("local:test", "lib-auto", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPlaylistCover(pl.ID, "pl-auto", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Custom covers set custom_cover = 1 and block later automatic overwrites.
+	if err := s.SetLibraryCover("local:test", "lib-custom", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetLibraryCover("local:test", "lib-overwrite", false); err != nil {
+		t.Fatal(err)
+	}
+	lib, err := s.Library("local:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lib.CoverID != "lib-custom" || !lib.CustomCover {
+		t.Fatalf("library cover = (%q, custom=%v), want (lib-custom, true)", lib.CoverID, lib.CustomCover)
+	}
+
+	if err := s.SetPlaylistCover(pl.ID, "pl-custom", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPlaylistCover(pl.ID, "pl-overwrite", false); err != nil {
+		t.Fatal(err)
+	}
+	lists, err := s.Playlists("local:test")
+	if err != nil || len(lists) != 1 {
+		t.Fatalf("Playlists = (%+v, %v)", lists, err)
+	}
+	if lists[0].CoverID != "pl-custom" || !lists[0].CustomCover {
+		t.Fatalf("playlist cover = (%q, custom=%v), want (pl-custom, true)", lists[0].CoverID, lists[0].CustomCover)
+	}
+
+	refs, err := s.ReferencedCoverIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"cover-Alpha", "cover-Beta", "lib-custom", "pl-custom"} {
+		if _, ok := refs[want]; !ok {
+			t.Fatalf("ReferencedCoverIDs missing %q: %+v", want, refs)
+		}
+	}
+}

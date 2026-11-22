@@ -94,6 +94,7 @@ function toShelf(s: GenShelf): Shelf {
       name: p.name,
       description: p.description ?? "",
       trackCount: p.trackCount,
+      coverId: p.coverId ?? "",
       coverIds: p.coverIds ?? [],
     })),
     cursor: s.cursor ?? "",
@@ -112,6 +113,7 @@ function toInfo(l: GenLibrary): LibraryInfo {
     name: l.name,
     root: l.root ?? "",
     roots: l.roots ?? [],
+    coverId: l.coverId ?? "",
     logoCovers: l.logoCovers ?? [],
     status: String(l.status),
     message: l.message ?? "",
@@ -177,6 +179,7 @@ export async function openPlaylist(target: Playlist | string): Promise<void> {
           name: found.name,
           description: found.description ?? "",
           trackCount: found.trackCount,
+          coverId: found.coverId ?? "",
           coverIds: found.coverIds ?? [],
         };
       }
@@ -272,6 +275,7 @@ export async function loadLibrary(tab = currentLibraryTab): Promise<void> {
         name: p.name,
         description: p.description ?? "",
         trackCount: p.trackCount,
+        coverId: p.coverId ?? "",
         coverIds: p.coverIds ?? [],
       })),
     );

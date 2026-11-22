@@ -9,7 +9,7 @@
     onopen = (_id: string) => {},
   }: { list: Playlist; onopen?: (id: string) => void } = $props();
 
-  const covers = $derived(list.coverIds ?? []);
+  const coverId = $derived(list.coverId || list.coverIds?.[0] || "");
 
   function menu(e: MouseEvent) {
     openContextMenu(e, {
@@ -28,18 +28,8 @@
   oncontextmenu={menu}
 >
   <span class="block size-[166px] overflow-hidden rounded-lg bg-surface transition-opacity group-hover:opacity-90">
-    {#if list.coverId}
-      <Cover id={list.coverId} size={166} radius={0} class="block" />
-    {:else if covers.length >= 4}
-      <span class="grid h-full w-full grid-cols-2 grid-rows-2">
-        {#each covers.slice(0, 4) as cid (cid)}
-          <span class="overflow-hidden">
-            <Cover id={cid} fill radius={0} class="block h-full w-full" />
-          </span>
-        {/each}
-      </span>
-    {:else if covers.length > 0}
-      <Cover id={covers[0]} size={166} radius={0} class="block" />
+    {#if coverId}
+      <Cover id={coverId} size={166} radius={0} class="block" />
     {:else}
       <span class="grid h-full w-full place-items-center text-muted">
         <MusicNotes size="36" />

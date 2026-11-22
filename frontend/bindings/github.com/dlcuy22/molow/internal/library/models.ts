@@ -93,6 +93,8 @@ export interface Library {
     "message"?: string;
     "capabilities": Capability[] | null;
     "trackCount": number;
+    "coverId"?: string;
+    "customCover"?: boolean;
     "logoCovers"?: string[] | null;
 }
 
@@ -116,6 +118,8 @@ export interface Playlist {
     "description"?: string;
     "remoteId"?: string;
     "trackCount": number;
+    "coverId"?: string;
+    "customCover"?: boolean;
     "coverIds"?: string[] | null;
 }
 

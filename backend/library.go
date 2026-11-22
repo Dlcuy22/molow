@@ -105,7 +105,99 @@ func (s *PlayerService) initLibraries() {
 		}
 	}
 
-	go s.pruneOrphanArtwork()
+	go func() {
+		s.backfillCompositeCovers()
+		s.pruneOrphanArtwork()
+	}()
+}
+
+// backfillCompositeCovers generates missing pre-rendered covers for existing
+// libraries and playlists once on startup so databases created before migration
+// 003 render single composite covers without waiting for a rescan.
+func (s *PlayerService) backfillCompositeCovers() {
+	if s.art == nil {
+		return
+	}
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return
+	}
+	libs, err := store.Libraries()
+	if err != nil {
+		return
+	}
+	for _, lib := range libs {
+		if !lib.CustomCover && (lib.CoverID == "" || !s.art.Has(lib.CoverID)) {
+			s.refreshLibraryCover(lib.ID)
+		}
+		lists, err := store.Playlists(lib.ID)
+		if err != nil {
+			continue
+		}
+		for _, pl := range lists {
+			if !pl.CustomCover && (pl.CoverID == "" || !s.art.Has(pl.CoverID)) {
+				s.refreshPlaylistCover(pl.ID)
+			}
+		}
+	}
+}
+
+func (s *PlayerService) composeCoverID(coverIDs []string) string {
+	if len(coverIDs) == 0 {
+		return ""
+	}
+	if len(coverIDs) < 4 || s.art == nil {
+		return coverIDs[0]
+	}
+	tiles := make([][]byte, 0, 4)
+	for _, cid := range coverIDs[:4] {
+		if data, _, ok := s.art.Bytes(cid); ok {
+			tiles = append(tiles, data)
+		}
+	}
+	if len(tiles) < 4 {
+		return coverIDs[0]
+	}
+	mosaic, err := artwork.ComposeMosaic(tiles)
+	if err != nil || len(mosaic) == 0 {
+		return coverIDs[0]
+	}
+	id, err := s.art.Put(mosaic)
+	if err != nil || id == "" {
+		return coverIDs[0]
+	}
+
+	return id
+}
+
+func (s *PlayerService) refreshLibraryCover(libraryID string) {
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil || libraryID == "" {
+		return
+	}
+	ids, err := store.LibraryLogoCovers(libraryID, 4)
+	if err != nil {
+		return
+	}
+	_ = store.SetLibraryCover(libraryID, s.composeCoverID(ids), false)
+}
+
+func (s *PlayerService) refreshPlaylistCover(playlistID string) {
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil || playlistID == "" {
+		return
+	}
+	ids, err := store.PlaylistCoverIDs(playlistID, 4)
+	if err != nil {
+		return
+	}
+	_ = store.SetPlaylistCover(playlistID, s.composeCoverID(ids), false)
 }
 
 // pruneOrphanArtwork evicts oldest unreferenced artwork files above budget once
@@ -445,11 +537,13 @@ func (s *PlayerService) scanLibrary(id, importRoot string) error {
 		if err != nil {
 			state = "error"
 			s.log.Warn("library: scan failed", "id", id, "error", err)
+		} else {
+			if importRoot != "" && len(res.Refs) > 0 {
+				s.createImportPlaylist(id, importRoot, res.Refs)
+			}
+			s.refreshLibraryCover(id)
 		}
 		s.emit(eventLibrary, LibraryProgress{LibraryID: id, Done: res.Count, Total: res.Count, State: state})
-		if err == nil && importRoot != "" && len(res.Refs) > 0 {
-			s.createImportPlaylist(id, importRoot, res.Refs)
-		}
 	}()
 
 	return nil
@@ -474,7 +568,10 @@ func (s *PlayerService) createImportPlaylist(libraryID, root string, refs []stri
 	}
 	if err := store.AddToPlaylist(playlist.ID, refs); err != nil {
 		s.log.Warn("library: import playlist", "error", err)
+
+		return
 	}
+	s.refreshPlaylistCover(playlist.ID)
 }
 
 // YTMImport is the outcome of one YouTube Music import: how many tracks landed
@@ -528,6 +625,7 @@ func (s *PlayerService) ImportYTM(libraryID string, hit YTMResult) (YTMImport, e
 		if _, err := s.catalogYTM(dst, hit, s.storeYTMCover(hit.Thumbnail)); err != nil {
 			return YTMImport{}, err
 		}
+		s.refreshLibraryCover(libraryID)
 
 		return YTMImport{Name: name, Tracks: 1}, nil
 	}
@@ -564,6 +662,8 @@ func (s *PlayerService) ImportYTM(libraryID string, hit YTMResult) (YTMImport, e
 	if err := dst.AddToPlaylist(s.ctx, playlist.ID, refs); err != nil {
 		return YTMImport{}, err
 	}
+	s.refreshPlaylistCover(playlist.ID)
+	s.refreshLibraryCover(libraryID)
 
 	return YTMImport{PlaylistID: playlist.ID, Name: name, Tracks: len(refs)}, nil
 }
@@ -856,7 +956,12 @@ func (s *PlayerService) AddToPlaylist(libraryID, playlistID string, refs []strin
 		return fmt.Errorf("library: %q cannot edit playlists", libraryID)
 	}
 
-	return writer.AddToPlaylist(s.ctx, playlistID, refs)
+	if err := writer.AddToPlaylist(s.ctx, playlistID, refs); err != nil {
+		return err
+	}
+	s.refreshPlaylistCover(playlistID)
+
+	return nil
 }
 
 func (s *PlayerService) RemoveFromPlaylist(libraryID, playlistID string, refs []string) error {
@@ -868,8 +973,12 @@ func (s *PlayerService) RemoveFromPlaylist(libraryID, playlistID string, refs []
 	if !ok {
 		return fmt.Errorf("library: %q cannot edit playlists", libraryID)
 	}
+	if err := writer.RemoveFromPlaylist(s.ctx, playlistID, refs); err != nil {
+		return err
+	}
+	s.refreshPlaylistCover(playlistID)
 
-	return writer.RemoveFromPlaylist(s.ctx, playlistID, refs)
+	return nil
 }
 
 // RenamePlaylist changes a playlist's name, rejecting blank input.

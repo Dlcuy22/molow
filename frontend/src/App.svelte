@@ -713,7 +713,7 @@
       libraries={$libraries.map((l) => ({
         id: l.id,
         name: l.name,
-        logoCovers: l.logoCovers,
+        coverId: l.coverId || l.logoCovers[0] || "",
       }))}
       activeLibrary={$libraryId}
       onswitch={(id) => void selectLibrary(id)}

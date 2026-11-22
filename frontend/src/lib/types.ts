@@ -77,6 +77,7 @@ export interface LibraryInfo {
   name: string;
   root: string;
   roots: string[];
+  coverId: string;
   logoCovers: string[];
   status: string;
   message: string;

@@ -231,19 +231,21 @@ func (s *Store) LibraryLogoCovers(libraryID string, n int) ([]string, error) {
 // Library reads one row with its track count.
 func (s *Store) Library(id string) (library.Library, error) {
 	var (
-		out  library.Library
-		kind string
+		out         library.Library
+		kind        string
+		customCover int
 	)
 	err := s.db.QueryRow(
-		`SELECT l.id, l.kind, l.name, l.root, l.last_scan_at,
+		`SELECT l.id, l.kind, l.name, l.root, l.last_scan_at, l.cover_id, l.custom_cover,
 		        (SELECT COUNT(*) FROM track t WHERE t.library_id = l.id)
 		 FROM library l WHERE l.id = ?`, id,
-	).Scan(&out.ID, &kind, &out.Name, &out.Root, new(int64), &out.TrackCount)
+	).Scan(&out.ID, &kind, &out.Name, &out.Root, new(int64), &out.CoverID, &customCover, &out.TrackCount)
 	if err != nil {
 		return library.Library{}, err
 	}
 	out.Kind = library.Kind(kind)
 	out.Status = library.StatusReady
+	out.CustomCover = customCover != 0
 	roots, err := s.Roots(id)
 	if err != nil {
 		return library.Library{}, err
@@ -261,7 +263,7 @@ func (s *Store) Library(id string) (library.Library, error) {
 // Libraries lists every registered library.
 func (s *Store) Libraries() ([]library.Library, error) {
 	rows, err := s.db.Query(
-		`SELECT l.id, l.kind, l.name, l.root,
+		`SELECT l.id, l.kind, l.name, l.root, l.cover_id, l.custom_cover,
 		        (SELECT COUNT(*) FROM track t WHERE t.library_id = l.id)
 		 FROM library l ORDER BY l.created_at`,
 	)
@@ -273,22 +275,25 @@ func (s *Store) Libraries() ([]library.Library, error) {
 	var out []library.Library
 	for rows.Next() {
 		var (
-			l    library.Library
-			kind string
+			l           library.Library
+			kind        string
+			customCover int
 		)
-		if err := rows.Scan(&l.ID, &kind, &l.Name, &l.Root, &l.TrackCount); err != nil {
+		if err := rows.Scan(&l.ID, &kind, &l.Name, &l.Root, &l.CoverID, &customCover, &l.TrackCount); err != nil {
 			return nil, err
 		}
 		l.Kind = library.Kind(kind)
 		l.Status = library.StatusReady
+		l.CustomCover = customCover != 0
 		out = append(out, l)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// The roots and covers queries run after the row cursor is done: one
-	// connection, and a nested query while it iterates would wait on itself
-	// forever.
+	// Close the outer cursor before running follow-up queries on the single SQLite connection.
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
 	for i := range out {
 		roots, err := s.Roots(out[i].ID)
 		if err != nil {
@@ -303,6 +308,26 @@ func (s *Store) Libraries() ([]library.Library, error) {
 	}
 
 	return out, nil
+}
+
+// SetLibraryCover updates a library's stored cover_id. When custom is false,
+// rows with custom_cover = 1 are left untouched so automatic scans never
+// overwrite user-selected artwork.
+func (s *Store) SetLibraryCover(libraryID, coverID string, custom bool) error {
+	if custom {
+		_, err := s.db.Exec(
+			`UPDATE library SET cover_id = ?, custom_cover = 1 WHERE id = ?`,
+			coverID, libraryID,
+		)
+
+		return err
+	}
+	_, err := s.db.Exec(
+		`UPDATE library SET cover_id = ? WHERE id = ? AND custom_cover = 0`,
+		coverID, libraryID,
+	)
+
+	return err
 }
 
 // RemoveLibrary deletes a row and, by cascade, its catalogue.

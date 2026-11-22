@@ -51,6 +51,7 @@
     rescanLibrary,
   } from "./lib/library";
   import type { Album, LibraryInfo, Lyrics, Playlist, Track } from "./lib/types";
+  import { isPlaylistQueueActive, type PlaylistPlayback } from "./lib/playlist-view";
   import { percent } from "./lib/format";
   import { installKeyboard, shouldIgnoreTarget, type ShortcutAction } from "./lib/shortcuts";
   import { showToast } from "./lib/toast";
@@ -385,6 +386,7 @@
   }
 
   function openAlbum(album: Album) {
+    playlistPlayback = null;
     void playAlbum(album);
     showPlayer();
   }
@@ -404,6 +406,7 @@
   }
 
   function playLibraryTrack(track: Track) {
+    playlistPlayback = null;
     void playTrack(track);
   }
 
@@ -490,8 +493,25 @@
     });
   }
 
+  let playlistPlayback = $state<PlaylistPlayback | null>(null);
+
+  const queuePaths = $derived(queue.map((row) => row.path));
+  const playlistQueueActive = $derived(
+    $activePlaylist
+      ? isPlaylistQueueActive(
+          $activePlaylist.id,
+          $activePlaylistTracks,
+          queuePaths,
+          snap.state,
+          playlistPlayback,
+        )
+      : false,
+  );
+  const playlistQueuePlaying = $derived(playlistQueueActive && snap.state === "playing");
+
   function playPlaylistTracks(tracks: Track[], startIndex = 0) {
-    const refs = tracks.slice(startIndex).map((t) => t.ref);
+    const refs = tracks.slice(startIndex).map((t) => t.ref).filter((r) => r !== "");
+    playlistPlayback = $activePlaylist ? { playlistId: $activePlaylist.id, refs } : null;
     void playRefs(refs);
   }
 
@@ -503,6 +523,7 @@
     addToPlaylist: (id, refs) => void addToPlaylist(id, refs),
     albumRefs,
     play: (refs) => {
+      playlistPlayback = null;
       void playRefs(refs);
       openPlayer();
     },
@@ -814,7 +835,10 @@
           {greeting}
           onplay={playLibraryTrack}
           onopenAlbum={openAlbum}
-          onplayAlbum={(a) => void playAlbum(a)}
+          onplayAlbum={(a) => {
+            playlistPlayback = null;
+            void playAlbum(a);
+          }}
           onadd={() => void addLibrary()}
           oncreateLibrary={openCreateLibrary}
         />
@@ -829,13 +853,18 @@
           playlistLoading={$activePlaylistLoading}
           playlistError={$activePlaylistError}
           currentPath={snap.path}
+          playlistActive={playlistQueueActive}
+          playlistPlaying={playlistQueuePlaying}
           onfilter={setFilter}
           onadd={() => (addOpen = !addOpen)}
           oncreateLibrary={openCreateLibrary}
           onimportFolder={() => void addLibrary()}
           onimportYTM={() => openPalette("ytm", false, "import")}
           onopenAlbum={openAlbum}
-          onplayAlbum={(a) => void playAlbum(a)}
+          onplayAlbum={(a) => {
+            playlistPlayback = null;
+            void playAlbum(a);
+          }}
           onplay={playLibraryTrack}
           onopenPlaylist={(list) => void openPlaylist(list)}
           onclosePlaylist={closePlaylist}
@@ -845,6 +874,7 @@
             }
           }}
           onplayPlaylist={(tracks) => playPlaylistTracks(tracks, 0)}
+          ontogglePlaylistPause={() => commands.togglePause()}
           onplayPlaylistTrack={(_track, index, ordered) => playPlaylistTracks(ordered, index)}
           onlikeTrack={handleLikeTrack}
           onrenamePlaylist={(list) => (renaming = list)}
@@ -856,6 +886,7 @@
           left={12}
           onclose={() => (searchOpen = false)}
           onplay={(t) => {
+            playlistPlayback = null;
             void playTrack(t);
             searchOpen = false;
           }}

@@ -19,6 +19,8 @@
     playlistLoading = false,
     playlistError = "",
     currentPath = "",
+    playlistActive = false,
+    playlistPlaying = false,
     onfilter = (_f: string) => {},
     onadd = () => {},
     oncreateLibrary = () => {},
@@ -31,6 +33,7 @@
     onclosePlaylist = () => {},
     onretryPlaylist = () => {},
     onplayPlaylist = (_tracks: Track[]) => {},
+    ontogglePlaylistPause = () => {},
     onplayPlaylistTrack = (_track: Track, _index: number, _ordered: Track[]) => {},
     onlikeTrack = (_track: Track, _liked: boolean) => {},
     onrenamePlaylist = (_list: Playlist) => {},
@@ -44,6 +47,8 @@
     playlistLoading?: boolean;
     playlistError?: string;
     currentPath?: string;
+    playlistActive?: boolean;
+    playlistPlaying?: boolean;
     onfilter?: (f: string) => void;
     onadd?: () => void;
     oncreateLibrary?: () => void;
@@ -56,6 +61,7 @@
     onclosePlaylist?: () => void;
     onretryPlaylist?: () => void;
     onplayPlaylist?: (tracks: Track[]) => void;
+    ontogglePlaylistPause?: () => void;
     onplayPlaylistTrack?: (track: Track, index: number, ordered: Track[]) => void;
     onlikeTrack?: (track: Track, liked: boolean) => void;
     onrenamePlaylist?: (list: Playlist) => void;
@@ -102,9 +108,12 @@
     loading={playlistLoading}
     error={playlistError}
     {currentPath}
+    isActiveQueue={playlistActive}
+    isPlaying={playlistPlaying}
     onback={onclosePlaylist}
     onretry={onretryPlaylist}
     onplayAll={onplayPlaylist}
+    ontogglePause={ontogglePlaylistPause}
     onplayTrack={onplayPlaylistTrack}
     onlike={onlikeTrack}
     onrename={onrenamePlaylist}

@@ -9,28 +9,34 @@ without a deprecation cycle.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-23
+
+Note: There are still some features, such as YouTube Music integration and login, that are still WIP in this version. Because there are already too many features I shipped and I care about the project's hygiene, I'm releasing this version with some features still WIP. This is one of the reasons why I don't want to release an executable or setup before the project reaches a stable version. I just don't want to bear the responsibility toward users for breaking changes I introduce.
+I make this software purely as a hobby and passion; I am not getting paid, nor am I obligated to.
+
 ### Added
 
-- Japanese romanization for the lyric column: a Settings ▸ Playback ▸ Lyrics
-  switch converts each line to Hepburn romaji with kagome and the embedded
-  IPADIC dictionary. The romaji draws as a caption under the line it spells,
-  not in place of it, and the original text and the translation stay in the
-  document; a language without an engine (Korean, Chinese) leaves the sheet as
-  it is. The dictionary is about 13 MB in the binary and is loaded only when the
-  switch is on, not at startup, and is dropped again after five idle minutes with
-  the switch off. It is cached as an owned file on first use, which is what allows
-  the drop to return the whole 88 MiB instead of leaving it pinned for the session.
-- An Auto spacing switch beside it: on, a word break sits between morphemes and
-  the romaji reads like prose (`anata ga home te kure ta`); off, it stays joined
-  the way the kana are written. A space the sheet already carried is not doubled,
-  a っ is not split from the morpheme it doubles, and punctuation stays attached
-  to its word. The reading is the same either way, and the karaoke sweep works
-  with spacing on.
-- A Word sweep picker: Both (the default) highlights the romaji with the
-  original line, Original keeps the romaji a static caption.
-- The lyric sweep now runs on an interpolated clock instead of the 4 Hz position
-  snapshot, so a word fades in step with the voice rather than snapping on the
-  quarter second.
+- Virtual libraries: create and edit libraries with a name and optional description without tying them to a folder, import local folders or YouTube Music tracks and playlists into any library, and keep likes synced across libraries.
+- Dedicated playlist view with artwork, track count, total duration, sorting options, and live play/pause toggle.
+- Right-click context menus for tracks, albums, playlists, and libraries, sidebar library cards with 2x2 cover mosaics, and an Effects shortcut in the sidebar.
+- Local track cache for streamed YouTube Music songs with instant replays and seeking, plus cache size limit (Off to 4 GB) and Clear cache controls in Settings ▸ Stream.
+- YouTube Music radio mix queueing alongside playlists and tracks.
+- Japanese lyric romanization (Hepburn romaji) with optional word spacing and word-by-word karaoke sweep in Settings ▸ Playback ▸ Lyrics, a PetitLyrics timing offset, and a lyrics loading indicator in the album player.
+- Log file settings to write logs to disk, pick a log folder, switch log levels, and clear the log file.
+
+### Changed
+
+- Artwork now loads over local HTTP instead of base64 copies, search thumbnails stay in memory only, unused artwork is cleaned up on startup, and Windows caches now live under local AppData.
+- Library scans skip re-reading tags for unchanged files and keep numbered tracks in folder order.
+- Lyric sweeps run on an interpolated clock with isolated repaints, album backdrops reuse cached colors, and the settings panel fades while adjusting live sliders.
+- Config files moved to the `molow` folder, remembering the Discord Rich Presence toggle, volume, and sidebar width across restarts.
+
+### Fixed
+
+- Discord Rich Presence shows real album covers and artist avatars for streamed tracks immediately instead of flashing default icons, drops stale connections cleanly, and prints console updates without delay.
+- Independent per-library file ownership prevents removing one library from emptying playlists in another, and rapidly created playlists no longer collide on Windows.
+- Catalogued YouTube Music tracks reuse their cached cover art across restarts.
+- Settings row spacing and optical centering of the playlist play button.
 
 ## [0.5.0] - 2026-11-14
 
@@ -214,7 +220,9 @@ First release.
 - Builds for Linux, Windows, and macOS, plus a server build that runs the same
   backend as an HTTP server.
 
-[Unreleased]: https://github.com/Dlcuy22/molow/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Dlcuy22/molow/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Dlcuy22/molow/releases/tag/v0.6.0
+[0.5.0]: https://github.com/Dlcuy22/molow/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Dlcuy22/molow/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Dlcuy22/molow/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Dlcuy22/molow/releases/tag/v0.2.0

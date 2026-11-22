@@ -7,6 +7,69 @@ export interface PlaylistSortOption {
   label: string;
 }
 
+export interface PlaylistPlayback {
+  playlistId: string;
+  refs: readonly string[];
+}
+
+function sameRefMultiset(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  const counts = new Map<string, number>();
+  for (const ref of a) {
+    counts.set(ref, (counts.get(ref) ?? 0) + 1);
+  }
+  for (const ref of b) {
+    const n = counts.get(ref) ?? 0;
+    if (n === 0) {
+      return false;
+    }
+    if (n === 1) {
+      counts.delete(ref);
+    } else {
+      counts.set(ref, n - 1);
+    }
+  }
+
+  return counts.size === 0;
+}
+
+/**
+ * isPlaylistQueueActive reports whether the live player queue still matches
+ * this playlist's unmodified playback session (surviving shuffles and reorders,
+ * and returning false as soon as any track is added to or removed from the queue).
+ */
+export function isPlaylistQueueActive(
+  playlistId: string,
+  playlistTracks: readonly Track[],
+  queuePaths: readonly string[],
+  playbackState: string,
+  launched: PlaylistPlayback | null,
+): boolean {
+  if (
+    playlistId === "" ||
+    playlistTracks.length === 0 ||
+    queuePaths.length === 0 ||
+    (playbackState !== "playing" && playbackState !== "paused")
+  ) {
+    return false;
+  }
+  if (launched) {
+    if (launched.playlistId !== playlistId) {
+      return false;
+    }
+
+    return sameRefMultiset(queuePaths, launched.refs);
+  }
+  const refs = playlistTracks.map((t) => t.ref).filter((r) => r !== "");
+  if (refs.length === 0) {
+    return false;
+  }
+
+  return sameRefMultiset(queuePaths, refs);
+}
+
 export const PLAYLIST_SORTS: PlaylistSortOption[] = [
   { id: "order", label: "Playlist order" },
   { id: "title", label: "Title A-Z" },

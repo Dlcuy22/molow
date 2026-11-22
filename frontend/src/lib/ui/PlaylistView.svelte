@@ -4,6 +4,7 @@
   import DotsThreeVertical from "phosphor-svelte/lib/DotsThreeVertical";
   import Heart from "phosphor-svelte/lib/Heart";
   import MusicNotes from "phosphor-svelte/lib/MusicNotes";
+  import Pause from "phosphor-svelte/lib/Pause";
   import PencilSimple from "phosphor-svelte/lib/PencilSimple";
   import Play from "phosphor-svelte/lib/Play";
   import SortAscending from "phosphor-svelte/lib/SortAscending";
@@ -28,10 +29,13 @@
     loading = false,
     error = "",
     currentPath = "",
+    isActiveQueue = false,
+    isPlaying = false,
     showDislike = false,
     onback = () => {},
     onretry = () => {},
     onplayAll = (_tracks: Track[]) => {},
+    ontogglePause = () => {},
     onplayTrack = (_track: Track, _index: number, _ordered: Track[]) => {},
     onlike = (_track: Track, _liked: boolean) => {},
     ondislike = (_track: Track) => {},
@@ -42,10 +46,13 @@
     loading?: boolean;
     error?: string;
     currentPath?: string;
+    isActiveQueue?: boolean;
+    isPlaying?: boolean;
     showDislike?: boolean;
     onback?: () => void;
     onretry?: () => void;
     onplayAll?: (tracks: Track[]) => void;
+    ontogglePause?: () => void;
     onplayTrack?: (track: Track, index: number, ordered: Track[]) => void;
     onlike?: (track: Track, liked: boolean) => void;
     ondislike?: (track: Track) => void;
@@ -178,12 +185,17 @@
 
         <button
           class="dock-play grid size-12 place-items-center rounded-full bg-fg text-bg-dark focus-visible:ring-2 focus-visible:ring-focus disabled:bg-disabled"
-          aria-label="Play playlist"
-          title="Play playlist"
-          disabled={sortedTracks.length === 0}
-          onclick={() => onplayAll(sortedTracks)}
+          aria-label={isPlaying ? "Pause playlist" : isActiveQueue ? "Resume playlist" : "Play playlist"}
+          title={isPlaying ? "Pause playlist" : isActiveQueue ? "Resume playlist" : "Play playlist"}
+          aria-pressed={isPlaying}
+          disabled={!isActiveQueue && sortedTracks.length === 0}
+          onclick={() => (isActiveQueue ? ontogglePause() : onplayAll(sortedTracks))}
         >
-          <Play size="20" weight="fill" class="-translate-x-[1px]" />
+          {#if isPlaying}
+            <Pause size="20" weight="fill" />
+          {:else}
+            <Play size="20" weight="fill" />
+          {/if}
         </button>
 
         <button

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatTotalDuration,
   formatTrackCount,
+  isPlaylistQueueActive,
   playlistCovers,
   sortPlaylistTracks,
   totalDurationMs,
@@ -68,5 +69,33 @@ describe("playlist-view helpers", () => {
     expect(formatTotalDuration(0)).toBe("");
     expect(formatTrackCount(1)).toBe("1 song");
     expect(formatTrackCount(66)).toBe("66 songs");
+  });
+
+  it("tracks whether the live queue matches the selected playlist", () => {
+    const tracks = [track({ ref: "a" }), track({ ref: "b" }), track({ ref: "c" })];
+    const fullLaunch = { playlistId: "pl:1", refs: ["a", "b", "c"] };
+
+    // Playing or paused on the playlist queue stays active, even when shuffled.
+    expect(isPlaylistQueueActive("pl:1", tracks, ["a", "b", "c"], "playing", fullLaunch)).toBe(true);
+    expect(isPlaylistQueueActive("pl:1", tracks, ["c", "a", "b"], "paused", fullLaunch)).toBe(true);
+    expect(isPlaylistQueueActive("pl:1", tracks, ["a", "b", "c"], "stopped", fullLaunch)).toBe(false);
+
+    // Restored session queue matching the full playlist without an in-memory launch record.
+    expect(isPlaylistQueueActive("pl:1", tracks, ["a", "b", "c"], "playing", null)).toBe(true);
+
+    // Mid-playlist start stays active for its launched slice.
+    const sliceLaunch = { playlistId: "pl:1", refs: ["b", "c"] };
+    expect(isPlaylistQueueActive("pl:1", tracks, ["b", "c"], "playing", sliceLaunch)).toBe(true);
+
+    // Adding an external track or an extra copy of a playlist track invalidates active state.
+    expect(isPlaylistQueueActive("pl:1", tracks, ["a", "x", "b", "c"], "playing", fullLaunch)).toBe(false);
+    expect(isPlaylistQueueActive("pl:1", tracks, ["a", "a", "b", "c"], "playing", fullLaunch)).toBe(false);
+    expect(isPlaylistQueueActive("pl:1", tracks, ["b", "a", "c"], "playing", sliceLaunch)).toBe(false);
+
+    // Playing a single unrelated/isolated track without launching this playlist is not active.
+    expect(isPlaylistQueueActive("pl:1", tracks, ["a"], "playing", null)).toBe(false);
+
+    // A different playlist with identical tracks is not active when another playlist was launched.
+    expect(isPlaylistQueueActive("pl:2", tracks, ["a", "b", "c"], "playing", fullLaunch)).toBe(false);
   });
 });

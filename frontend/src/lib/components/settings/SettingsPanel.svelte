@@ -638,7 +638,7 @@
 
                 <SettingRow
                   label="Auto romanization"
-                  description="Show the line in romaji while it plays."
+                  description="Show romaji line under the lyric line"
                 >
                   {#snippet control()}
                     <Switch
@@ -650,7 +650,7 @@
                 </SettingRow>
 
                 <!-- JP is the only engine today; more options land here later. -->
-                <div class="py-2.5" class:opacity-40={!autoRomanization}>
+                <div class:opacity-40={!autoRomanization}>
                   <SettingRow label="Language" description={null}>
                     {#snippet control()}
                       <Picker
@@ -665,7 +665,7 @@
                   </SettingRow>
                 </div>
 
-                <div class="py-2.5" class:opacity-40={!autoRomanization}>
+                <div class:opacity-40={!autoRomanization}>
                   <SettingRow
                     label="Auto spacing"
                     description="Separate words with a space, so a line reads like prose."
@@ -681,7 +681,7 @@
                   </SettingRow>
                 </div>
 
-                <div class="py-2.5" class:opacity-40={!autoRomanization}>
+                <div class:opacity-40={!autoRomanization}>
                   <SettingRow
                     label="Word sweep"
                     description="Highlight the romaji with the line, or keep it a static caption."
@@ -729,7 +729,7 @@
               <div class="divide-y divide-line">
                 <SettingRow
                   label="Track cache limit"
-                  description="Keep streamed tracks on disk so repeats and replays start without re-downloading."
+                  description="Size limit for YTM cached track store."
                 >
                   {#snippet control()}
                     <Picker
@@ -910,7 +910,7 @@
                   {/snippet}
                 </SettingRow>
 
-                <div class="py-2.5" class:opacity-40={!$appSettings.general.logFileEnabled}>
+                <div class:opacity-40={!$appSettings.general.logFileEnabled}>
                   <SettingRow
                     label="Log file location"
                     description="Where log file is written, Default is in app config"

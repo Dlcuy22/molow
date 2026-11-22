@@ -32,15 +32,27 @@ func (s *PlayerService) pumpDebug() {
 			if !ok {
 				return
 			}
-			logDebugEvent(ev)
+			logDebugEventWith(ev, s.ytmOpenCached)
 		}
 	}
+}
+
+func (s *PlayerService) ytmOpenCached(ref string) (bool, bool) {
+	if s == nil || s.ytmProv == nil {
+		return false, false
+	}
+
+	return s.ytmProv.lastOpenCached(ref)
 }
 
 // logDebugEvent writes one engine record through slog at Info, or Error when
 // the engine reports a failure. The sentence stays the message; the fields it
 // does not name travel as attributes.
 func logDebugEvent(ev molo.DebugEvent) {
+	logDebugEventWith(ev, nil)
+}
+
+func logDebugEventWith(ev molo.DebugEvent, cachedLookup func(string) (bool, bool)) {
 	attrs := []any{slog.String("kind", ev.Kind.String())}
 
 	// The path and the elapsed time are usually already in the sentence, so
@@ -63,6 +75,15 @@ func logDebugEvent(ev molo.DebugEvent) {
 	}
 	if ev.Backend != "" {
 		attrs = append(attrs, slog.String("backend", ev.Backend))
+	}
+	if ev.Kind == molo.DebugTrack && isYTMRef(ev.Path) {
+		cached := "no"
+		if cachedLookup != nil {
+			if hit, ok := cachedLookup(ev.Path); ok && hit {
+				cached = "yes"
+			}
+		}
+		attrs = append(attrs, slog.String("cached", cached))
 	}
 
 	if ev.Kind == molo.DebugError {

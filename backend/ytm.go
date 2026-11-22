@@ -314,6 +314,11 @@ type ytmProvider struct {
 	searchThumbMu sync.Mutex
 	searchThumbs  *memThumbLRU
 
+	// openCached records whether the latest Open for each ref hit trackcache
+	// so the engine's DebugTrack log line reports cached=yes or cached=no.
+	openCachedMu sync.Mutex
+	openCached   map[string]bool
+
 	// sheetMu guards the lyric sheets. The now-playing column reads a sheet
 	// every time it redraws, and a sheet is immutable for a track, so resolving
 	// one twice only costs requests. A nil entry records a track known to have
@@ -479,10 +484,13 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 	}
 
 	if p.tracks != nil && p.tracks.Has(id) {
+		p.setOpenCached(ref, true)
+		p.logger().Debug("trackcache: hit", "id", id)
 		track := p.hydrateTrackThumb(ctx, ref, p.trackFor(ref, nil))
 		src := ytmSourceMeta(track)
 		src.Opener = func(stop <-chan struct{}) (decode.Decoder, error) {
 			if rc, _, ok := p.tracks.Get(id); ok {
+				p.setOpenCached(ref, true)
 				dec, err := decode.NewWebMOpusFactory().OpenReader(rc)
 				if err != nil {
 					_ = rc.Close()
@@ -495,10 +503,18 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 
 			// The file was evicted between Open and Opener; fall back to a
 			// fresh remote fetch.
+			p.setOpenCached(ref, false)
+			p.logger().Debug("trackcache: evicted before open, falling back to network", "id", id)
+
 			return p.fetchRemoteDecoder(ctx, stop, id)
 		}
 
 		return src, nil
+	}
+
+	p.setOpenCached(ref, false)
+	if p.tracks != nil {
+		p.logger().Debug("trackcache: miss", "id", id)
 	}
 
 	calls := p.calls()
@@ -580,6 +596,9 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 						if data := buf.bytes(); len(data) > 0 {
 							if perr := p.tracks.Put(id, data); perr != nil {
 								p.logger().Warn("trackcache: store failed", "id", id, "error", perr)
+							} else {
+								st := p.tracks.Stats()
+								p.logger().Debug("trackcache: stored", "id", id, "bytes", len(data), "files", st.Count, "totalBytes", st.TotalBytes)
 							}
 						}
 					}
@@ -627,6 +646,9 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 		if p.tracks != nil && len(data) > 0 {
 			if perr := p.tracks.Put(id, data); perr != nil {
 				p.logger().Warn("trackcache: store failed", "id", id, "error", perr)
+			} else {
+				st := p.tracks.Stats()
+				p.logger().Debug("trackcache: stored", "id", id, "bytes", len(data), "files", st.Count, "totalBytes", st.TotalBytes)
 			}
 		}
 
@@ -1486,6 +1508,7 @@ func (p *ytmProvider) searchThumbBytes(ctx context.Context, ref, url string) ([]
 	}
 	if data, mime, ok := p.searchThumbs.get(ref); ok {
 		p.searchThumbMu.Unlock()
+		p.logger().Debug("artwork: search thumb hit", "ref", ref)
 
 		return data, mime, true
 	}
@@ -1508,6 +1531,33 @@ func (p *ytmProvider) searchThumbBytes(ctx context.Context, ref, url string) ([]
 	p.searchThumbMu.Lock()
 	p.searchThumbs.put(ref, encoded, mime)
 	p.searchThumbMu.Unlock()
+	p.logger().Debug("artwork: search thumb cached in memory", "ref", ref, "bytes", len(encoded))
 
 	return encoded, mime, true
+}
+
+func (p *ytmProvider) setOpenCached(ref string, cached bool) {
+	if p == nil || ref == "" {
+		return
+	}
+	p.openCachedMu.Lock()
+	if p.openCached == nil {
+		p.openCached = make(map[string]bool)
+	}
+	if len(p.openCached) > 64 {
+		clear(p.openCached)
+	}
+	p.openCached[ref] = cached
+	p.openCachedMu.Unlock()
+}
+
+func (p *ytmProvider) lastOpenCached(ref string) (bool, bool) {
+	if p == nil || ref == "" {
+		return false, false
+	}
+	p.openCachedMu.Lock()
+	cached, ok := p.openCached[ref]
+	p.openCachedMu.Unlock()
+
+	return cached, ok
 }

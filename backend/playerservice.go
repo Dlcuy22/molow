@@ -209,10 +209,15 @@ func newPlayerService() *PlayerService {
 	art, err := artwork.Open("")
 	if err != nil {
 		slog.Default().Warn("artwork: cache dir unavailable", "error", err)
+	} else {
+		slog.Default().Debug("artwork: ready", "dir", art.Dir())
 	}
 	tracks, err := trackcache.Open("", int64(settings.Stream.TrackCacheMaxMB)<<20)
 	if err != nil {
 		slog.Default().Warn("trackcache: cache dir unavailable", "error", err)
+	} else {
+		st := tracks.Stats()
+		slog.Default().Info("trackcache: ready", "dir", st.Dir, "files", st.Count, "bytes", st.TotalBytes, "maxBytes", st.MaxBytes)
 	}
 
 	s := &PlayerService{

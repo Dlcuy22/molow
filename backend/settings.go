@@ -632,7 +632,13 @@ func (s *PlayerService) applyTrackCacheSettings() {
 	mb := s.appSettings.Stream.TrackCacheMaxMB
 	s.appSettingsMu.Unlock()
 
-	_ = s.tracks.SetMaxBytes(int64(mb) << 20)
+	before := s.tracks.Stats()
+	nextBytes := int64(mb) << 20
+	_ = s.tracks.SetMaxBytes(nextBytes)
+	if before.MaxBytes != nextBytes {
+		after := s.tracks.Stats()
+		s.logger().Info("trackcache: limit updated", "maxMb", mb, "files", after.Count, "bytes", after.TotalBytes)
+	}
 }
 
 // TrackCacheClear reports what ClearTrackCache removed: the cached track count
@@ -659,6 +665,7 @@ func (s *PlayerService) ClearTrackCache() (TrackCacheClear, error) {
 	if freed < 0 {
 		freed = 0
 	}
+	s.logger().Info("trackcache: cleared", "files", files, "bytes", freed, "remaining", after.Count)
 
 	return TrackCacheClear{Files: files, Bytes: freed}, err
 }

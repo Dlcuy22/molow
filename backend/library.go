@@ -128,9 +128,13 @@ func (s *PlayerService) backfillCompositeCovers() {
 	if err != nil {
 		return
 	}
+	libsUpdated := 0
+	playlistsUpdated := 0
 	for _, lib := range libs {
 		if !lib.CustomCover && (lib.CoverID == "" || !s.art.Has(lib.CoverID)) {
-			s.refreshLibraryCover(lib.ID)
+			if s.refreshLibraryCover(lib.ID) {
+				libsUpdated++
+			}
 		}
 		lists, err := store.Playlists(lib.ID)
 		if err != nil {
@@ -138,9 +142,14 @@ func (s *PlayerService) backfillCompositeCovers() {
 		}
 		for _, pl := range lists {
 			if !pl.CustomCover && (pl.CoverID == "" || !s.art.Has(pl.CoverID)) {
-				s.refreshPlaylistCover(pl.ID)
+				if s.refreshPlaylistCover(pl.ID) {
+					playlistsUpdated++
+				}
 			}
 		}
+	}
+	if libsUpdated > 0 || playlistsUpdated > 0 {
+		s.logger().Info("artwork: backfilled composite covers", "libraries", libsUpdated, "playlists", playlistsUpdated)
 	}
 }
 
@@ -172,32 +181,44 @@ func (s *PlayerService) composeCoverID(coverIDs []string) string {
 	return id
 }
 
-func (s *PlayerService) refreshLibraryCover(libraryID string) {
+func (s *PlayerService) refreshLibraryCover(libraryID string) bool {
 	s.libMu.Lock()
 	store := s.libStore
 	s.libMu.Unlock()
 	if store == nil || libraryID == "" {
-		return
+		return false
 	}
 	ids, err := store.LibraryLogoCovers(libraryID, 4)
 	if err != nil {
-		return
+		return false
 	}
-	_ = store.SetLibraryCover(libraryID, s.composeCoverID(ids), false)
+	cid := s.composeCoverID(ids)
+	if err := store.SetLibraryCover(libraryID, cid, false); err != nil {
+		return false
+	}
+	s.logger().Debug("artwork: updated library cover", "library", libraryID, "coverId", cid)
+
+	return cid != ""
 }
 
-func (s *PlayerService) refreshPlaylistCover(playlistID string) {
+func (s *PlayerService) refreshPlaylistCover(playlistID string) bool {
 	s.libMu.Lock()
 	store := s.libStore
 	s.libMu.Unlock()
 	if store == nil || playlistID == "" {
-		return
+		return false
 	}
 	ids, err := store.PlaylistCoverIDs(playlistID, 4)
 	if err != nil {
-		return
+		return false
 	}
-	_ = store.SetPlaylistCover(playlistID, s.composeCoverID(ids), false)
+	cid := s.composeCoverID(ids)
+	if err := store.SetPlaylistCover(playlistID, cid, false); err != nil {
+		return false
+	}
+	s.logger().Debug("artwork: updated playlist cover", "playlist", playlistID, "coverId", cid)
+
+	return cid != ""
 }
 
 // pruneOrphanArtwork evicts oldest unreferenced artwork files above budget once

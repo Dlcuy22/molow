@@ -94,6 +94,40 @@ func TestLogDebugEvent(t *testing.T) {
 			}
 		})
 	}
+
+	ytmEv := molo.DebugEvent{
+		Kind:    molo.DebugTrack,
+		Path:    "ytm:INnieyJ_QPE",
+		Message: "track ytm:INnieyJ_QPE",
+		Count:   -1,
+		Decoder: "go-opus",
+		Parser:  "molo/decode (webmopus)",
+		Backend: "oto",
+	}
+	for _, tc := range []struct {
+		name   string
+		lookup func(string) (bool, bool)
+		want   string
+	}{
+		{
+			name:   "ytm track cached yes",
+			lookup: func(string) (bool, bool) { return true, true },
+			want:   "INF track ytm:INnieyJ_QPE kind=track count=-1 decoder=go-opus parser=\"molo/decode (webmopus)\" backend=oto cached=yes",
+		},
+		{
+			name:   "ytm track cached no",
+			lookup: func(string) (bool, bool) { return false, true },
+			want:   "INF track ytm:INnieyJ_QPE kind=track count=-1 decoder=go-opus parser=\"molo/decode (webmopus)\" backend=oto cached=no",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buf.Reset()
+			logDebugEventWith(ytmEv, tc.lookup)
+			if got := strings.TrimSpace(buf.String()); got != tc.want {
+				t.Fatalf("logDebugEventWith =\n  %q\nwant\n  %q", got, tc.want)
+			}
+		})
+	}
 }
 
 // TestPumpDebugWritesEachRecord proves the pump drains the debug stream to

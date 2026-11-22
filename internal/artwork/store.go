@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -69,6 +70,7 @@ func migrateDir(from, to string) {
 	if err != nil {
 		return
 	}
+	moved := 0
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -85,6 +87,10 @@ func migrateDir(from, to string) {
 				continue
 			}
 		}
+		moved++
+	}
+	if moved > 0 {
+		slog.Info("artwork: migrated cache", "files", moved, "from", from, "to", to)
 	}
 }
 

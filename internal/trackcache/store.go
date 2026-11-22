@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -392,6 +393,7 @@ func (s *Store) evictLocked() {
 		err := os.Remove(s.path(ent.key))
 		if err == nil || errors.Is(err, os.ErrNotExist) {
 			s.removeElemLocked(elem)
+			slog.Debug("trackcache: evicted", "id", ent.key, "bytes", ent.size, "totalBytes", s.totalBytes)
 		}
 		elem = prev
 	}

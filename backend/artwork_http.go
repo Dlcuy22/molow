@@ -42,6 +42,7 @@ func (s *PlayerService) artworkMiddleware() application.Middleware {
 func (s *PlayerService) serveArtwork(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, artRoutePrefix)
 	if rest == "" {
+		s.logger().Debug("artwork: miss", "path", r.URL.Path)
 		http.NotFound(w, r)
 
 		return
@@ -50,12 +51,14 @@ func (s *PlayerService) serveArtwork(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(rest, artAvatarPrefix) {
 		artistID := strings.TrimSpace(strings.TrimPrefix(rest, artAvatarPrefix))
 		if artistID == "" || strings.ContainsAny(artistID, `/\`) {
+			s.logger().Debug("artwork: miss", "path", r.URL.Path)
 			http.NotFound(w, r)
 
 			return
 		}
 		data, mime, ok := s.ytmProv.artistAvatarBytes(r.Context(), artistID)
 		if !ok {
+			s.logger().Debug("artwork: miss", "path", r.URL.Path)
 			http.NotFound(w, r)
 
 			return
@@ -68,12 +71,14 @@ func (s *PlayerService) serveArtwork(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(rest, artYTMSearchPrefix) {
 		videoID := strings.TrimSpace(strings.TrimPrefix(rest, artYTMSearchPrefix))
 		if videoID == "" || strings.ContainsAny(videoID, `/\`) {
+			s.logger().Debug("artwork: miss", "path", r.URL.Path)
 			http.NotFound(w, r)
 
 			return
 		}
 		data, mime, ok := s.ytmSearchCoverBytes(r.Context(), ytmRef(videoID))
 		if !ok {
+			s.logger().Debug("artwork: miss", "path", r.URL.Path)
 			http.NotFound(w, r)
 
 			return
@@ -87,11 +92,13 @@ func (s *PlayerService) serveArtwork(w http.ResponseWriter, r *http.Request) {
 	// and dots before touching disk.
 	id := rest
 	if strings.ContainsAny(id, `/\.`) {
+		s.logger().Debug("artwork: miss", "path", r.URL.Path)
 		http.NotFound(w, r)
 
 		return
 	}
 	if s.art == nil {
+		s.logger().Debug("artwork: miss", "path", r.URL.Path)
 		http.NotFound(w, r)
 
 		return
@@ -131,6 +138,7 @@ func (s *PlayerService) serveArtwork(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	s.logger().Debug("artwork: miss", "path", r.URL.Path)
 	http.NotFound(w, r)
 }
 

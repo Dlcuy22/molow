@@ -46,16 +46,6 @@ export function AddEffect(kind: string, impl: string): $CancellablePromise<strin
     return $Call.ByID(532102897, kind, impl);
 }
 
-/**
- * AddLocalLibrary registers a folder as a new library and starts its first
- * scan. The folder is the identity: adding the same path twice returns the row
- * that already exists rather than a second library. To merge a folder into an
- * existing library, ImportFolder is the call.
- */
-export function AddLocalLibrary(path: string): $CancellablePromise<library$0.Library> {
-    return $Call.ByID(2322056078, path);
-}
-
 export function AddToPlaylist(libraryID: string, playlistID: string, refs: string[] | null): $CancellablePromise<void> {
     return $Call.ByID(3005025319, libraryID, playlistID, refs);
 }
@@ -186,6 +176,14 @@ export function CoverAccents(coverID: string): $CancellablePromise<color$0.Colou
     return $Call.ByID(3762243019, coverID);
 }
 
+/**
+ * CreateLibrary registers a new virtual local library with name and optional
+ * description. Content is added afterwards through ImportFolder or ImportYTM.
+ */
+export function CreateLibrary(name: string, description: string): $CancellablePromise<library$0.Library> {
+    return $Call.ByID(4251562356, name, description);
+}
+
 export function CreatePlaylist(libraryID: string, name: string): $CancellablePromise<library$0.Playlist> {
     return $Call.ByID(1975157543, libraryID, name);
 }
@@ -279,9 +277,8 @@ export function ImportEasyEffectsPresetData(data: string): $CancellablePromise<$
  * ImportFolder adds a folder as one more root of an existing library and
  * starts the scan that indexes it; when the scan lands, the folder's tracks
  * become one playlist named after the folder. Re-adding a folder the library
- * already watches is a no-op. A folder inside — or containing — another
- * library's root is refused, because a file path can belong to one library
- * only, and a folder nested in the target's own root would index files twice.
+ * already watches is a no-op. A folder nested in or containing one of the same
+ * library's roots is refused so files are not indexed twice within one library.
  */
 export function ImportFolder(libraryID: string, path: string): $CancellablePromise<library$0.Library> {
     return $Call.ByID(2407316580, libraryID, path);
@@ -807,4 +804,11 @@ export function ToggleLike(path: string): $CancellablePromise<boolean> {
  */
 export function TogglePause(): $CancellablePromise<void> {
     return $Call.ByID(3793670105);
+}
+
+/**
+ * UpdateLibrary changes a library's name and optional description.
+ */
+export function UpdateLibrary(id: string, name: string, description: string): $CancellablePromise<library$0.Library> {
+    return $Call.ByID(2641423699, id, name, description);
 }

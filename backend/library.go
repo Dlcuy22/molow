@@ -1,7 +1,7 @@
 package backend
 
 import (
-	"crypto/sha1"
+	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/dlcuy22/molo"
 	"github.com/dlcuy22/molow/internal/artwork"
@@ -25,8 +26,10 @@ import (
 // feed when it names the library it is showing, rather than polling.
 const eventLibrary = "molo:library"
 
-// defaultLibraryID is the library a fresh install imports into.
-const defaultLibraryID = "local:default"
+const (
+	maxLibraryNameRunes = 80
+	maxLibraryDescRunes = 240
+)
 
 // LibraryProgress is the scan event payload.
 type LibraryProgress struct {
@@ -74,22 +77,6 @@ func (s *PlayerService) initLibraries() {
 
 		return
 	}
-	// A fresh install gets one empty library to import into: the Add button
-	// merges into the selected library, so something selected must exist.
-	if len(rows) == 0 {
-		row, err := store.AddLibrary(library.Library{
-			ID:   defaultLibraryID,
-			Kind: library.KindLocal,
-			Name: "Library",
-		})
-		if err != nil {
-			s.log.Warn("library: create default", "error", err)
-
-			return
-		}
-		s.log.Info("library: created the default library", "id", row.ID)
-		rows = []library.Library{row}
-	}
 	for _, row := range rows {
 		s.registerLocal(row)
 		// Scan on startup, on a worker: the window must open before a large
@@ -131,9 +118,13 @@ func (s *PlayerService) backfillCompositeCovers() {
 	libsUpdated := 0
 	playlistsUpdated := 0
 	for _, lib := range libs {
-		if !lib.CustomCover && (lib.CoverID == "" || !s.art.Has(lib.CoverID)) {
-			if s.refreshLibraryCover(lib.ID) {
-				libsUpdated++
+		if !lib.CustomCover {
+			if lib.TrackCount == 0 && lib.CoverID != "" {
+				_ = store.SetLibraryCover(lib.ID, "", false)
+			} else if lib.TrackCount > 0 && (lib.CoverID == "" || !s.art.Has(lib.CoverID)) {
+				if s.refreshLibraryCover(lib.ID) {
+					libsUpdated++
+				}
 			}
 		}
 		lists, err := store.Playlists(lib.ID)
@@ -141,7 +132,12 @@ func (s *PlayerService) backfillCompositeCovers() {
 			continue
 		}
 		for _, pl := range lists {
-			if !pl.CustomCover && (pl.CoverID == "" || !s.art.Has(pl.CoverID)) {
+			if pl.CustomCover {
+				continue
+			}
+			if pl.TrackCount == 0 && pl.CoverID != "" {
+				_ = store.SetPlaylistCover(pl.ID, "", false)
+			} else if pl.TrackCount > 0 && (pl.CoverID == "" || !s.art.Has(pl.CoverID)) {
 				if s.refreshPlaylistCover(pl.ID) {
 					playlistsUpdated++
 				}
@@ -304,21 +300,37 @@ func (s *PlayerService) Libraries() ([]library.Library, error) {
 	return out, nil
 }
 
-// AddLocalLibrary registers a folder as a new library and starts its first
-// scan. The folder is the identity: adding the same path twice returns the row
-// that already exists rather than a second library. To merge a folder into an
-// existing library, ImportFolder is the call.
-func (s *PlayerService) AddLocalLibrary(path string) (library.Library, error) {
-	abs, err := filepath.Abs(strings.TrimSpace(path))
-	if err != nil || abs == "" {
-		return library.Library{}, fmt.Errorf("library: bad path")
+func newLocalLibraryID() (string, error) {
+	var raw [8]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
 	}
-	info, err := os.Stat(abs)
+
+	return "local:" + hex.EncodeToString(raw[:]), nil
+}
+
+func validateLibraryFields(name, description string) (string, string, error) {
+	name = strings.TrimSpace(name)
+	description = strings.TrimSpace(description)
+	if name == "" {
+		return "", "", fmt.Errorf("library: a name is required")
+	}
+	if utf8.RuneCountInString(name) > maxLibraryNameRunes {
+		return "", "", fmt.Errorf("library: name must be %d characters or fewer", maxLibraryNameRunes)
+	}
+	if utf8.RuneCountInString(description) > maxLibraryDescRunes {
+		return "", "", fmt.Errorf("library: description must be %d characters or fewer", maxLibraryDescRunes)
+	}
+
+	return name, description, nil
+}
+
+// CreateLibrary registers a new virtual local library with name and optional
+// description. Content is added afterwards through ImportFolder or ImportYTM.
+func (s *PlayerService) CreateLibrary(name, description string) (library.Library, error) {
+	name, description, err := validateLibraryFields(name, description)
 	if err != nil {
 		return library.Library{}, err
-	}
-	if !info.IsDir() {
-		return library.Library{}, fmt.Errorf("library: not a folder: %s", abs)
 	}
 
 	s.libMu.Lock()
@@ -328,44 +340,50 @@ func (s *PlayerService) AddLocalLibrary(path string) (library.Library, error) {
 		return library.Library{}, fmt.Errorf("library: store is not available")
 	}
 
-	sum := sha1.Sum([]byte(abs))
-	row := library.Library{
-		ID:     "local:" + hex.EncodeToString(sum[:8]),
-		Kind:   library.KindLocal,
-		Name:   filepath.Base(abs),
-		Root:   abs,
-		Status: library.StatusScanning,
+	id, err := newLocalLibraryID()
+	if err != nil {
+		return library.Library{}, fmt.Errorf("library: generate id: %w", err)
 	}
-	if owner, root, found, err := s.watchedElsewhere(store, row.ID, abs); err != nil {
-		return library.Library{}, err
-	} else if found {
-		return library.Library{}, foreignFolderError(abs, owner, root)
-	}
-	saved, err := store.AddLibrary(row)
+	saved, err := store.AddLibrary(library.Library{
+		ID:          id,
+		Kind:        library.KindLocal,
+		Name:        name,
+		Description: description,
+		Status:      library.StatusReady,
+	})
 	if err != nil {
 		return library.Library{}, err
 	}
-	// The roots table is the scanner's truth; the root column is the describe
-	// line. Both get the folder.
-	if _, err := store.AddRoot(saved.ID, abs); err != nil {
+	s.registerLocal(saved)
+
+	return s.describeLibrary(saved.ID)
+}
+
+// UpdateLibrary changes a library's name and optional description.
+func (s *PlayerService) UpdateLibrary(id, name, description string) (library.Library, error) {
+	name, description, err := validateLibraryFields(name, description)
+	if err != nil {
 		return library.Library{}, err
 	}
-	s.registerLocal(saved)
-	_ = s.RescanLibrary(saved.ID)
 
-	if src, ok := s.librarySource(saved.ID); ok {
-		return src.Describe(s.ctx)
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return library.Library{}, fmt.Errorf("library: store is not available")
+	}
+	if _, err := store.UpdateLibrary(id, name, description); err != nil {
+		return library.Library{}, err
 	}
 
-	return saved, nil
+	return s.describeLibrary(id)
 }
 
 // ImportFolder adds a folder as one more root of an existing library and
 // starts the scan that indexes it; when the scan lands, the folder's tracks
 // become one playlist named after the folder. Re-adding a folder the library
-// already watches is a no-op. A folder inside — or containing — another
-// library's root is refused, because a file path can belong to one library
-// only, and a folder nested in the target's own root would index files twice.
+// already watches is a no-op. A folder nested in or containing one of the same
+// library's roots is refused so files are not indexed twice within one library.
 func (s *PlayerService) ImportFolder(libraryID, path string) (library.Library, error) {
 	abs, err := filepath.Abs(strings.TrimSpace(path))
 	if err != nil || abs == "" {
@@ -405,11 +423,6 @@ func (s *PlayerService) ImportFolder(libraryID, path string) (library.Library, e
 		if insidePath(abs, root) || insidePath(root, abs) {
 			return library.Library{}, fmt.Errorf("library: folder overlaps %q", root)
 		}
-	}
-	if owner, root, found, err := s.watchedElsewhere(store, libraryID, abs); err != nil {
-		return library.Library{}, err
-	} else if found {
-		return library.Library{}, foreignFolderError(abs, owner, root)
 	}
 
 	added, err := store.AddRoot(libraryID, abs)
@@ -461,47 +474,6 @@ func samePath(a, b string) bool {
 	}
 
 	return strings.EqualFold(a, b)
-}
-
-// watchedElsewhere finds a root another library watches that the path would
-// overlap: the same folder, one inside the other. A folder belongs to one
-// library only, because the ref a like or a playlist stores is the file path,
-// so a second library over the same tree would address another library's rows.
-func (s *PlayerService) watchedElsewhere(
-	store *sqlite.Store, libraryID, path string,
-) (library.Library, string, bool, error) {
-	libs, err := store.Libraries()
-	if err != nil {
-		return library.Library{}, "", false, err
-	}
-	for _, lib := range libs {
-		if lib.ID == libraryID {
-			continue
-		}
-		roots, err := store.Roots(lib.ID)
-		if err != nil {
-			return library.Library{}, "", false, err
-		}
-		for _, root := range roots {
-			if insidePath(path, root) || insidePath(root, path) {
-				return lib, root, true, nil
-			}
-		}
-	}
-
-	return library.Library{}, "", false, nil
-}
-
-// foreignFolderError names the library that already owns the folder, so a
-// refused import says where the folder went.
-func foreignFolderError(path string, owner library.Library, root string) error {
-	if samePath(path, root) {
-		return fmt.Errorf(
-			"library: folder %q already belongs to library %q", filepath.Base(path), owner.Name,
-		)
-	}
-
-	return fmt.Errorf("library: folder overlaps library %q", owner.Name)
 }
 
 func (s *PlayerService) RemoveLibrary(id string) error {

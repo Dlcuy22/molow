@@ -17,6 +17,8 @@ import (
 	"github.com/dlcuy22/molow/internal/library/sqlite"
 )
 
+const defaultLibraryID = "local:default"
+
 // newTestLibraries builds a PlayerService whose library half runs against a
 // fresh in-memory store: one default library watching one root.
 func newTestLibraries(t *testing.T, root string) (*PlayerService, *sqlite.Store) {
@@ -145,10 +147,9 @@ func TestImportFolderMergesIntoTheLibrary(t *testing.T) {
 	}
 }
 
-// TestImportRefusesAnotherLibrarysFolder pins the one-owner rule at the import
-// entry points: a folder another library watches is refused with the owner's
-// name, no track lands in the target, and no playlist is created for it.
-func TestImportRefusesAnotherLibrarysFolder(t *testing.T) {
+// TestCreateUpdateAndIndependentFolderImport pins virtual library creation,
+// editing, and independent per-library folder ownership across deletes.
+func TestCreateUpdateAndIndependentFolderImport(t *testing.T) {
 	ext := moloTestExt(t)
 
 	rootA := t.TempDir()
@@ -156,41 +157,107 @@ func TestImportRefusesAnotherLibrarysFolder(t *testing.T) {
 	svc, store := newTestLibraries(t, rootA)
 	startScan(t, svc, defaultLibraryID)
 
-	rootB := t.TempDir()
-	writeTestFiles(t, filepath.Join(rootB, "01"+ext))
-	owner, err := svc.AddLocalLibrary(rootB)
+	if _, err := svc.CreateLibrary("   ", "ignored"); err == nil {
+		t.Fatal("CreateLibrary accepted blank name")
+	}
+
+	second, err := svc.CreateLibrary("  Anime OST  ", "  Soundtracks  ")
 	if err != nil {
-		t.Fatalf("add library: %v", err)
+		t.Fatalf("CreateLibrary: %v", err)
+	}
+	if second.Name != "Anime OST" || second.Description != "Soundtracks" {
+		t.Fatalf("created = %+v", second)
+	}
+	if len(second.Roots) != 0 {
+		t.Fatalf("virtual library should start with no roots, got %v", second.Roots)
+	}
+
+	updated, err := svc.UpdateLibrary(second.ID, "Game OST", "Updated note")
+	if err != nil {
+		t.Fatalf("UpdateLibrary: %v", err)
+	}
+	if updated.Name != "Game OST" || updated.Description != "Updated note" {
+		t.Fatalf("updated = %+v", updated)
+	}
+
+	// Both libraries can import the same local folder independently.
+	shared := t.TempDir()
+	sharedFile := filepath.Join(shared, "track"+ext)
+	writeTestFiles(t, sharedFile)
+
+	if _, err := svc.ImportFolder(defaultLibraryID, shared); err != nil {
+		t.Fatalf("import into first: %v", err)
+	}
+	svc.wg.Wait()
+	if _, err := svc.ImportFolder(second.ID, shared); err != nil {
+		t.Fatalf("import into second: %v", err)
 	}
 	svc.wg.Wait()
 
-	if _, err := svc.ImportFolder(defaultLibraryID, rootB); err == nil ||
-		!strings.Contains(err.Error(), "already belongs to library") ||
-		!strings.Contains(err.Error(), owner.Name) {
-		t.Fatalf("import = %v, want the owner named", err)
+	// Removing the first library must not wipe the second library's playlist.
+	if err := svc.RemoveLibrary(defaultLibraryID); err != nil {
+		t.Fatalf("RemoveLibrary: %v", err)
 	}
-	nested := filepath.Join(rootA, "nested")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
+	lists, err := store.Playlists(second.ID)
+	if err != nil || len(lists) != 1 || lists[0].TrackCount != 1 {
+		t.Fatalf("second library playlists after first removed = (%+v, %v)", lists, err)
+	}
+	tracks, err := store.PlaylistTracks(lists[0].ID, 10, 0)
+	if err != nil || len(tracks) != 1 || tracks[0].Ref != sharedFile {
+		t.Fatalf("second library playlist tracks = (%+v, %v)", tracks, err)
+	}
+}
+
+// TestBackfillClearsStaleCoverOnEmptyPlaylist verifies startup backfill removes
+// stale non-custom covers from empty playlists while preserving custom art.
+func TestBackfillClearsStaleCoverOnEmptyPlaylist(t *testing.T) {
+	store, err := sqlite.OpenMemory()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.AddLocalLibrary(rootA); err == nil ||
-		!strings.Contains(err.Error(), "already belongs to library") {
-		t.Fatalf("add = %v, want the owner named", err)
-	}
-	if _, err := svc.AddLocalLibrary(nested); err == nil ||
-		!strings.Contains(err.Error(), "overlaps library") {
-		t.Fatalf("add nested = %v, want an overlap error", err)
+	defer store.Close()
+
+	art, err := artwork.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	playlists, err := store.Playlists(defaultLibraryID)
+	if _, err := store.AddLibrary(library.Library{
+		ID: "local:a", Kind: library.KindLocal, Name: "A",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	autoPl, err := store.CreatePlaylist("local:a", "EmptyAuto")
 	if err != nil {
-		t.Fatalf("playlists: %v", err)
+		t.Fatal(err)
 	}
-	if len(playlists) != 0 {
-		t.Fatalf("playlists = %+v, want none from a refused import", playlists)
+	if err := store.SetPlaylistCover(autoPl.ID, "stale-auto", false); err != nil {
+		t.Fatal(err)
 	}
-	if got := trackCount(t, store, defaultLibraryID); got != 1 {
-		t.Fatalf("tracks = %d, want the original 1", got)
+	customPl, err := store.CreatePlaylist("local:a", "EmptyCustom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetPlaylistCover(customPl.ID, "kept-custom", true); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := &PlayerService{log: quietLog, art: art, libStore: store}
+	svc.backfillCompositeCovers()
+
+	lists, err := store.Playlists("local:a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]library.Playlist{}
+	for _, pl := range lists {
+		byID[pl.ID] = pl
+	}
+	if byID[autoPl.ID].CoverID != "" {
+		t.Fatalf("empty non-custom playlist kept stale cover %q", byID[autoPl.ID].CoverID)
+	}
+	if byID[customPl.ID].CoverID != "kept-custom" {
+		t.Fatalf("empty custom playlist lost cover: %q", byID[customPl.ID].CoverID)
 	}
 }
 

@@ -87,6 +87,7 @@ export interface Library {
     "id": string;
     "kind": Kind;
     "name": string;
+    "description"?: string;
     "root"?: string;
     "roots"?: string[] | null;
     "status": Status;

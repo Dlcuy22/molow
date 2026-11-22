@@ -232,3 +232,41 @@ func TestDataURLAndAccentsLRUEvictionAndConcurrency(t *testing.T) {
 		t.Fatal("most recent entry missed LRU")
 	}
 }
+
+func TestMigrateDirMovesArtworkWhenTargetEmpty(t *testing.T) {
+	from := t.TempDir()
+	to := t.TempDir()
+
+	jpg := []byte("fake-jpg")
+	pngBytes := []byte("fake-png")
+	if err := os.WriteFile(filepath.Join(from, "aaa.jpg"), jpg, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(from, "bbb.png"), pngBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(from, "stale.tmp"), []byte("ignore"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	migrateDir(from, to)
+
+	if got, err := os.ReadFile(filepath.Join(to, "aaa.jpg")); err != nil || !bytes.Equal(got, jpg) {
+		t.Fatalf("migrated aaa.jpg = (%q, %v)", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(to, "bbb.png")); err != nil || !bytes.Equal(got, pngBytes) {
+		t.Fatalf("migrated bbb.png = (%q, %v)", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(to, "stale.tmp")); !os.IsNotExist(err) {
+		t.Fatalf("stale.tmp should not be migrated, stat err = %v", err)
+	}
+
+	// Non-empty target skips migration.
+	if err := os.WriteFile(filepath.Join(from, "ccc.jpg"), []byte("later"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	migrateDir(from, to)
+	if _, err := os.Stat(filepath.Join(to, "ccc.jpg")); !os.IsNotExist(err) {
+		t.Fatalf("migration should skip non-empty target, stat err = %v", err)
+	}
+}

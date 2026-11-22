@@ -3,6 +3,7 @@ package artwork
 import (
 	"container/list"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -18,16 +19,21 @@ const (
 )
 
 // DefaultDir returns the platform artwork cache directory, creating it on first
-// use. Non-Windows uses the user cache directory; Windows uses the temp folder.
+// use. Every platform uses <UserCacheDir>/molow/art and falls back to the temp
+// directory only when the cache root is unavailable.
 func DefaultDir() (string, error) {
 	dir := fallbackDir()
-	if runtime.GOOS != "windows" {
-		if base, err := os.UserCacheDir(); err == nil {
-			dir = filepath.Join(base, "molow", "art")
-		}
+	if base, err := os.UserCacheDir(); err == nil && base != "" {
+		dir = filepath.Join(base, "molow", "art")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
+	}
+	if runtime.GOOS == "windows" {
+		legacy := fallbackDir()
+		if !strings.EqualFold(filepath.Clean(legacy), filepath.Clean(dir)) {
+			migrateDir(legacy, dir)
+		}
 	}
 
 	return dir, nil
@@ -40,6 +46,69 @@ func fallbackDir() string {
 	}
 
 	return filepath.Join(base, subdir)
+}
+
+// migrateDir moves cached .jpg and .png files from a legacy temp directory into
+// to when to is still empty, so previously imported covers stay intact after
+// switching to UserCacheDir. Failures on individual files are skipped so a
+// locked temp file never prevents startup.
+func migrateDir(from, to string) {
+	existing, err := os.ReadDir(to)
+	if err != nil || len(existing) > 0 {
+		return
+	}
+	entries, err := os.ReadDir(from)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext != ".jpg" && ext != ".png" {
+			continue
+		}
+		src := filepath.Join(from, name)
+		dst := filepath.Join(to, name)
+		if err := os.Rename(src, dst); err != nil {
+			if err := copyAndRemove(src, dst); err != nil {
+				continue
+			}
+		}
+	}
+}
+
+func copyAndRemove(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".migrate-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if _, err := io.Copy(tmp, in); err != nil {
+		_ = tmp.Close()
+
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		return err
+	}
+	_ = in.Close()
+	_ = os.Remove(src)
+
+	return nil
 }
 
 // Store owns the canonical on-disk artwork cache, singleflight ingest, and

@@ -348,17 +348,26 @@ type File struct {
 
 // TrackRow is the catalogue row as the scanner writes it.
 type TrackRow struct {
-	NativeID    string
-	Title       string
-	Artist      string
-	Album       string
-	AlbumArtist string
-	Genre       string
-	Year        int
-	TrackNo     int
-	DiscNo      int
-	DurationMs  int64
-	CoverID     string
+	NativeID     string
+	Title        string
+	Artist       string
+	Album        string
+	AlbumArtist  string
+	Genre        string
+	Year         int
+	TrackNo      int
+	DiscNo       int
+	DurationMs   int64
+	CoverID      string
+	ThumbnailURL string
+	ArtistID     string
+}
+
+// RemoteMeta holds the provider-facing URLs and IDs persisted alongside a
+// remote track so presence and art lookups survive restarts without a re-query.
+type RemoteMeta struct {
+	ThumbnailURL string
+	ArtistID     string
 }
 
 // ErrForeignFile reports a path the catalogue already indexes under another
@@ -590,17 +599,22 @@ func (s *Store) UpsertRemoteTrack(libraryID string, kind library.Kind, t TrackRo
 	_, err := s.db.Exec(
 		`INSERT INTO track
 		 (library_id, kind, native_id, title, artist, album, album_artist, genre,
-		  year, track_no, disc_no, duration_ms, cover_id, added_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		  year, track_no, disc_no, duration_ms, cover_id, thumbnail_url, artist_id,
+		  added_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(library_id, native_id) DO UPDATE SET
 		  kind = excluded.kind, title = excluded.title, artist = excluded.artist,
-		  album = excluded.album, album_artist = excluded.album_artist,
+		  album = COALESCE(NULLIF(excluded.album, ''), track.album),
+		  album_artist = excluded.album_artist,
 		  genre = excluded.genre, year = excluded.year, track_no = excluded.track_no,
 		  disc_no = excluded.disc_no, duration_ms = excluded.duration_ms,
-		  cover_id = excluded.cover_id, updated_at = excluded.updated_at`,
+		  cover_id = COALESCE(NULLIF(excluded.cover_id, ''), track.cover_id),
+		  thumbnail_url = COALESCE(NULLIF(excluded.thumbnail_url, ''), track.thumbnail_url),
+		  artist_id = COALESCE(NULLIF(excluded.artist_id, ''), track.artist_id),
+		  updated_at = excluded.updated_at`,
 		libraryID, string(kind), t.NativeID, t.Title, t.Artist, t.Album,
 		t.AlbumArtist, t.Genre, t.Year, t.TrackNo, t.DiscNo, t.DurationMs,
-		t.CoverID, now, now,
+		t.CoverID, t.ThumbnailURL, t.ArtistID, now, now,
 	)
 	if err != nil {
 		return 0, err
@@ -614,6 +628,55 @@ func (s *Store) UpsertRemoteTrack(libraryID string, kind library.Kind, t TrackRo
 	).Scan(&id)
 
 	return id, err
+}
+
+// TrackRemoteMeta reads the persisted remote artwork URL and artist ID for a
+// remote ref, returning false when ref is not a catalogued remote track.
+func (s *Store) TrackRemoteMeta(ref string) (RemoteMeta, bool, error) {
+	kind, native, ok := remoteID(ref)
+	if !ok {
+		return RemoteMeta{}, false, nil
+	}
+	var out RemoteMeta
+	err := s.db.QueryRow(
+		`SELECT thumbnail_url, artist_id FROM track
+		 WHERE kind = ? AND native_id = ? ORDER BY id LIMIT 1`,
+		string(kind), native,
+	).Scan(&out.ThumbnailURL, &out.ArtistID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RemoteMeta{}, false, nil
+	}
+	if err != nil {
+		return RemoteMeta{}, false, err
+	}
+
+	return out, true, nil
+}
+
+// BackfillTrackRemoteMeta fills empty thumbnail_url, artist_id, and album
+// fields on catalogued rows matching ref without overwriting values already stored.
+func (s *Store) BackfillTrackRemoteMeta(ref, thumbnailURL, artistID, album string) error {
+	kind, native, ok := remoteID(ref)
+	if !ok || (thumbnailURL == "" && artistID == "" && album == "") {
+		return nil
+	}
+	_, err := s.db.Exec(
+		`UPDATE track
+		 SET thumbnail_url = CASE WHEN thumbnail_url = '' AND ? <> '' THEN ? ELSE thumbnail_url END,
+		     artist_id     = CASE WHEN artist_id     = '' AND ? <> '' THEN ? ELSE artist_id END,
+		     album         = CASE WHEN album         = '' AND ? <> '' THEN ? ELSE album END,
+		     updated_at    = ?
+		 WHERE kind = ? AND native_id = ?
+		   AND ((thumbnail_url = '' AND ? <> '') OR (artist_id = '' AND ? <> '') OR (album = '' AND ? <> ''))`,
+		thumbnailURL, thumbnailURL,
+		artistID, artistID,
+		album, album,
+		time.Now().Unix(),
+		string(kind), native,
+		thumbnailURL, artistID, album,
+	)
+
+	return err
 }
 
 // MarkMissing flags every file row a scan did not see.

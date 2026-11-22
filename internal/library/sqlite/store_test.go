@@ -707,3 +707,66 @@ func TestCoverIDsRespectCustomCoverAndProtectInGC(t *testing.T) {
 		}
 	}
 }
+
+func TestRemoteTrackMetaPersistsAndBackfills(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.AddLibrary(library.Library{
+		ID: "local:ytm", Kind: library.KindLocal, Name: "Imported",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a pre-migration row inserted without thumbnail_url or artist_id.
+	if _, err := s.UpsertRemoteTrack("local:ytm", library.KindYTM, TrackRow{
+		NativeID: "vid1",
+		Title:    "Mesmerizer",
+		Artist:   "32ki",
+		CoverID:  "cover-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	meta, ok, err := s.TrackRemoteMeta("ytm:vid1")
+	if err != nil || !ok {
+		t.Fatalf("TrackRemoteMeta = (%+v, %v, %v)", meta, ok, err)
+	}
+	if meta.ThumbnailURL != "" || meta.ArtistID != "" {
+		t.Fatalf("initial remote meta = %+v, want empty", meta)
+	}
+
+	if err := s.BackfillTrackRemoteMeta("ytm:vid1", "https://lh3.googleusercontent.com/cover", "UCartist1", "Mesmerizer"); err != nil {
+		t.Fatal(err)
+	}
+	// A second backfill must not overwrite populated fields.
+	if err := s.BackfillTrackRemoteMeta("ytm:vid1", "https://other", "UCother", "Other"); err != nil {
+		t.Fatal(err)
+	}
+
+	meta, ok, err = s.TrackRemoteMeta("ytm:vid1")
+	if err != nil || !ok {
+		t.Fatalf("TrackRemoteMeta after backfill = (%+v, %v, %v)", meta, ok, err)
+	}
+	if meta.ThumbnailURL != "https://lh3.googleusercontent.com/cover" || meta.ArtistID != "UCartist1" {
+		t.Fatalf("backfilled remote meta = %+v", meta)
+	}
+	tr, ok, err := s.TrackByRef("ytm:vid1")
+	if err != nil || !ok {
+		t.Fatalf("TrackByRef = (%+v, %v, %v)", tr, ok, err)
+	}
+	if tr.Album != "Mesmerizer" {
+		t.Fatalf("backfilled album = %q, want Mesmerizer", tr.Album)
+	}
+
+	// Re-importing with blank remote metadata keeps the stored values.
+	if _, err := s.UpsertRemoteTrack("local:ytm", library.KindYTM, TrackRow{
+		NativeID: "vid1",
+		Title:    "Mesmerizer",
+		Artist:   "32ki",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	meta, ok, err = s.TrackRemoteMeta("ytm:vid1")
+	if err != nil || !ok || meta.ThumbnailURL != "https://lh3.googleusercontent.com/cover" || meta.ArtistID != "UCartist1" {
+		t.Fatalf("re-import lost remote meta: (%+v, %v, %v)", meta, ok, err)
+	}
+}

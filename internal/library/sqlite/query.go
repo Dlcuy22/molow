@@ -1,7 +1,9 @@
 package sqlite
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -488,9 +490,11 @@ func (s *Store) CreatePlaylist(libraryID, name string) (library.Playlist, error)
 // CreatePlaylistWithRemote adds a playlist that mirrors a remote list, so the
 // row remembers which list it came from. Its entries are added afterwards.
 func (s *Store) CreatePlaylistWithRemote(libraryID, name, remoteID string) (library.Playlist, error) {
-	// The id is namespaced by time, not by the remote id: the same remote list
-	// can be imported twice and both rows are honest.
-	id := fmt.Sprintf("playlist:%d", time.Now().UnixNano())
+	var raw [8]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return library.Playlist{}, err
+	}
+	id := "playlist:" + hex.EncodeToString(raw[:])
 	now := time.Now().Unix()
 	_, err := s.db.Exec(
 		`INSERT INTO playlist (id, library_id, name, remote_id, created_at, updated_at)

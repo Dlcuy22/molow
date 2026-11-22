@@ -53,9 +53,8 @@ func Run(assets embed.FS) {
 	tidy := consoleHandler(level)
 	installLogRedirect(tidy)
 	registerConsoleLogHandler(tidy, level)
-	// The held-back record keeps the repeat count of a stream that ends in
-	// repeats, so it is sent on before the process goes away.
-	defer func() { _ = tidy.Flush() }()
+	// Flush any suppressed duplicate summary before the process exits.
+	defer flushConsoleLog()
 	if err := applyLog(level, seed.General.LogFileEnabled, seed.General.LogFile); err != nil {
 		slog.Warn("log file: could not arm", "error", err)
 	}
@@ -165,8 +164,8 @@ func Run(assets embed.FS) {
 
 	if err := app.Run(); err != nil {
 		slog.Error("application exited", "error", err)
-		// os.Exit skips defers, so the held-back record is sent on here too.
-		_ = tidy.Flush()
+		// os.Exit skips defers, so flush any suppressed repeat summary here too.
+		flushConsoleLog()
 		os.Exit(1)
 	}
 }

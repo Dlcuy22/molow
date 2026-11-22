@@ -65,6 +65,17 @@ func registerConsoleLogHandler(console slog.Handler, level slog.Level) {
 	logSink.mu.Unlock()
 }
 
+// flushConsoleLog flushes any pending repeat summary on the active console
+// handler before process exit.
+func flushConsoleLog() {
+	logSink.mu.Lock()
+	console := logSink.console
+	logSink.mu.Unlock()
+	if h, ok := console.(*tidyHandler); ok {
+		_ = h.Flush()
+	}
+}
+
 // logRedirect is the logger the app installs as its default. applyLog swaps
 // the chain it forwards to, so a logger captured before a settings change
 // keeps following the current sinks instead of going stale.
@@ -263,6 +274,9 @@ func applyLog(level slog.Level, enabled bool, path string) error {
 
 	consoleRebuilt := false
 	if logSink.console != nil && level != logSink.level {
+		if prev, ok := logSink.console.(*tidyHandler); ok {
+			_ = prev.Flush()
+		}
 		logSink.console = consoleHandler(level)
 		consoleRebuilt = true
 	}

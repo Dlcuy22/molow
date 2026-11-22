@@ -20,23 +20,19 @@ func debugTidy() bool {
 	return true
 }
 
-// tidyHandler is a slog.Handler wrapper that collapses consecutive records
-// sharing a level, message and attributes into one line with a trailing
-// repeat=Nx attribute. Sources that re-emit the same activity every few
-// seconds, such as the Discord presence, then read as one line plus a count
-// instead of a stream.
-//
-// A record is held back until the next, different record arrives, because the
-// count is only known after the repeats happen. Handle may be called from
-// several goroutines, so the state sits behind a mutex.
+// tidyHandler is a slog.Handler wrapper that collapses consecutive identical
+// records without holding back the latest event. The first occurrence of a
+// distinct record is emitted immediately so live console output always reflects
+// current state; consecutive duplicates are counted and flushed as one summary
+// line ("repeat=+Nx") when a different record arrives or Flush is called.
 type tidyHandler struct {
 	next slog.Handler
 	on   bool
 
-	mu      sync.Mutex
-	pending *slog.Record
-	count   int
-	key     string
+	mu         sync.Mutex
+	last       *slog.Record
+	suppressed int
+	key        string
 }
 
 // newTidyHandler wraps next. The wrapper is a no-op when MOLOW_DEBUG_TIDY
@@ -59,22 +55,23 @@ func (h *tidyHandler) Handle(ctx context.Context, r slog.Record) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if h.pending != nil && key == h.key {
-		h.count++
+	if h.last != nil && key == h.key {
+		c := r.Clone()
+		h.last = &c
+		h.suppressed++
 		return nil
 	}
 	if err := h.flushLocked(); err != nil {
 		return err
 	}
 	c := r.Clone()
-	h.pending = &c
+	h.last = &c
 	h.key = key
-	h.count = 1
-	return nil
+	h.suppressed = 0
+	return h.next.Handle(ctx, r)
 }
 
-// Flush sends the held record on, so a stream ending in repeats still shows
-// them. The count joins the message when the record repeated.
+// Flush emits a trailing repeat summary if consecutive duplicates are pending.
 func (h *tidyHandler) Flush() error {
 	if !h.on {
 		return nil
@@ -85,16 +82,14 @@ func (h *tidyHandler) Flush() error {
 }
 
 func (h *tidyHandler) flushLocked() error {
-	if h.pending == nil {
+	if h.last == nil || h.suppressed == 0 {
 		return nil
 	}
-	r := *h.pending
-	h.pending = nil
-	if h.count > 1 {
-		// The count is a trailing attribute rather than message text, so the
-		// message stays greppable and the line still ends with the number.
-		r.AddAttrs(slog.String("repeat", fmt.Sprintf("%dx", h.count)))
-	}
+	r := *h.last
+	n := h.suppressed
+	h.suppressed = 0
+	// Keep the count as a trailing attribute so the message stays greppable.
+	r.AddAttrs(slog.String("repeat", fmt.Sprintf("+%dx", n)))
 	return h.next.Handle(context.Background(), r)
 }
 

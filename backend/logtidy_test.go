@@ -40,16 +40,29 @@ func activitySet(large string) {
 	)
 }
 
-// TestTidyCollapsesRepeats pins the collapse: identical consecutive records
-// become one line with a repeat count, a record that differs in an attribute
-// stands on its own, and the last held record is sent on by Flush.
-func TestTidyCollapsesRepeats(t *testing.T) {
+// TestTidyEmitsImmediatelyAndSummarizesRepeats pins emit-first coalescing:
+// every distinct record appears immediately without waiting for a later event
+// or Flush, while consecutive duplicates collapse into one trailing repeat=+Nx
+// summary when a different record arrives.
+func TestTidyEmitsImmediatelyAndSummarizesRepeats(t *testing.T) {
 	var buf bytes.Buffer
 	flush, restore := newTidyTestLogger(t, &buf)
 	defer restore()
 
 	activitySet("ongoplayer")
 	activitySet("https://tmpfiles.org/dl/art.jpg")
+
+	// Both distinct records must already be visible before any follow-up event
+	// or Flush so live logs never lag behind the active presence.
+	mid := strings.TrimSpace(buf.String())
+	wantMid := strings.Join([]string{
+		`DBG discordrpc: activity set title=Dramaturgy large=ongoplayer small=ongoplayer_small`,
+		`DBG discordrpc: activity set title=Dramaturgy large=https://tmpfiles.org/dl/art.jpg small=ongoplayer_small`,
+	}, "\n")
+	if mid != wantMid {
+		t.Fatalf("live output before flush =\n  %q\nwant\n  %q", mid, wantMid)
+	}
+
 	activitySet("https://tmpfiles.org/dl/art.jpg")
 	activitySet("https://tmpfiles.org/dl/art.jpg")
 	activitySet("https://tmpfiles.org/dl/art.jpg")
@@ -61,7 +74,8 @@ func TestTidyCollapsesRepeats(t *testing.T) {
 	out := strings.TrimSpace(buf.String())
 	want := strings.Join([]string{
 		`DBG discordrpc: activity set title=Dramaturgy large=ongoplayer small=ongoplayer_small`,
-		`DBG discordrpc: activity set title=Dramaturgy large=https://tmpfiles.org/dl/art.jpg small=ongoplayer_small repeat=6x`,
+		`DBG discordrpc: activity set title=Dramaturgy large=https://tmpfiles.org/dl/art.jpg small=ongoplayer_small`,
+		`DBG discordrpc: activity set title=Dramaturgy large=https://tmpfiles.org/dl/art.jpg small=ongoplayer_small repeat=+5x`,
 		`INF lyrics: chain started path=ytm:dEfl-ObuapA`,
 	}, "\n")
 	if out != want {
@@ -69,9 +83,8 @@ func TestTidyCollapsesRepeats(t *testing.T) {
 	}
 }
 
-// TestTidyCountAfterTheLastRepeat covers the end-of-stream case: repeats with
-// nothing after them still get their count, because Flush sends the held
-// record on.
+// TestTidyCountAfterTheLastRepeat covers the end-of-stream case: the first
+// record is already printed, and Flush emits one summary line for the repeats.
 func TestTidyCountAfterTheLastRepeat(t *testing.T) {
 	var buf bytes.Buffer
 	flush, restore := newTidyTestLogger(t, &buf)
@@ -83,8 +96,12 @@ func TestTidyCountAfterTheLastRepeat(t *testing.T) {
 	flush()
 
 	out := strings.TrimSpace(buf.String())
-	if out != `DBG discordrpc: activity set title=Dramaturgy large=ongoplayer small=ongoplayer_small repeat=3x` {
-		t.Fatalf("tidy output =\n  %q", out)
+	want := strings.Join([]string{
+		`DBG discordrpc: activity set title=Dramaturgy large=ongoplayer small=ongoplayer_small`,
+		`DBG discordrpc: activity set title=Dramaturgy large=ongoplayer small=ongoplayer_small repeat=+2x`,
+	}, "\n")
+	if out != want {
+		t.Fatalf("tidy output =\n  %q\nwant\n  %q", out, want)
 	}
 }
 
@@ -107,11 +124,12 @@ func TestTidyDisabledKeepsEveryLine(t *testing.T) {
 	}
 }
 
-// TestTidyKeepsTheFirstTime proves a collapsed line keeps the timestamp of its
-// first occurrence, which is when the state it describes was reached. The
-// records are handed to the handler directly, so slog does not stamp them.
-func TestTidyKeepsTheFirstTime(t *testing.T) {
-	at := time.Date(2026, 11, 12, 9, 3, 7, 0, time.UTC)
+// TestTidyKeepsFirstAndLastRepeatTimestamps proves the initial line carries the
+// first timestamp immediately and the repeat summary carries the latest repeat's
+// timestamp when flushed.
+func TestTidyKeepsFirstAndLastRepeatTimestamps(t *testing.T) {
+	first := time.Date(2026, 11, 12, 9, 3, 7, 0, time.UTC)
+	last := first.Add(2 * time.Minute)
 
 	var buf bytes.Buffer
 	h := newTidyHandler(tint.NewTextHandler(&buf, &tint.Options{NoColor: true}))
@@ -121,17 +139,20 @@ func TestTidyKeepsTheFirstTime(t *testing.T) {
 		r.AddAttrs(slog.String("title", "Dramaturgy"))
 		return r
 	}
-	if err := h.Handle(context.Background(), record(at)); err != nil {
+	if err := h.Handle(context.Background(), record(first)); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.Handle(context.Background(), record(at.Add(2*time.Minute))); err != nil {
+	if !strings.Contains(buf.String(), first.Format(time.StampMilli)) {
+		t.Fatalf("first line was not emitted immediately:\n%s", buf.String())
+	}
+	if err := h.Handle(context.Background(), record(last)); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.Flush(); err != nil {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(buf.String(), at.Format(time.StampMilli)) {
-		t.Fatalf("collapsed line lost the first timestamp:\n%s", buf.String())
+	if !strings.Contains(buf.String(), last.Format(time.StampMilli)) || !strings.Contains(buf.String(), "repeat=+1x") {
+		t.Fatalf("repeat summary missing last timestamp or count:\n%s", buf.String())
 	}
 }

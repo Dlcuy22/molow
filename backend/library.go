@@ -611,6 +611,7 @@ func (s *PlayerService) catalogYTM(dst *local.Local, row YTMResult, coverID stri
 		DurationMs:   row.DurationMs,
 		ThumbnailURL: row.Thumbnail,
 		ArtistID:     row.ArtistID,
+		CoverID:      coverID,
 	})
 
 	return dst.ImportRemote(library.KindYTM, sqlite.TrackRow{
@@ -621,6 +622,33 @@ func (s *PlayerService) catalogYTM(dst *local.Local, row YTMResult, coverID stri
 		DurationMs: row.DurationMs,
 		CoverID:    coverID,
 	})
+}
+
+// catalogYTMTrack reads a catalogued YTM row from SQLite so playback and queue
+// rows keep their title, artist, album and cached CoverID across restarts.
+func (s *PlayerService) catalogYTMTrack(ref string) (ytmTrack, bool) {
+	if !isYTMRef(ref) {
+		return ytmTrack{}, false
+	}
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return ytmTrack{}, false
+	}
+	tr, ok, err := store.TrackByRef(ref)
+	if err != nil || !ok {
+		return ytmTrack{}, false
+	}
+
+	return ytmTrack{
+		ID:         tr.NativeID,
+		Title:      tr.Title,
+		Artist:     tr.Artist,
+		Album:      tr.Album,
+		DurationMs: tr.DurationMs,
+		CoverID:    tr.CoverID,
+	}, true
 }
 
 // Liked reports whether a catalogued ref carries a like. An uncatalogued path

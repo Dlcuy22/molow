@@ -127,15 +127,20 @@ type ytmTrack struct {
 	// played, rather than for every search result at once.
 	ThumbnailURL string
 
+	// CoverID is the canonical artwork store id when the cover is already cached
+	// on disk, so catalogue rows and playback share one cache entry after restart.
+	CoverID string
+
 	// Thumb is the fetched art, filled on the first fetch and reused after.
 	Thumb []byte
 }
 
-// coverID identifies the artwork for the UI. It prefers the content hash once
-// the bytes are here, so a track played and then listed shares one cache entry
-// with its now-playing art; before that it falls back to a hash of the URL,
-// which is stable across the session.
+// coverID identifies the artwork for the UI. It prefers a canonical artwork
+// store id, then the content hash once bytes are fetched, then a URL hash.
 func (t ytmTrack) coverID() string {
+	if t.CoverID != "" {
+		return t.CoverID
+	}
 	if len(t.Thumb) > 0 {
 		return artwork.ID(t.Thumb)
 	}
@@ -181,6 +186,9 @@ func (x *ytmIndex) put(t ytmTrack) {
 	prev := x.entries[ref]
 	if t.ThumbnailURL == "" {
 		t.ThumbnailURL = prev.ThumbnailURL
+	}
+	if t.CoverID == "" {
+		t.CoverID = prev.CoverID
 	}
 	if len(t.Thumb) == 0 {
 		t.Thumb = prev.Thumb
@@ -334,6 +342,10 @@ type ytmProvider struct {
 	// an app restart gives and what a refused stream needs. It is a field so a
 	// test can drive the recovery without a client.
 	rotate func()
+
+	// catalogTrack resolves metadata and cached CoverID from the SQLite library
+	// when the in-memory index does not have the track yet (e.g. after restart).
+	catalogTrack func(ref string) (ytmTrack, bool)
 }
 
 // ytmCalls is one consistent snapshot of the provider's network surface. A
@@ -462,9 +474,21 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 	}
 
 	track := p.trackFor(ref, streams)
-	if thumb := p.thumbFor(ctx, track.ThumbnailURL); len(thumb) > 0 {
-		track.Thumb = thumb
-		p.index.setThumb(ref, thumb)
+	if len(track.Thumb) == 0 && track.CoverID != "" && p.art != nil {
+		if data, _, ok := p.art.Bytes(track.CoverID); ok {
+			track.Thumb = data
+		}
+	}
+	if len(track.Thumb) == 0 {
+		if thumb := p.thumbFor(ctx, track.ThumbnailURL); len(thumb) > 0 {
+			track.Thumb = thumb
+			if p.art != nil {
+				if cid, err := p.art.Put(thumb); err == nil && cid != "" {
+					track.CoverID = cid
+				}
+			}
+			p.index.setThumb(ref, thumb)
+		}
 	}
 	p.index.put(track)
 
@@ -656,6 +680,17 @@ func (p *ytmProvider) playlist(ctx context.Context, id string) ([]YTMResult, str
 // that carries the album and the artwork.
 func (p *ytmProvider) trackFor(ref string, streams *ytm.Streams) ytmTrack {
 	t, _ := p.index.lookup(ref)
+	if p.catalogTrack != nil && (t.CoverID == "" || t.Title == "" || t.Artist == "" || t.Album == "") {
+		if cat, ok := p.catalogTrack(ref); ok {
+			t.Title = firstNonEmpty(t.Title, cat.Title)
+			t.Artist = firstNonEmpty(t.Artist, cat.Artist)
+			t.Album = firstNonEmpty(t.Album, cat.Album)
+			t.CoverID = firstNonEmpty(t.CoverID, cat.CoverID)
+			if t.DurationMs <= 0 {
+				t.DurationMs = cat.DurationMs
+			}
+		}
+	}
 	t.ID = firstNonEmpty(t.ID, streams.VideoID, ytmID(ref))
 	t.Title = firstNonEmpty(t.Title, streams.Title)
 	t.Artist = firstNonEmpty(t.Artist, streams.Author)

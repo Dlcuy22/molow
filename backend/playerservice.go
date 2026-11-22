@@ -230,6 +230,7 @@ func newPlayerService() *PlayerService {
 		s.logger().Info(msg, args...)
 	})
 	s.romanizer.wants = s.romanizationWanted
+	s.ytmProv.catalogTrack = s.catalogYTMTrack
 
 	return s
 }
@@ -678,7 +679,7 @@ func (s *PlayerService) Snapshot() Snapshot {
 		Artist:      snap.Meta.Tags.Artist,
 		Album:       snap.Meta.Tags.Album,
 		ArtistID:    s.currentArtistID(snap.Path),
-		CoverID:     artwork.ID(snap.Meta.Tags.Cover),
+		CoverID:     s.snapshotCoverID(snap),
 		CoverMime:   snap.Meta.Tags.CoverMIME,
 		Codec:       snap.Meta.Codec,
 		Container:   snap.Meta.Container,
@@ -713,6 +714,24 @@ func (s *PlayerService) currentArtistID(path string) string {
 	}
 
 	return t.ArtistID
+}
+
+// snapshotCoverID resolves the canonical artwork id for the active track.
+// For catalogued YTM tracks it prefers the stored CoverID already on disk so
+// playback, queue rows and library cards share one cache entry without re-hashing.
+func (s *PlayerService) snapshotCoverID(snap molo.Snapshot) string {
+	if isYTMRef(snap.Path) {
+		if t, ok := s.ytm.lookup(snap.Path); ok && t.CoverID != "" && (s.art == nil || s.art.Has(t.CoverID)) {
+			return t.CoverID
+		}
+		if cat, ok := s.catalogYTMTrack(snap.Path); ok && cat.CoverID != "" && (s.art == nil || s.art.Has(cat.CoverID)) {
+			s.ytm.put(cat)
+
+			return cat.CoverID
+		}
+	}
+
+	return artwork.ID(snap.Meta.Tags.Cover)
 }
 
 // syncIndex reconciles the tag index with the queue, but only when the queue
@@ -848,6 +867,12 @@ func (s *PlayerService) ytmCover(ref string) string {
 		return ""
 	}
 	t, ok := s.ytm.lookup(ref)
+	if !ok {
+		if cat, found := s.catalogYTMTrack(ref); found {
+			s.ytm.put(cat)
+			t, ok = cat, true
+		}
+	}
 	if !ok {
 		return ""
 	}
@@ -1701,6 +1726,11 @@ func (s *PlayerService) queueRows(paths []string, active int) []QueueRow {
 	rows := make([]QueueRow, len(paths))
 	for i, p := range paths {
 		if isYTMRef(p) {
+			if _, ok := s.ytm.lookup(p); !ok {
+				if cat, found := s.catalogYTMTrack(p); found {
+					s.ytm.put(cat)
+				}
+			}
 			rows[i] = ytmQueueRow(i, p, active, s.ytm)
 			continue
 		}

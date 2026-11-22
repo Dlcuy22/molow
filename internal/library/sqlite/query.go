@@ -385,6 +385,55 @@ func (s *Store) Playlists(libraryID string) ([]library.Playlist, error) {
 		p.LibraryID = libraryID
 		out = append(out, p)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Close the outer cursor before running follow-up queries on the single SQLite connection.
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		covers, err := s.playlistCovers(out[i].ID, 4)
+		if err != nil {
+			return nil, err
+		}
+		out[i].CoverIDs = covers
+	}
+
+	return out, nil
+}
+
+// playlistCovers returns up to limit distinct non-empty track cover ids in playlist order.
+func (s *Store) playlistCovers(playlistID string, limit int) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT t.cover_id
+		 FROM playlist_entry e
+		 JOIN track t ON t.id = e.track_id
+		 WHERE e.playlist_id = ? AND t.cover_id <> ''
+		 ORDER BY e.position`,
+		playlistID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	seen := make(map[string]struct{}, limit)
+	var out []string
+	for rows.Next() {
+		var cid string
+		if err := rows.Scan(&cid); err != nil {
+			return nil, err
+		}
+		if _, dup := seen[cid]; dup {
+			continue
+		}
+		seen[cid] = struct{}{}
+		out = append(out, cid)
+		if len(out) == limit {
+			break
+		}
+	}
 
 	return out, rows.Err()
 }
@@ -407,6 +456,11 @@ func (s *Store) PlaylistTracks(playlistID string, limit, offset int) ([]library.
 	out, _, err := collectTracks(rows, limit)
 
 	return out, err
+}
+
+// PlaylistTrackCount reports how many entries a playlist holds.
+func (s *Store) PlaylistTrackCount(playlistID string) (int, error) {
+	return s.count(`SELECT COUNT(*) FROM playlist_entry WHERE playlist_id = ?`, playlistID)
 }
 
 // CreatePlaylist adds one and returns it.

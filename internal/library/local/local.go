@@ -152,13 +152,18 @@ func (l *Local) Feed(_ context.Context, tab, cursor string, limit int) (library.
 		}}}, nil
 	case strings.HasPrefix(tab, "playlist:"):
 		id := strings.TrimPrefix(tab, "playlist:")
+		total, err := l.store.PlaylistTrackCount(id)
+		if err != nil {
+			return library.Page{}, err
+		}
 		items, err := l.store.PlaylistTracks(id, limit, offset)
 		if err != nil {
 			return library.Page{}, err
 		}
 
 		return library.Page{Shelves: []library.Shelf{{
-			ID: id, Title: "Playlist", Layout: "list", Kind: "tracks", Items: items,
+			ID: id, Title: "Playlist", Layout: "list", Kind: "tracks",
+			Items: items, Total: total, Cursor: nextCursor(offset+len(items), total),
 		}}}, nil
 	}
 

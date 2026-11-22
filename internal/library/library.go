@@ -117,14 +117,16 @@ type Artist struct {
 }
 
 // Playlist is a user-ordered list. Local playlists live in SQLite; a remote
-// one carries its remote id.
+// one carries its remote id. CoverIDs holds up to four distinct track covers in
+// playlist order for grid thumbnails.
 type Playlist struct {
-	ID          string `json:"id"`
-	LibraryID   string `json:"libraryId"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	RemoteID    string `json:"remoteId,omitempty"`
-	TrackCount  int    `json:"trackCount"`
+	ID          string   `json:"id"`
+	LibraryID   string   `json:"libraryId"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	RemoteID    string   `json:"remoteId,omitempty"`
+	TrackCount  int      `json:"trackCount"`
+	CoverIDs    []string `json:"coverIds,omitempty"`
 }
 
 // RemoteRef is the playable reference of a track that has no file: the kind

@@ -106,7 +106,8 @@ export interface Page {
 
 /**
  * Playlist is a user-ordered list. Local playlists live in SQLite; a remote
- * one carries its remote id.
+ * one carries its remote id. CoverIDs holds up to four distinct track covers in
+ * playlist order for grid thumbnails.
  */
 export interface Playlist {
     "id": string;
@@ -115,6 +116,7 @@ export interface Playlist {
     "description"?: string;
     "remoteId"?: string;
     "trackCount": number;
+    "coverIds"?: string[] | null;
 }
 
 /**

@@ -260,3 +260,45 @@ func TestRescanSkipsUnchangedAndReindexesModified(t *testing.T) {
 		t.Fatalf("after modified rescan: ok=%v err=%v", ok, err)
 	}
 }
+
+func TestPlaylistFeedReportsTotalAndCursor(t *testing.T) {
+	src, store := newTestLocal(t)
+	ext := testExt(t)
+
+	root := t.TempDir()
+	files := []string{
+		filepath.Join(root, "01"+ext),
+		filepath.Join(root, "02"+ext),
+		filepath.Join(root, "03"+ext),
+	}
+	writeFiles(t, files...)
+	if _, err := store.AddRoot("local:test", root); err != nil {
+		t.Fatalf("add root: %v", err)
+	}
+	if _, err := src.Scan(context.Background()); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	list, err := store.CreatePlaylist("local:test", "Paged")
+	if err != nil {
+		t.Fatalf("create playlist: %v", err)
+	}
+	if err := store.AddToPlaylist(list.ID, files); err != nil {
+		t.Fatalf("add to playlist: %v", err)
+	}
+
+	page1, err := src.Feed(context.Background(), "playlist:"+list.ID, "", 2)
+	if err != nil {
+		t.Fatalf("feed page 1: %v", err)
+	}
+	if len(page1.Shelves) != 1 || page1.Shelves[0].Total != 3 || page1.Shelves[0].Cursor != "2" || len(page1.Shelves[0].Items) != 2 {
+		t.Fatalf("page 1 = %+v, want 2 of 3 with cursor 2", page1.Shelves)
+	}
+
+	page2, err := src.Feed(context.Background(), "playlist:"+list.ID, page1.Shelves[0].Cursor, 2)
+	if err != nil {
+		t.Fatalf("feed page 2: %v", err)
+	}
+	if len(page2.Shelves) != 1 || page2.Shelves[0].Cursor != "" || len(page2.Shelves[0].Items) != 1 {
+		t.Fatalf("page 2 = %+v, want final item with empty cursor", page2.Shelves)
+	}
+}

@@ -104,6 +104,44 @@ func (s *PlayerService) initLibraries() {
 			_ = s.RescanLibrary(row.ID)
 		}
 	}
+
+	go s.pruneOrphanArtwork()
+}
+
+// pruneOrphanArtwork evicts oldest unreferenced artwork files above budget once
+// on startup while keeping every cover referenced by library.db or the active
+// track intact.
+func (s *PlayerService) pruneOrphanArtwork() {
+	if s.art == nil {
+		return
+	}
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return
+	}
+
+	protected, err := store.ReferencedCoverIDs()
+	if err != nil {
+		s.logger().Warn("artwork: skipped prune, could not read protected ids", "error", err)
+
+		return
+	}
+	if s.player != nil {
+		if cid := s.snapshotCoverID(s.player.Snapshot()); cid != "" {
+			protected[cid] = struct{}{}
+		}
+	}
+	removed, err := s.art.Prune(protected, artwork.DefaultOrphanMaxBytes)
+	if err != nil {
+		s.logger().Warn("artwork: prune error", "removed", removed, "error", err)
+
+		return
+	}
+	if removed > 0 {
+		s.logger().Info("artwork: pruned unreferenced files", "removed", removed)
+	}
 }
 
 func (s *PlayerService) registerLocal(row library.Library) {

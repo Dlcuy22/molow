@@ -638,6 +638,29 @@ func (s *Store) RemoveFromPlaylist(playlistID string, refs []string) error {
 	return tx.Commit()
 }
 
+// ReferencedCoverIDs returns every non-empty cover_id referenced by the
+// catalogue so artwork cache pruning never removes an active cover.
+func (s *Store) ReferencedCoverIDs() (map[string]struct{}, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT cover_id FROM track WHERE cover_id <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]struct{})
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		if id != "" {
+			out[id] = struct{}{}
+		}
+	}
+
+	return out, rows.Err()
+}
+
 func (s *Store) count(query string, args ...any) (int, error) {
 	var n int
 	err := s.db.QueryRow(query, args...).Scan(&n)

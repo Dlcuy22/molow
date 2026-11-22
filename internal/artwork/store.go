@@ -2,20 +2,28 @@ package artwork
 
 import (
 	"container/list"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dlcuy22/molow/internal/color"
 )
 
 const (
-	subdir   = "molow-art"
-	cacheMax = 64
+	// DefaultOrphanMaxBytes is the default disk budget for unreferenced artwork
+	// files retained after startup pruning (64 MiB).
+	DefaultOrphanMaxBytes int64 = 64 << 20
+
+	subdir          = "molow-art"
+	cacheMax        = 64
+	staleTempMaxAge = 5 * time.Minute
 )
 
 // DefaultDir returns the platform artwork cache directory, creating it on first
@@ -314,6 +322,96 @@ func (s *Store) DataURL(id string) (string, bool) {
 	}
 
 	return FormatDataURL(data, mime), true
+}
+
+// Prune deletes unreferenced .jpg and .png files in the cache directory oldest
+// mtime first until remaining orphan bytes fit within maxBytes. Any cover ID in
+// protected is never removed regardless of size. Stale temp files older than
+// five minutes are swept as well.
+func (s *Store) Prune(protected map[string]struct{}, maxBytes int64) (int, error) {
+	if s == nil {
+		return 0, nil
+	}
+	if maxBytes < 0 {
+		maxBytes = 0
+	}
+
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return 0, err
+	}
+
+	type orphan struct {
+		path  string
+		name  string
+		size  int64
+		mtime time.Time
+	}
+
+	now := time.Now()
+	var orphans []orphan
+	var orphanBytes int64
+	for _, de := range entries {
+		if de.IsDir() {
+			continue
+		}
+		name := de.Name()
+		full := filepath.Join(s.dir, name)
+		info, err := de.Info()
+		if err != nil {
+			continue
+		}
+		if strings.Contains(name, ".tmp") {
+			if now.Sub(info.ModTime()) >= staleTempMaxAge {
+				_ = os.Remove(full)
+			}
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext != ".jpg" && ext != ".png" {
+			continue
+		}
+		id := strings.TrimSuffix(name, filepath.Ext(name))
+		if _, keep := protected[id]; keep {
+			continue
+		}
+		orphans = append(orphans, orphan{
+			path:  full,
+			name:  name,
+			size:  info.Size(),
+			mtime: info.ModTime(),
+		})
+		orphanBytes += info.Size()
+	}
+
+	if orphanBytes <= maxBytes {
+		return 0, nil
+	}
+
+	sort.Slice(orphans, func(i, j int) bool {
+		if orphans[i].mtime.Equal(orphans[j].mtime) {
+			return orphans[i].name < orphans[j].name
+		}
+
+		return orphans[i].mtime.Before(orphans[j].mtime)
+	})
+
+	removed := 0
+	var firstErr error
+	for _, o := range orphans {
+		if orphanBytes <= maxBytes {
+			break
+		}
+		err := os.Remove(o.path)
+		if err == nil || errors.Is(err, os.ErrNotExist) {
+			orphanBytes -= o.size
+			removed++
+		} else if firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	return removed, firstErr
 }
 
 // Accents returns the top n accent colours for id, backed by singleflight and a

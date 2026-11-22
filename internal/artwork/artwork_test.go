@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func makePNG(t *testing.T, w, h int, c imgcolor.NRGBA) []byte {
@@ -264,5 +265,58 @@ func TestMigrateDirMovesArtworkWhenTargetEmpty(t *testing.T) {
 	migrateDir(from, to)
 	if _, err := os.Stat(filepath.Join(to, "ccc.jpg")); !os.IsNotExist(err) {
 		t.Fatalf("migration should skip non-empty target, stat err = %v", err)
+	}
+}
+
+func TestPruneProtectsReferencedAndEvictsOldestOrphans(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	writeArt := func(name string, size int, mod time.Time) {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, bytes.Repeat([]byte("x"), size), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, mod, mod); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Protected files exceed the orphan budget on their own and must survive.
+	writeArt("keep1.jpg", 100, base)
+	writeArt("keep2.png", 100, base.Add(time.Minute))
+	// Three orphans (40 bytes each = 120 bytes) against a 50-byte budget.
+	writeArt("orphanOld.jpg", 40, base.Add(2*time.Minute))
+	writeArt("orphanMid.jpg", 40, base.Add(3*time.Minute))
+	writeArt("orphanNew.png", 40, base.Add(4*time.Minute))
+	// Non-image sidecar (.url) must never be deleted.
+	writeArt("artist-1.url", 80, base)
+
+	protected := map[string]struct{}{
+		"keep1": {},
+		"keep2": {},
+	}
+	removed, err := s.Prune(protected, 50)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("removed = %d, want 2", removed)
+	}
+	if !s.Has("keep1") || !s.Has("keep2") {
+		t.Fatal("protected artwork was removed by Prune")
+	}
+	if s.Has("orphanOld") || s.Has("orphanMid") {
+		t.Fatal("oldest orphans should have been evicted")
+	}
+	if !s.Has("orphanNew") {
+		t.Fatal("newest orphan within budget should remain")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "artist-1.url")); err != nil {
+		t.Fatalf("non-image sidecar should remain: %v", err)
 	}
 }

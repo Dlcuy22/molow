@@ -1,6 +1,5 @@
 <script lang="ts">
-  import MusicNotes from "phosphor-svelte/lib/MusicNotes";
-  import { cover } from "../store";
+  import Cover from "../ui/Cover.svelte";
   import { displayTitle, isRemoteRef, subtitle } from "../format";
   import type { Snapshot } from "../../../bindings/github.com/dlcuy22/molow/backend/models";
 
@@ -28,20 +27,13 @@
   filename. Artwork, when the file carries it, is the one colour in this row.
 -->
 <div class="flex min-w-0 items-center gap-3">
-  {#if $cover}
-    <img
-      src={$cover}
-      alt={title === "" ? "Album artwork" : `Artwork for ${title}`}
-      class="size-16 shrink-0 rounded-[6px] border border-line object-cover"
-    />
-  {:else}
-    <div
-      class="grid size-16 shrink-0 place-items-center rounded-[6px] border border-line bg-surface"
-      aria-hidden="true"
-    >
-      <MusicNotes size="28" class="text-muted" />
-    </div>
-  {/if}
+  <Cover
+    id={snap.coverId}
+    alt={title === "" ? "Album artwork" : `Artwork for ${title}`}
+    size={64}
+    radius={6}
+    class="shrink-0 border border-line"
+  />
 
   <div class="min-w-0 flex-1">
     {#if title === ""}

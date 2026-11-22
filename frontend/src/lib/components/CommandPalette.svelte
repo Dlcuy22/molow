@@ -3,7 +3,7 @@
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
   import MusicNote from "phosphor-svelte/lib/MusicNote";
   import Pause from "phosphor-svelte/lib/Pause";
-  import { commands, previewConfig, queueCover, searchYTM, ytmCover } from "../store";
+  import { commands, previewConfig, searchYTM } from "../store";
   import { importYTM, libraries, libraryId } from "../library";
   import { matchQueue, hasTags, isPlaylistKind, playlistIDFromQuery, ytmKindLabel, ytmPlaylistResult, ytmResultRow, ytmSubtitle } from "../search";
   import { formatTime, isRemoteRef, subtitle } from "../format";
@@ -76,15 +76,9 @@
   // playlist is a catalogue walk, and a second Enter must not start it twice.
   let importing = $state(false);
 
-  // covers maps a row's identity to its artwork data URL, filled in only for
-  // the rows the observer has seen on screen. An identity with no entry draws
-  // the music note placeholder, so an absent value and a track with no art look
-  // alike, which is honest: neither has a cover to show yet.
-  let covers = $state<Record<string, string>>({});
-
-  // pending holds the identities whose artwork fetch is already in flight, so
-  // an intersection that fires twice for one row does not start two calls.
-  const pending = new Set<string>();
+  // failedCovers records row artwork URLs that 404ed in this open session so
+  // the row falls back cleanly to the music-note icon.
+  let failedCovers = $state<Record<string, true>>({});
 
   // ytmRows projects the current hits onto the queue row shape the list draws.
   // A playlist URL pasted into the field is prepended as a synthetic hit, so
@@ -172,12 +166,20 @@
     return row.path !== "" && !isRemoteRef(row.path);
   }
 
-  /** coverKey is the identity a row's artwork is stored under. A search hit is
-   *  keyed by its catalogue reference, because a non-playable hit has no path
-   *  but still has a cover; a queued track is keyed by its file path, which is
-   *  what the palette already used and what its cache is built on. */
-  function coverKey(row: PaletteRow): string {
-    return row.ytm ? row.coverId : row.path;
+  /** rowCoverSrc returns the Wails asset URL for a palette row's thumbnail. */
+  function rowCoverSrc(row: PaletteRow): string {
+    if (row.ytm) {
+      return row.ytm.videoId !== ""
+        ? `/art/ytm-search/${encodeURIComponent(row.ytm.videoId)}`
+        : "";
+    }
+    if (row.coverId === "") {
+      return "";
+    }
+
+    return row.path !== ""
+      ? `/art/${encodeURIComponent(row.coverId)}?path=${encodeURIComponent(row.path)}`
+      : `/art/${encodeURIComponent(row.coverId)}`;
   }
 
   // previewingPath is the row the Go preview is currently sounding, or "".
@@ -215,8 +217,7 @@
     if (open && !wasOpen) {
       query = "";
       cursor = 0;
-      covers = {};
-      pending.clear();
+      failedCovers = {};
       ytmResults = [];
       ytmLoading = false;
       ytmError = "";
@@ -389,58 +390,6 @@
     lastSource = now;
     previewMode = false;
     commands.previewStop();
-  });
-
-  // Art is fetched only for rows actually inside the list's viewport. An effect
-  // (which runs after the DOM is updated) wires the observer, rather than a
-  // per-row action: an action runs before this component's reset effect, so an
-  // action-created observer would be torn down on open. The effect re-runs when
-  // the result set changes, so new rows from a narrower query are watched too.
-  // This is what keeps a queue of thousands from decoding art nobody scrolled
-  // to.
-  $effect(() => {
-    // Track the exact result set, not just its length: a different query can
-    // yield the same count with different rows. The cover identity is the key,
-    // because a search hit is keyed by its reference and a queued track by its
-    // path.
-    const resultKey = matches.map(coverKey).join("|");
-    if (!open || !listEl || resultKey === "") {
-      return;
-    }
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (!entry.isIntersecting) {
-            continue;
-          }
-          const el = entry.target as HTMLElement;
-          const id = el.dataset.coverId ?? "";
-          const path = el.dataset.coverPath ?? "";
-          const artKey = el.dataset.coverKey ?? "";
-          if (artKey === "" || pending.has(artKey)) {
-            continue;
-          }
-          pending.add(artKey);
-          // A queued track's art comes from its file, a search hit's from the
-          // catalogue; the backend serves both as a data URL, but only the
-          // local one needs the content id it was asked for. A non-playable
-          // hit has no path, so its reference is what it asks with.
-          const req = isYTM ? ytmCover(artKey) : queueCover(id, path);
-          req.then((url) => {
-            if (url !== "") {
-              covers[artKey] = url;
-            }
-          });
-        }
-      },
-      { root: listEl, rootMargin: "0px" },
-    );
-    for (const el of listEl.querySelectorAll<HTMLElement>("[data-cover-key]")) {
-      observer.observe(el);
-    }
-
-    return () => observer.disconnect();
   });
 
   // Keep the cursor inside the current result set: a narrowing query can leave
@@ -917,6 +866,7 @@
           role="listbox"
         >
           {#each matches as row, i (isYTM ? `ytm-${row.ytm?.videoId || i}` : `${row.path}-${row.index}`)}
+            {@const coverSrc = rowCoverSrc(row)}
             <li
               id={`palette-row-${i}`}
               data-index={i}
@@ -931,9 +881,6 @@
               class:cursor-default={!isSelectable(row)}
               class:opacity-50={!isSelectable(row)}
               class:bg-selected={i === cursor}
-              data-cover-id={row.coverId}
-              data-cover-path={row.path}
-              data-cover-key={coverKey(row)}
               onmousedown={(e: MouseEvent) => {
                 // mousedown, not click: the input keeps focus so the list does
                 // not blur before the choice lands.
@@ -949,11 +896,16 @@
               ></span>
               <!-- Art when the track has it, the note otherwise. The slot is
                    one fixed size so rows do not jump when a cover arrives. -->
-              {#if covers[coverKey(row)]}
+              {#if coverSrc !== "" && !failedCovers[coverSrc]}
                 <img
-                  src={covers[coverKey(row)]}
+                  src={coverSrc}
                   alt=""
+                  loading="lazy"
+                  decoding="async"
                   class="size-8 shrink-0 rounded-[4px] border border-line object-cover"
+                  onerror={() => {
+                    failedCovers[coverSrc] = true;
+                  }}
                 />
               {:else}
                 <span class="grid size-8 shrink-0 place-items-center" aria-hidden="true">

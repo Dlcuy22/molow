@@ -1,8 +1,8 @@
 <script lang="ts">
   import { Browser } from "@wailsio/runtime";
   import DiscordLogo from "phosphor-svelte/lib/DiscordLogo";
-  import MusicNotes from "phosphor-svelte/lib/MusicNotes";
-  import { cover, discordStatus, player, artistAvatar } from "../store";
+  import Cover from "../ui/Cover.svelte";
+  import { discordStatus, player } from "../store";
   import { displayArtist, displayTitle, formatTime, isRemoteRef, ytmVideoId } from "../format";
 
   // The card mirrors what Discord draws from the activity: the verb and the
@@ -27,25 +27,13 @@
     snap.duration > 0 ? Math.min(1, Math.max(0, snap.position / snap.duration)) : 0,
   );
 
-  // The avatar is the one piece the snapshot does not carry as bytes. It is
-  // fetched once per artist and cached, and it is only shown for a remote
-  // track; a local file falls back to the application mark.
-  let avatar = $state("");
+  const avatarSrc = $derived(
+    snap.artistId !== "" ? `/art/avatar/${encodeURIComponent(snap.artistId)}` : "",
+  );
+  let avatarFailed = $state(false);
   $effect(() => {
-    const id = snap.artistId;
-    if (id === "") {
-      avatar = "";
-
-      return;
-    }
-    let cancelled = false;
-    artistAvatar(id).then((url) => {
-      if (!cancelled) avatar = url;
-    });
-
-    return () => {
-      cancelled = true;
-    };
+    void avatarSrc;
+    avatarFailed = false;
   });
 
   function open(url: string) {
@@ -78,26 +66,22 @@
 
     <div class="mt-2 flex items-start gap-3">
       <div class="relative size-[72px] shrink-0">
-        {#if $cover}
-          <img
-            src={$cover}
-            alt=""
-            class="size-[72px] rounded-[4px] border border-line object-cover"
-          />
-        {:else}
-          <div
-            class="grid size-[72px] place-items-center rounded-[4px] border border-line bg-surface"
-            aria-hidden="true"
-          >
-            <MusicNotes size="24" class="text-muted" />
-          </div>
-        {/if}
+        <Cover id={snap.coverId} alt="" size={72} radius={4} class="border border-line" />
         {#if isRemote}
           <span
             class="absolute -bottom-1 -right-1 grid size-6 place-items-center rounded-full border-2 border-bg bg-surface"
           >
-            {#if avatar}
-              <img src={avatar} alt="" class="size-full rounded-full object-cover" />
+            {#if avatarSrc && !avatarFailed}
+              <img
+                src={avatarSrc}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                class="size-full rounded-full object-cover"
+                onerror={() => {
+                  avatarFailed = true;
+                }}
+              />
             {:else}
               <DiscordLogo size="12" class="text-muted" aria-hidden="true" />
             {/if}

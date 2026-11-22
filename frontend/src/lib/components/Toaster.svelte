@@ -113,7 +113,7 @@
           <div class="flex flex-col items-center gap-2 px-4 py-3">
             <div class="grid size-24 place-items-center overflow-hidden bg-hover">
               {#if $cover}
-                <img src={$cover} alt="" class="size-full object-cover" />
+                <img src={$cover} alt="" decoding="async" class="size-full object-cover" />
               {:else}
                 <MusicNotes size="40" class="text-muted" aria-hidden="true" />
               {/if}

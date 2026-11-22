@@ -5,7 +5,7 @@
 // everything the components render from that single value. A component reads
 // `player` and calls a command; it never reaches across the bridge itself.
 
-import { get, writable } from "svelte/store";
+import { derived, get, writable } from "svelte/store";
 import { Events } from "@wailsio/runtime";
 import { PlayerService } from "../../bindings/github.com/dlcuy22/molow/backend";
 import type {
@@ -87,10 +87,11 @@ export const previewConfig = writable<PreviewConfig>({
   volume: 1,
 });
 
-/** cover is the current artwork as an inline data URL, or "" when the track has
- *  none. The snapshot carries only the artwork id, so the 4 Hz payload stays
- *  small and the bytes cross the bridge once, when the id changes. */
-export const cover = writable<string>("");
+/** cover is the current track's artwork URL on the Wails asset server, or ""
+ *  when the track has none. */
+export const cover = derived(player, ($p) =>
+  $p.coverId !== "" ? `/art/${encodeURIComponent($p.coverId)}` : "",
+);
 
 /** discordStatus mirrors the Discord Rich Presence integration: whether it is
  *  on and whether the IPC socket is open. It is read on connect and refreshed
@@ -133,14 +134,6 @@ export const sessionState = writable<SessionState>({
   volume: 1,
   sidebarWidth: 200,
 });
-
-/** queueCoverCache memoises the palette's per-track artwork by cover id, so a
- *  row scrolled back into view, or a shared album cover, is not re-fetched.
- *  The value is a promise so concurrent asks for the same id share one call.
- *  It is capped because a long session can scroll a large queue; the oldest
- *  entry is dropped first, matching the backend's own cover cache. */
-const queueCoverCache = new Map<string, Promise<string>>();
-const queueCoverCacheMax = 64;
 
 // The effect window is the same bundle as the main window, so it is told apart
 // by the route rather than a second build.
@@ -193,97 +186,6 @@ async function syncEffectChain(): Promise<void> {
   }
 }
 
-/** queueCover fetches a queued track's artwork once per cover id. An empty id
- *  means the track has no art, which resolves to "" without a call. */
-export function queueCover(id: string, path: string): Promise<string> {
-  if (id === "") {
-    return Promise.resolve("");
-  }
-  const hit = queueCoverCache.get(id);
-  if (hit) {
-    return hit;
-  }
-
-  const p = commands.queueCover(path).catch(() => "");
-  if (queueCoverCache.size >= queueCoverCacheMax) {
-    const oldest = queueCoverCache.keys().next().value;
-    if (oldest !== undefined) {
-      queueCoverCache.delete(oldest);
-    }
-  }
-  queueCoverCache.set(id, p);
-
-  return p;
-}
-
-/** ytmCover memoises YouTube Music artwork by the reference the row carries. It
- *  is separate from the queue cache because its key is the reference, not a
- *  file path, and a search hit is drawn before it is ever queued. */
-const ytmCoverCache = new Map<string, Promise<string>>();
-
-/** artistAvatarCache memoises an artist's avatar data URL by browse id. The
- *  presence uses the remote URL directly; the settings preview asks for the
- *  bytes, because the webview cannot be relied on to load the remote image. */
-const artistAvatarCache = new Map<string, Promise<string>>();
-
-/** artistAvatar fetches an artist's avatar once per browse id, as a data URL.
- *  An empty id resolves to "" without a call. */
-export function artistAvatar(artistID: string): Promise<string> {
-  if (artistID === "") {
-    return Promise.resolve("");
-  }
-  const hit = artistAvatarCache.get(artistID);
-  if (hit) {
-    return hit;
-  }
-
-  const p = commands.artistAvatar(artistID).catch(() => "");
-  if (artistAvatarCache.size >= queueCoverCacheMax) {
-    const oldest = artistAvatarCache.keys().next().value;
-    if (oldest !== undefined) {
-      artistAvatarCache.delete(oldest);
-    }
-  }
-  artistAvatarCache.set(artistID, p);
-
-  return p;
-}
-
-/** ytmCover fetches a YouTube Music track's artwork once per reference. The
- *  backend downloads and re-encodes it, so the webview never talks to the
- *  image host itself. */
-export function ytmCover(ref: string): Promise<string> {
-  if (ref === "") {
-    return Promise.resolve("");
-  }
-  const hit = ytmCoverCache.get(ref);
-  if (hit) {
-    return hit;
-  }
-
-  const p = commands
-    .ytmCover(ref)
-    .catch(() => "")
-    .then((url) => {
-      // Do not pin an empty result: the art may not have been fetched yet when
-      // the row was first drawn, and a later ask should be able to pick it up.
-      if (url === "") {
-        ytmCoverCache.delete(ref);
-      }
-
-      return url;
-    });
-  if (ytmCoverCache.size >= queueCoverCacheMax) {
-    const oldest = ytmCoverCache.keys().next().value;
-    if (oldest !== undefined) {
-      ytmCoverCache.delete(oldest);
-    }
-  }
-  ytmCoverCache.set(ref, p);
-
-  return p;
-}
-
 /** ytmSearch memoises a settled query's results, so arrowing back through a
  *  half-typed query and returning does not spend a request. A failure is not
  *  cached, so a retry reaches the network. */
@@ -319,37 +221,6 @@ export function searchYTM(query: string): Promise<YTMResult[]> {
   ytmSearchCache.set(key, p);
 
   return p;
-}
-
-/** coverId tracks which artwork the current cover value belongs to, so a late
- *  reply for a track that already changed is dropped instead of shown. */
-let coverId = "";
-
-/** syncCover fetches the artwork for an id at most once. A repeat id (a
- *  redraw, or returning to a track) keeps the value already on screen. */
-function syncCover(id: string): void {
-  if (id === coverId) {
-    return;
-  }
-  coverId = id;
-  if (id === "") {
-    cover.set("");
-
-    return;
-  }
-
-  PlayerService.Cover(id).then(
-    (url) => {
-      if (coverId === id) {
-        cover.set(url);
-      }
-    },
-    () => {
-      if (coverId === id) {
-        cover.set("");
-      }
-    },
-  );
 }
 
 /** busy is true while a file or folder is being resolved, which is the one slow
@@ -405,7 +276,6 @@ function withLayoutBars(cfg: SpectrumConfig, style: string | undefined): Spectru
 export function connect(): () => void {
   const apply = (snap: Snapshot) => {
     player.set(snap);
-    syncCover(snap.coverId);
     // The volume override reconciles here, on the one place a server value
     // lands, so the slider and the shortcuts drop it together.
     syncVolumeFromServer(snap.volume);
@@ -535,14 +405,10 @@ export const commands = {
   // walk a folder tree, so they also drive the busy flag.
   openFiles: () => run(() => PlayerService.OpenFiles()),
   openFolder: () => run(() => PlayerService.OpenFolder()),
-  // queueCover is the palette's lazy artwork fetch. It is a plain read, not an
-  // invoke: a failure means "no art", which is not an error worth surfacing.
-  queueCover: (path: string) => PlayerService.QueueCover(path),
   // YouTube Music is catalogue work, not engine work. A search is a plain read
   // whose failure the palette reports in its own body, next to the query; a
   // play is an engine command like any other, so it goes through invoke and
-  // lands on the error line. ytmCover reuses the same read path as queueCover,
-  // because the backend serves both as a data URL.
+  // lands on the error line.
   searchYTM: (query: string) => PlayerService.SearchYTMSongs(query),
   insertNextYTM: (videoID: string) => invoke(PlayerService.InsertNextYTM(videoID)),
   appendYTM: (videoID: string) => invoke(PlayerService.AppendYTM(videoID)),
@@ -550,10 +416,6 @@ export const commands = {
   // It is an engine command like a play, so a rejection lands on the error line;
   // the catalogue fetch happens on the Go side.
   addYTMPlaylist: (input: string) => invoke(PlayerService.AddYTMPlaylist(input)),
-  ytmCover: (ref: string) => PlayerService.QueueCover(ref),
-  // artistAvatar is the settings preview's artwork read. Like queueCover it is
-  // a plain read: a failure means "no avatar", not an error worth surfacing.
-  artistAvatar: (artistID: string) => PlayerService.ArtistAvatar(artistID),
   // setDiscordEnabled flips Rich Presence. The status is re-read after the
   // call so the panel shows the true connection state rather than a guess.
   // The settings document is re-read too: the backend records the toggle in

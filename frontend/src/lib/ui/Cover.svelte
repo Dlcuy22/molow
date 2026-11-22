@@ -1,9 +1,9 @@
 <script lang="ts">
   import MusicNotes from "phosphor-svelte/lib/MusicNotes";
-  import { coverUrls, requestCover } from "../covers";
 
   let {
     id = "",
+    src: srcOverride = "",
     alt = "",
     size = 40,
     radius = 8,
@@ -11,6 +11,7 @@
     class: cls = "",
   }: {
     id?: string;
+    src?: string;
     alt?: string;
     size?: number;
     radius?: number;
@@ -18,27 +19,32 @@
     class?: string;
   } = $props();
 
-  const src = $derived(id === "" ? "" : ($coverUrls[id] ?? ""));
+  const src = $derived(srcOverride || (id !== "" ? `/art/${encodeURIComponent(id)}` : ""));
   const style = $derived(
     fill
       ? `width:100%;height:auto;aspect-ratio:1;border-radius:${radius}px`
       : `width:${size}px;height:${size}px;border-radius:${radius}px`,
   );
 
+  let failed = $state(false);
   $effect(() => {
-    if (id !== "") {
-      requestCover(id);
-    }
+    void src;
+    failed = false;
   });
 </script>
 
-{#if src}
+{#if src && !failed}
   <img
     {src}
     {alt}
+    loading="lazy"
+    decoding="async"
     class="{cls} object-cover"
     style={style}
     draggable="false"
+    onerror={() => {
+      failed = true;
+    }}
   />
 {:else}
   <div

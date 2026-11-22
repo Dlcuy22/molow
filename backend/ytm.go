@@ -365,6 +365,10 @@ type ytmProvider struct {
 	// catalogTrack resolves metadata and cached CoverID from the SQLite library
 	// when the in-memory index does not have the track yet (e.g. after restart).
 	catalogTrack func(ref string) (ytmTrack, bool)
+
+	// saveRemoteMeta backfills hydrated thumbnail URL, artist ID, and album
+	// back into SQLite when a catalogued track predates those columns.
+	saveRemoteMeta func(ref, thumbnailURL, artistID, album string)
 }
 
 // ytmCalls is one consistent snapshot of the provider's network surface. A
@@ -829,12 +833,14 @@ func (p *ytmProvider) playlist(ctx context.Context, id string) ([]YTMResult, str
 // that carries the album and the artwork.
 func (p *ytmProvider) trackFor(ref string, streams *ytm.Streams) ytmTrack {
 	t, _ := p.index.lookup(ref)
-	if p.catalogTrack != nil && (t.CoverID == "" || t.Title == "" || t.Artist == "" || t.Album == "") {
+	if p.catalogTrack != nil && (t.CoverID == "" || t.Title == "" || t.Artist == "" || t.Album == "" || t.ThumbnailURL == "" || t.ArtistID == "") {
 		if cat, ok := p.catalogTrack(ref); ok {
 			t.Title = firstNonEmpty(t.Title, cat.Title)
 			t.Artist = firstNonEmpty(t.Artist, cat.Artist)
 			t.Album = firstNonEmpty(t.Album, cat.Album)
 			t.CoverID = firstNonEmpty(t.CoverID, cat.CoverID)
+			t.ThumbnailURL = firstNonEmpty(t.ThumbnailURL, cat.ThumbnailURL)
+			t.ArtistID = firstNonEmpty(t.ArtistID, cat.ArtistID)
 			if t.DurationMs <= 0 {
 				t.DurationMs = cat.DurationMs
 			}
@@ -873,37 +879,61 @@ func (p *ytmProvider) artistArtFor(ctx context.Context, ref string) string {
 	return url
 }
 
+// hydrateSongMeta ensures a cached YTM track has its thumbnail URL, artist ID,
+// and album populated. When any of those is missing and the watch endpoint has
+// not been queried yet, one loadSong call fills all three and backfills SQLite.
+func (p *ytmProvider) hydrateSongMeta(ctx context.Context, ref string) ytmTrack {
+	t, ok := p.index.lookup(ref)
+	if !ok && p.catalogTrack != nil {
+		if cat, found := p.catalogTrack(ref); found {
+			t = cat
+			p.index.put(cat)
+			t, _ = p.index.lookup(ref)
+		}
+	}
+	t.ID = firstNonEmpty(t.ID, ytmID(ref))
+	if t.ID == "" {
+		return t
+	}
+	if t.AlbumLoaded || (t.ThumbnailURL != "" && t.ArtistID != "" && t.Album != "") {
+		return t
+	}
+
+	loadSong := p.calls().loadSong
+	if loadSong == nil {
+		return t
+	}
+
+	song, err := loadSong(ctx, t.ID)
+	if err != nil || song == nil {
+		// Leave AlbumLoaded false on a transient failure so a later play retries.
+		return t
+	}
+
+	t.ThumbnailURL = firstNonEmpty(t.ThumbnailURL, ytmThumb(song.Thumbnail))
+	t.ArtistID = firstNonEmpty(t.ArtistID, ytmFirstArtistID(song.Artists))
+	t.Album = firstNonEmpty(t.Album, ytmAlbum(song.Album))
+	t.AlbumLoaded = true
+	p.index.put(t)
+	if p.saveRemoteMeta != nil {
+		p.saveRemoteMeta(ref, t.ThumbnailURL, t.ArtistID, t.Album)
+	}
+
+	return t
+}
+
 // albumFor returns the album name for a cached track, looking it up once and
-// caching the outcome. The search and playlist responses name the artist and
-// the cover but carry no album name, so the one call that does (the watch
-// endpoint) is made lazily, off the playback path. A track with no album is
-// cached too, so it is not queried on every play.
+// caching the outcome.
 func (p *ytmProvider) albumFor(ctx context.Context, ref string) string {
 	t, ok := p.index.lookup(ref)
 	if !ok {
 		return ""
 	}
-	if t.AlbumLoaded {
+	if t.AlbumLoaded || t.Album != "" {
 		return t.Album
 	}
-	if t.Album != "" {
-		return t.Album
-	}
-	loadSong := p.calls().loadSong
-	if loadSong == nil {
-		return ""
-	}
 
-	song, err := loadSong(ctx, t.ID)
-	if err != nil || song == nil {
-		// Do not mark a transient failure as "no album": leave it unresolved so
-		// a later play can try again.
-		return ""
-	}
-	album := ytmAlbum(song.Album)
-	p.index.setAlbum(ref, album)
-
-	return album
+	return p.hydrateSongMeta(ctx, ref).Album
 }
 
 // thumbFor fetches one thumbnail, best effort. Art is decorative, so a failure

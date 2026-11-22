@@ -125,6 +125,9 @@ func (p *ytmProvider) logger() *slog.Logger {
 // artistURLPath returns a dedicated .url sidecar inside the artwork cache dir
 // so plain URL text never mixes with canonical .jpg/.png image files.
 func (p *ytmProvider) artistURLPath(artistID string) string {
+	if p.art == nil {
+		return ""
+	}
 	dir := p.art.Dir()
 	if dir == "" {
 		return ""
@@ -135,37 +138,62 @@ func (p *ytmProvider) artistURLPath(artistID string) string {
 	return filepath.Join(dir, "artist-"+strconv.FormatUint(h.Sum64(), 16)+".url")
 }
 
+// cachedArtistArt checks the in-memory index and the disk .url sidecar without
+// touching the network. A returned true with an empty URL means the artist was
+// already looked up and has no avatar.
+func (p *ytmProvider) cachedArtistArt(artistID string) (string, bool) {
+	if artistID == "" {
+		return "", false
+	}
+	if p.artists != nil {
+		if url, ok := p.artists.lookup(artistID); ok {
+			return url, true
+		}
+	}
+	urlPath := p.artistURLPath(artistID)
+	if urlPath != "" {
+		if data, err := os.ReadFile(urlPath); err == nil && len(data) > 0 {
+			url := string(data)
+			if p.artists != nil {
+				p.artists.put(artistID, url)
+			}
+
+			return url, true
+		}
+	}
+
+	return "", false
+}
+
 // artistArt resolves an artist's avatar URL. It reads the in-memory index, then
 // the disk cache, then the browse endpoint, caching the outcome at every level.
 // It never returns an error: an avatar is decorative, so a failure is "no
 // avatar" rather than a reason to disturb the track.
 func (p *ytmProvider) artistArt(ctx context.Context, artistID string) string {
-	loadArtist := p.calls().loadArtist
-	if artistID == "" || loadArtist == nil {
+	if artistID == "" {
 		return ""
 	}
-	if url, ok := p.artists.lookup(artistID); ok {
+	if url, ok := p.cachedArtistArt(artistID); ok {
 		return url
 	}
-
-	urlPath := p.artistURLPath(artistID)
-	if urlPath != "" {
-		if data, err := os.ReadFile(urlPath); err == nil && len(data) > 0 {
-			url := string(data)
-			p.artists.put(artistID, url)
-
-			return url
-		}
+	loadArtist := p.calls().loadArtist
+	if loadArtist == nil {
+		return ""
 	}
 
 	artist, err := loadArtist(ctx, artistID)
 	if err != nil || artist == nil {
-		p.artists.put(artistID, "")
+		if p.artists != nil {
+			p.artists.put(artistID, "")
+		}
 
 		return ""
 	}
 	url := ytmThumb(artist.Thumbnail)
-	p.artists.put(artistID, url)
+	if p.artists != nil {
+		p.artists.put(artistID, url)
+	}
+	urlPath := p.artistURLPath(artistID)
 	if url != "" && urlPath != "" {
 		if err := os.WriteFile(urlPath, []byte(url), 0o644); err != nil {
 			p.logger().Warn("artist art: cache write failed", "artist", artistID, "error", err)

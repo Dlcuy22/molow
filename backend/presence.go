@@ -50,13 +50,21 @@ type DiscordStatus struct {
 	Connected bool `json:"connected"`
 }
 
+type presenceManager interface {
+	Start()
+	Stop()
+	Connected() bool
+	Update(discordrpc.TrackInfo)
+	Clear()
+}
+
 // presenceState is the mutable half of the integration. It is kept in one
 // struct so the guard covers the manager, the uploader and the track the last
 // activity described.
 type presenceState struct {
 	mu       sync.Mutex
 	enabled  bool
-	manager  *discordrpc.Manager
+	manager  presenceManager
 	uploader *discordrpc.ImageUploader
 
 	// lastPath is the reference of the track the current activity describes, so
@@ -215,14 +223,45 @@ func (s *PlayerService) syncPresence(snap Snapshot) {
 		return
 	}
 	s.presence.lastPath = snap.Path
+
+	if isYTMRef(snap.Path) {
+		large, small, album, smallReady, albumLoaded := s.immediateYTMArt(snap.Path)
+		if snap.Album == "" && album != "" {
+			snap.Album = album
+		}
+		// Publish immediately once cover and artist art are known locally so
+		// streamed tracks never flash default application assets.
+		ready := large != "" && smallReady
+		needAsync := !ready || (snap.Album == "" && !albumLoaded)
+		if needAsync {
+			// The Add is made under the same lock stopDiscord takes to clear the
+			// manager, and stopDiscord clears it before waiting, so no Add can
+			// race the Wait.
+			s.presence.wg.Add(1)
+		}
+		s.presence.mu.Unlock()
+
+		if ready {
+			mgr.Update(presenceTrack(snap, large, small))
+		}
+		if needAsync {
+			go func() {
+				defer s.presence.wg.Done()
+				s.resolvePresenceArt(snap)
+			}()
+		}
+
+		return
+	}
+
 	// The Add is made under the same lock stopDiscord takes to clear the
 	// manager, and stopDiscord clears it before waiting, so no Add can race the
 	// Wait.
 	s.presence.wg.Add(1)
 	s.presence.mu.Unlock()
 
-	// The text-only activity lands first, so the presence appears the moment the
-	// track does. The cover and avatar follow in the background.
+	// Local files upload embedded artwork to a temporary host, so publish text
+	// immediately and attach the uploaded cover when the upload completes.
 	mgr.Update(presenceTrack(snap, "", ""))
 
 	go func() {
@@ -286,21 +325,89 @@ func presenceTrack(snap Snapshot, largeImage, smallImage string) discordrpc.Trac
 	return info
 }
 
+// immediateYTMArt reads already-cached cover, artist avatar, and album metadata
+// for a YouTube Music track without making network calls.
+func (s *PlayerService) immediateYTMArt(ref string) (large, small, album string, smallReady, albumLoaded bool) {
+	var (
+		t  ytmTrack
+		ok bool
+	)
+	if s.ytm != nil {
+		t, ok = s.ytm.lookup(ref)
+	}
+	if !ok || t.ThumbnailURL == "" || t.ArtistID == "" {
+		if cat, found := s.catalogYTMTrack(ref); found {
+			if s.ytm != nil {
+				s.ytm.put(cat)
+				t, _ = s.ytm.lookup(ref)
+			} else {
+				t = cat
+			}
+		}
+	}
+
+	large = t.ThumbnailURL
+	album = t.Album
+	albumLoaded = t.AlbumLoaded
+
+	switch {
+	case t.ArtistThumbURL != "":
+		small = t.ArtistThumbURL
+		smallReady = true
+	case t.ArtistID != "" && s.ytmProv != nil:
+		if url, known := s.ytmProv.cachedArtistArt(t.ArtistID); known {
+			small = url
+			smallReady = true
+			if url != "" && s.ytm != nil {
+				s.ytm.setArtist(ref, t.ArtistID, url)
+			}
+		}
+	case t.AlbumLoaded && t.ArtistID == "":
+		smallReady = true
+	}
+
+	return large, small, album, smallReady, albumLoaded
+}
+
+// ytmFallbackThumbURL returns the deterministic YouTube still URL for ref when
+// neither the catalogue index nor loadSong supplied a cover URL.
+func ytmFallbackThumbURL(ref string) string {
+	id := ytmID(ref)
+	if id == "" {
+		return ""
+	}
+
+	return "https://i.ytimg.com/vi/" + id + "/hqdefault.jpg"
+}
+
 // resolvePresenceArt resolves the cover, avatar and album for a track, then
-// re-sends the activity. It runs off the pump; a failure leaves the text-only
+// re-sends the activity. It runs off the pump; a failure leaves the existing
 // presence in place rather than clearing it.
 func (s *PlayerService) resolvePresenceArt(snap Snapshot) {
-	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	parent := s.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 
-	large := s.coverURL(ctx, snap)
-	small := s.artistURL(ctx, snap)
-	// A remote track's album is not in the search response, so it is resolved
-	// here. A local file's album already rides in its tags.
-	if snap.Album == "" && isYTMRef(snap.Path) {
-		if album := s.ytmProv.albumFor(ctx, snap.Path); album != "" {
-			snap.Album = album
+	var large, small string
+	if isYTMRef(snap.Path) {
+		if s.ytmProv != nil {
+			t := s.ytmProv.hydrateSongMeta(ctx, snap.Path)
+			large = t.ThumbnailURL
+			if snap.Album == "" && t.Album != "" {
+				snap.Album = t.Album
+			}
+			small = s.ytmProv.artistArtFor(ctx, snap.Path)
+		} else {
+			large = s.coverURL(ctx, snap)
 		}
+		if large == "" {
+			large = ytmFallbackThumbURL(snap.Path)
+		}
+	} else {
+		large = s.coverURL(ctx, snap)
 	}
 
 	s.presence.mu.Lock()
@@ -355,14 +462,4 @@ func (s *PlayerService) coverURL(ctx context.Context, snap Snapshot) string {
 	}
 
 	return url
-}
-
-// artistURL returns the small image: the artist's avatar for a remote track,
-// and nothing for a local file, which has no catalogue artist to look up.
-func (s *PlayerService) artistURL(ctx context.Context, snap Snapshot) string {
-	if !isYTMRef(snap.Path) {
-		return ""
-	}
-
-	return s.ytmProv.artistArtFor(ctx, snap.Path)
 }

@@ -774,17 +774,20 @@ func (s *PlayerService) catalogYTM(dst *local.Local, row YTMResult, coverID stri
 	})
 
 	return dst.ImportRemote(library.KindYTM, sqlite.TrackRow{
-		NativeID:   row.VideoID,
-		Title:      row.Title,
-		Artist:     row.Artist,
-		Album:      row.Album,
-		DurationMs: row.DurationMs,
-		CoverID:    coverID,
+		NativeID:     row.VideoID,
+		Title:        row.Title,
+		Artist:       row.Artist,
+		Album:        row.Album,
+		DurationMs:   row.DurationMs,
+		CoverID:      coverID,
+		ThumbnailURL: row.Thumbnail,
+		ArtistID:     row.ArtistID,
 	})
 }
 
-// catalogYTMTrack reads a catalogued YTM row from SQLite so playback and queue
-// rows keep their title, artist, album and cached CoverID across restarts.
+// catalogYTMTrack reads a catalogued YTM row from SQLite so playback, queue
+// rows and Discord presence keep their metadata, cached CoverID and remote
+// artwork links across restarts.
 func (s *PlayerService) catalogYTMTrack(ref string) (ytmTrack, bool) {
 	if !isYTMRef(ref) {
 		return ytmTrack{}, false
@@ -799,15 +802,35 @@ func (s *PlayerService) catalogYTMTrack(ref string) (ytmTrack, bool) {
 	if err != nil || !ok {
 		return ytmTrack{}, false
 	}
+	remote, _, _ := store.TrackRemoteMeta(ref)
 
 	return ytmTrack{
-		ID:         tr.NativeID,
-		Title:      tr.Title,
-		Artist:     tr.Artist,
-		Album:      tr.Album,
-		DurationMs: tr.DurationMs,
-		CoverID:    tr.CoverID,
+		ID:           tr.NativeID,
+		Title:        tr.Title,
+		Artist:       tr.Artist,
+		Album:        tr.Album,
+		DurationMs:   tr.DurationMs,
+		CoverID:      tr.CoverID,
+		ThumbnailURL: remote.ThumbnailURL,
+		ArtistID:     remote.ArtistID,
 	}, true
+}
+
+// backfillYTMTrackMeta persists hydrated remote metadata onto pre-migration
+// catalogued tracks so later restarts do not need another song lookup.
+func (s *PlayerService) backfillYTMTrackMeta(ref, thumbnailURL, artistID, album string) {
+	if !isYTMRef(ref) {
+		return
+	}
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return
+	}
+	if err := store.BackfillTrackRemoteMeta(ref, thumbnailURL, artistID, album); err != nil {
+		s.logger().Debug("library: backfill remote meta failed", "ref", ref, "error", err)
+	}
 }
 
 // Liked reports whether a catalogued ref carries a like. An uncatalogued path

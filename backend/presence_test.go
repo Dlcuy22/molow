@@ -2,8 +2,13 @@ package backend
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 
+	"github.com/dlcuy22/molow/internal/discordrpc"
+	"github.com/dlcuy22/molow/internal/library"
+	"github.com/dlcuy22/molow/internal/library/sqlite"
 	ytm "github.com/dlcuy22/ytm-go"
 )
 
@@ -168,5 +173,277 @@ func TestDiscordEnabledRoundTrips(t *testing.T) {
 	}
 	if loadAppSettings(quietLog, "reloaded").Discord.Enabled {
 		t.Fatal("disabled state did not persist")
+	}
+}
+
+type fakePresenceManager struct {
+	mu      sync.Mutex
+	updates []discordrpc.TrackInfo
+	clears  int
+}
+
+func (f *fakePresenceManager) Start()          {}
+func (f *fakePresenceManager) Stop()           {}
+func (f *fakePresenceManager) Connected() bool { return true }
+func (f *fakePresenceManager) Clear() {
+	f.mu.Lock()
+	f.clears++
+	f.mu.Unlock()
+}
+func (f *fakePresenceManager) Update(info discordrpc.TrackInfo) {
+	f.mu.Lock()
+	f.updates = append(f.updates, info)
+	f.mu.Unlock()
+}
+func (f *fakePresenceManager) snapshot() []discordrpc.TrackInfo {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]discordrpc.TrackInfo(nil), f.updates...)
+}
+
+// TestSyncPresenceStreamedUsesCachedLinksWithoutPlaceholder pins the hot path:
+// when a streamed track's cover URL and artist avatar are already cached, the
+// very first presence update carries both links and never flashes default assets.
+func TestSyncPresenceStreamedUsesCachedLinksWithoutPlaceholder(t *testing.T) {
+	index := newYTMIndex()
+	index.put(ytmTrack{
+		ID:           "vid1",
+		Title:        "Mesmerizer",
+		Artist:       "32ki",
+		Album:        "Mesmerizer",
+		ThumbnailURL: "https://lh3.googleusercontent.com/cover",
+		ArtistID:     "UCartist1",
+	})
+	prov := &ytmProvider{
+		index:   index,
+		artists: newYTMArtistIndex(),
+	}
+	prov.artists.put("UCartist1", "https://lh3.googleusercontent.com/avatar")
+
+	mgr := &fakePresenceManager{}
+	svc := &PlayerService{
+		ctx:     context.Background(),
+		ytm:     index,
+		ytmProv: prov,
+		presence: presenceState{
+			enabled: true,
+			manager: mgr,
+		},
+	}
+
+	svc.syncPresence(Snapshot{
+		State:  "playing",
+		Path:   "ytm:vid1",
+		Title:  "Mesmerizer",
+		Artist: "32ki",
+		Album:  "Mesmerizer",
+	})
+	svc.presence.wg.Wait()
+
+	updates := mgr.snapshot()
+	if len(updates) != 1 {
+		t.Fatalf("updates = %d, want 1 (%+v)", len(updates), updates)
+	}
+	if updates[0].LargeImage != "https://lh3.googleusercontent.com/cover" || updates[0].SmallImage != "https://lh3.googleusercontent.com/avatar" {
+		t.Fatalf("assets = %q / %q, want cached direct links", updates[0].LargeImage, updates[0].SmallImage)
+	}
+}
+
+// TestSyncPresenceStreamedHydratesFromSQLiteAfterRestart verifies a catalogued
+// YTM track played after restart restores its persisted thumbnail_url and
+// artist_id without calling loadSong or sending default assets.
+func TestSyncPresenceStreamedHydratesFromSQLiteAfterRestart(t *testing.T) {
+	store, err := sqlite.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.AddLibrary(library.Library{
+		ID: "local:ytm", Kind: library.KindLocal, Name: "Imported",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertRemoteTrack("local:ytm", library.KindYTM, sqlite.TrackRow{
+		NativeID:     "vid2",
+		Title:        "Mesmerizer",
+		Artist:       "32ki",
+		Album:        "Mesmerizer",
+		ThumbnailURL: "https://lh3.googleusercontent.com/persisted",
+		ArtistID:     "UCartist2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	loadSongCalls := 0
+	index := newYTMIndex()
+	prov := &ytmProvider{
+		index:   index,
+		artists: newYTMArtistIndex(),
+		loadSong: func(context.Context, string) (*ytm.Song, error) {
+			loadSongCalls++
+			return nil, errors.New("unexpected loadSong")
+		},
+	}
+	prov.artists.put("UCartist2", "https://lh3.googleusercontent.com/avatar2")
+
+	mgr := &fakePresenceManager{}
+	svc := &PlayerService{
+		ctx:      context.Background(),
+		ytm:      index,
+		ytmProv:  prov,
+		libStore: store,
+		presence: presenceState{
+			enabled: true,
+			manager: mgr,
+		},
+	}
+	prov.catalogTrack = svc.catalogYTMTrack
+
+	svc.syncPresence(Snapshot{
+		State:  "playing",
+		Path:   "ytm:vid2",
+		Title:  "Mesmerizer",
+		Artist: "32ki",
+		Album:  "Mesmerizer",
+	})
+	svc.presence.wg.Wait()
+
+	if loadSongCalls != 0 {
+		t.Fatalf("loadSong called %d times, want 0", loadSongCalls)
+	}
+	updates := mgr.snapshot()
+	if len(updates) != 1 {
+		t.Fatalf("updates = %d, want 1 (%+v)", len(updates), updates)
+	}
+	if updates[0].LargeImage != "https://lh3.googleusercontent.com/persisted" || updates[0].SmallImage != "https://lh3.googleusercontent.com/avatar2" {
+		t.Fatalf("assets = %q / %q", updates[0].LargeImage, updates[0].SmallImage)
+	}
+}
+
+// TestSyncPresenceStreamedPreMigrationHydratesWithoutPlaceholder verifies a
+// pre-migration catalogued YTM track (missing thumbnail_url/artist_id) skips
+// the empty placeholder, hydrates all fields in one loadSong call, backfills
+// SQLite, and publishes real artwork.
+func TestSyncPresenceStreamedPreMigrationHydratesWithoutPlaceholder(t *testing.T) {
+	store, err := sqlite.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.AddLibrary(library.Library{
+		ID: "local:ytm", Kind: library.KindLocal, Name: "Imported",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertRemoteTrack("local:ytm", library.KindYTM, sqlite.TrackRow{
+		NativeID: "vid3",
+		Title:    "Mesmerizer",
+		Artist:   "32ki",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	loadSongCalls := 0
+	index := newYTMIndex()
+	prov := &ytmProvider{
+		index:   index,
+		artists: newYTMArtistIndex(),
+		loadSong: func(context.Context, string) (*ytm.Song, error) {
+			loadSongCalls++
+			return &ytm.Song{
+				ID:        "vid3",
+				Thumbnail: &ytm.ThumbnailProvider{UrlA: "https://lh3.googleusercontent.com/hydrated"},
+				Artists:   []ytm.Artist{{ID: "UCartist3", Name: "32ki"}},
+				Album:     &ytm.Playlist{Name: "Mesmerizer EP"},
+			}, nil
+		},
+		loadArtist: func(context.Context, string) (*ytm.Artist, error) {
+			return &ytm.Artist{
+				ID:        "UCartist3",
+				Thumbnail: &ytm.ThumbnailProvider{UrlA: "https://lh3.googleusercontent.com/avatar3"},
+			}, nil
+		},
+	}
+
+	mgr := &fakePresenceManager{}
+	svc := &PlayerService{
+		ctx:      context.Background(),
+		ytm:      index,
+		ytmProv:  prov,
+		libStore: store,
+		presence: presenceState{
+			enabled: true,
+			manager: mgr,
+		},
+	}
+	prov.catalogTrack = svc.catalogYTMTrack
+	prov.saveRemoteMeta = svc.backfillYTMTrackMeta
+
+	svc.syncPresence(Snapshot{
+		State:  "playing",
+		Path:   "ytm:vid3",
+		Title:  "Mesmerizer",
+		Artist: "32ki",
+	})
+	svc.presence.wg.Wait()
+
+	if loadSongCalls != 1 {
+		t.Fatalf("loadSong called %d times, want 1", loadSongCalls)
+	}
+	updates := mgr.snapshot()
+	if len(updates) != 1 {
+		t.Fatalf("updates = %d, want 1 (no placeholder send): %+v", len(updates), updates)
+	}
+	u := updates[0]
+	if u.LargeImage != "https://lh3.googleusercontent.com/hydrated" || u.SmallImage != "https://lh3.googleusercontent.com/avatar3" || u.LargeText != "Mesmerizer EP" {
+		t.Fatalf("update = %+v", u)
+	}
+
+	meta, ok, err := store.TrackRemoteMeta("ytm:vid3")
+	if err != nil || !ok || meta.ThumbnailURL != "https://lh3.googleusercontent.com/hydrated" || meta.ArtistID != "UCartist3" {
+		t.Fatalf("SQLite backfill = (%+v, %v, %v)", meta, ok, err)
+	}
+}
+
+// TestSyncPresenceStreamedFallbackStillAvoidsDefaultLargeAsset verifies that
+// even if loadSong fails offline, a streamed track falls back to YouTube's
+// deterministic thumbnail URL rather than the default application icon.
+func TestSyncPresenceStreamedFallbackStillAvoidsDefaultLargeAsset(t *testing.T) {
+	index := newYTMIndex()
+	prov := &ytmProvider{
+		index:   index,
+		artists: newYTMArtistIndex(),
+		loadSong: func(context.Context, string) (*ytm.Song, error) {
+			return nil, errors.New("offline")
+		},
+	}
+
+	mgr := &fakePresenceManager{}
+	svc := &PlayerService{
+		ctx:     context.Background(),
+		ytm:     index,
+		ytmProv: prov,
+		presence: presenceState{
+			enabled: true,
+			manager: mgr,
+		},
+	}
+
+	svc.syncPresence(Snapshot{
+		State:  "playing",
+		Path:   "ytm:INnieyJ_QPE",
+		Title:  "Mesmerizer",
+		Artist: "32ki",
+	})
+	svc.presence.wg.Wait()
+
+	updates := mgr.snapshot()
+	if len(updates) != 1 {
+		t.Fatalf("updates = %d, want 1 (%+v)", len(updates), updates)
+	}
+	want := "https://i.ytimg.com/vi/INnieyJ_QPE/hqdefault.jpg"
+	if updates[0].LargeImage != want {
+		t.Fatalf("LargeImage = %q, want %q", updates[0].LargeImage, want)
 	}
 }

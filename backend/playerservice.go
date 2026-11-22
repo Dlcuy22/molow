@@ -247,6 +247,7 @@ func newPlayerService() *PlayerService {
 	s.romanizer.wants = s.romanizationWanted
 	s.ytmProv.tracks = tracks
 	s.ytmProv.catalogTrack = s.catalogYTMTrack
+	s.ytmProv.saveRemoteMeta = s.backfillYTMTrackMeta
 
 	return s
 }

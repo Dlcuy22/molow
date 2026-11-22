@@ -37,6 +37,7 @@ export type {
     Snapshot,
     SpectrumConfig,
     StreamSettings,
+    TrackCacheClear,
     YTMImport,
     YTMResult
 } from "./models.js";

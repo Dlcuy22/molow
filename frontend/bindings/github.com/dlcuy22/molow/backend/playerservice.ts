@@ -150,6 +150,14 @@ export function ClearLyricsCache(): $CancellablePromise<$models.LyricsCacheClear
 }
 
 /**
+ * ClearTrackCache removes every cached online track file that is not currently
+ * open for playback.
+ */
+export function ClearTrackCache(): $CancellablePromise<$models.TrackCacheClear> {
+    return $Call.ByID(1357266109);
+}
+
+/**
  * ConfigureSpectrum replaces the visualizer shape. The frame is rebuilt, so the
  * range, the points and the transform size all take effect on the next tick.
  * Enabled is not part of the shape: it only gates the pump, so it can be
@@ -163,16 +171,16 @@ export function ConfigureSpectrum(cfg: $models.SpectrumConfig): $CancellableProm
  * Cover returns the current track's artwork as an inline data URL, or an empty
  * string when the track has none. The snapshot carries only the id, so the
  * payload a UI redraws at 4 Hz stays small; the bytes cross the bridge once,
- * when the id changes. The cache is keyed by that id, so revisiting a track
- * does not re-decode its art.
+ * when the id changes. The store keys normalized art by that id, so revisiting
+ * a track does not re-decode its art.
  */
 export function Cover(id: string): $CancellablePromise<string> {
     return $Call.ByID(1004003700, id);
 }
 
 /**
- * CoverAccents returns the ranked accent palette for coverID, cached by cover
- * hash so tracks sharing album artwork do not re-decode or recompute it.
+ * CoverAccents returns the ranked accent palette for coverID, backed by the
+ * shared artwork store so tracks sharing album art reuse the extracted palette.
  */
 export function CoverAccents(coverID: string): $CancellablePromise<color$0.Colour[] | null> {
     return $Call.ByID(3762243019, coverID);
@@ -502,8 +510,9 @@ export function PreviewStop(): $CancellablePromise<void> {
  * QueueCover returns the artwork of one queued track as an inline data URL, or
  * an empty string when it has none. The palette asks only for the rows it is
  * about to draw, so a large queue never pays to decode art the user will not
- * see. The cache is keyed by the content id the row carries, so a repeat ask
- * and a track that reappears are both served without re-reading the file.
+ * see. The store keys normalized art by the content id the row carries, so a
+ * repeat ask and a track that reappears are both served without re-reading the
+ * file.
  */
 export function QueueCover(path: string): $CancellablePromise<string> {
     return $Call.ByID(3811237407, path);

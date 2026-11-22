@@ -480,11 +480,20 @@ export interface SpectrumConfig {
 }
 
 /**
- * StreamSettings is the Stream tab. It is empty today: the YouTube Music and
- * network provider settings the tab is meant to hold have not been specified,
- * so nothing is invented here.
+ * StreamSettings is the Stream tab. TrackCacheMaxMB sets the on-disk budget in
+ * megabytes for cached online audio streams; 0 disables disk caching.
  */
 export interface StreamSettings {
+    "trackCacheMaxMb": number;
+}
+
+/**
+ * TrackCacheClear reports what ClearTrackCache removed: the cached track count
+ * and the bytes freed.
+ */
+export interface TrackCacheClear {
+    "files": number;
+    "bytes": number;
 }
 
 /**

@@ -119,7 +119,7 @@ export const appSettings = writable<AppSettings>({
       wordSweep: "both",
     },
   },
-  stream: {},
+  stream: { trackCacheMaxMb: 512 },
   general: { visualizerEnabled: true, visualizerStyle: "minimal", visualizerDelayMs: 25, logLevel: "info", logFileEnabled: false, logFile: "" },
   discord: { enabled: false },
 });

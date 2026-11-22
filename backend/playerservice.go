@@ -205,11 +205,12 @@ func newPlayerService() *PlayerService {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	ytmIndex := newYTMIndex()
+	settings := loadAppSettings(slog.Default(), "loaded")
 	art, err := artwork.Open("")
 	if err != nil {
 		slog.Default().Warn("artwork: cache dir unavailable", "error", err)
 	}
-	tracks, err := trackcache.Open("", trackcache.DefaultMaxBytes)
+	tracks, err := trackcache.Open("", int64(settings.Stream.TrackCacheMaxMB)<<20)
 	if err != nil {
 		slog.Default().Warn("trackcache: cache dir unavailable", "error", err)
 	}
@@ -230,7 +231,7 @@ func newPlayerService() *PlayerService {
 		ytm:                 ytmIndex,
 		ytmProv:             newYTMProvider(ytmIndex, art, ytmSeamlessSwap, nil),
 		searchCache:         make(map[string][]YTMResult),
-		appSettings:         loadAppSettings(slog.Default(), "loaded"),
+		appSettings:         settings,
 		ctx:                 ctx,
 		cancel:              cancel,
 		log:                 slog.Default(),

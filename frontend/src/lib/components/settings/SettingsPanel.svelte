@@ -270,6 +270,55 @@
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
+  const trackCacheMaxMb = $derived($appSettings.stream?.trackCacheMaxMb ?? 512);
+  const trackCacheOptions = $derived.by(() => {
+    const base = [
+      { value: "0", label: "Off" },
+      { value: "256", label: "256 MB" },
+      { value: "512", label: "512 MB" },
+      { value: "1024", label: "1 GB" },
+      { value: "2048", label: "2 GB" },
+      { value: "4096", label: "4 GB" },
+    ];
+    const current = String(trackCacheMaxMb);
+    if (base.some((o) => o.value === current)) {
+      return base;
+    }
+
+    return [...base, { value: current, label: `${trackCacheMaxMb} MB` }];
+  });
+
+  function setTrackCacheMaxMb(mb: number) {
+    commands.setAppSettings({
+      ...$appSettings,
+      stream: { ...$appSettings.stream, trackCacheMaxMb: mb },
+    });
+  }
+
+  async function clearTrackCache() {
+    try {
+      const { files, bytes } = await PlayerService.ClearTrackCache();
+      showToast({
+        key: "track-cache",
+        kind: "message",
+        stack: true,
+        label:
+          files === 0
+            ? "Track cache is already empty"
+            : `Track cache cleared, ${cacheSize(bytes)} freed`,
+        icon: Check,
+      });
+    } catch {
+      showToast({
+        key: "track-cache",
+        kind: "message",
+        stack: true,
+        label: "Could not clear the track cache",
+        icon: WarningCircle,
+      });
+    }
+  }
+
   const providers = $derived($appSettings.playback.lyrics.providers ?? {});
   const petitLyricsOn = $derived(providers.petitlyrics ?? true);
   const petitLyricsDelayMs = $derived($appSettings.playback.lyrics.petitLyricsDelayMs ?? 0);
@@ -675,9 +724,35 @@
             </div>
           </div>
         {:else if tab === "stream"}
-          <p class="px-1 py-6 text-center text-xs text-muted">
-            No stream settings yet. YouTube Music and network options will live here.
-          </p>
+          <div class="scrub-groups divide-y divide-line">
+            <SettingGroup label="Cache" description={null}>
+              <div class="divide-y divide-line">
+                <SettingRow
+                  label="Track cache limit"
+                  description="Keep streamed tracks on disk so repeats and replays start without re-downloading."
+                >
+                  {#snippet control()}
+                    <Picker
+                      label={null}
+                      ariaLabel="Track cache limit"
+                      value={String(trackCacheMaxMb)}
+                      options={trackCacheOptions}
+                      onchange={(v) => setTrackCacheMaxMb(Number(v))}
+                    />
+                  {/snippet}
+                </SettingRow>
+
+                <SettingRow
+                  label="Clear track cache"
+                  description="Delete cached online audio files that are not currently playing."
+                >
+                  {#snippet control()}
+                    <Button label="Clear" busyLabel="Clearing" onclick={clearTrackCache} />
+                  {/snippet}
+                </SettingRow>
+              </div>
+            </SettingGroup>
+          </div>
         {:else}
           <div class="scrub-groups divide-y divide-line">
             <SettingGroup label="Visualizer" description={null}>

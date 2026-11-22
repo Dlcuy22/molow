@@ -94,10 +94,11 @@ type LyricsSettings struct {
 	WordSweep            string          `json:"wordSweep"`
 }
 
-// StreamSettings is the Stream tab. It is empty today: the YouTube Music and
-// network provider settings the tab is meant to hold have not been specified,
-// so nothing is invented here.
-type StreamSettings struct{}
+// StreamSettings is the Stream tab. TrackCacheMaxMB sets the on-disk budget in
+// megabytes for cached online audio streams; 0 disables disk caching.
+type StreamSettings struct {
+	TrackCacheMaxMB int `json:"trackCacheMaxMb"`
+}
 
 // GeneralSettings is the General tab. VisualizerEnabled is the persisted
 // on/off switch, the same one the v key flips and the panel's Off option
@@ -153,6 +154,9 @@ func defaultAppSettings() AppSettings {
 			Repeat:         "off",
 			PlayPauseStyle: "default",
 			Lyrics:         defaultLyricsSettings(),
+		},
+		Stream: StreamSettings{
+			TrackCacheMaxMB: defaultTrackCacheMaxMB,
 		},
 		General: GeneralSettings{
 			VisualizerEnabled: true,
@@ -228,41 +232,48 @@ func loadAppSettings(log *slog.Logger, verb string) AppSettings {
 	}
 	log.Info("config: "+verb, "path", p)
 
-	return normalizeAppSettings(s, generalFieldPresence(raw))
+	return normalizeAppSettings(s, rawFieldPresence(raw))
 }
 
-// generalFieldPresence reports which General fields the raw document actually
-// carried. A plain bool cannot tell "absent" from "explicitly false", and the
-// two mean different things here: an absent visualizerEnabled is an install that
-// predates the field and must keep its visualizer, while an explicit false is
-// the user turning it off. The raw document is read only for this presence
-// check; the written JSON keeps its plain bool shape.
-func generalFieldPresence(raw []byte) map[string]bool {
+type settingsFieldPresence struct {
+	general map[string]bool
+	stream  map[string]bool
+}
+
+// rawFieldPresence reports which General and Stream fields the raw document
+// actually carried. A plain bool or zero int cannot tell "absent" from
+// "explicitly false/0", and the two mean different things here: an absent
+// visualizerEnabled or trackCacheMaxMb keeps the shipped default, while an
+// explicit false or 0 is the user turning the feature off.
+func rawFieldPresence(raw []byte) *settingsFieldPresence {
 	var probe struct {
 		General map[string]json.RawMessage `json:"general"`
+		Stream  map[string]json.RawMessage `json:"stream"`
 	}
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return nil
 	}
-	present := make(map[string]bool, len(probe.General))
+	general := make(map[string]bool, len(probe.General))
 	for k := range probe.General {
-		present[k] = true
+		general[k] = true
+	}
+	stream := make(map[string]bool, len(probe.Stream))
+	for k := range probe.Stream {
+		stream[k] = true
 	}
 
-	return present
+	return &settingsFieldPresence{general: general, stream: stream}
 }
 
 // normalizeAppSettings fills any field a file did not carry and clamps the
 // crossfade duration into the engine's accepted range, so a hand-edited file
 // cannot wedge the panel or send the engine a value it would only clamp again.
 //
-// present is the set of General fields the raw file carried, and it is nil on
-// the save path. That distinction is deliberate: the loader passes the real
-// presence set so a bool the file omitted keeps its default, while a save from
-// the panel already carries a complete document, so a nil set means "trust the
-// value as sent" and must not re-default it. Defaulting on save would silently
-// rewrite a user's explicit false (see generalFieldPresence).
-func normalizeAppSettings(s AppSettings, present map[string]bool) AppSettings {
+// present records which fields the raw file carried, and is nil on the save
+// path. The loader passes the real presence set so fields omitted by older
+// files keep their defaults, while a save from the panel carries a complete
+// document, so a nil set trusts explicit false/0 values as sent.
+func normalizeAppSettings(s AppSettings, present *settingsFieldPresence) AppSettings {
 	def := defaultAppSettings()
 
 	// A file written by an older schema may lack the version; treat it as the
@@ -296,10 +307,15 @@ func normalizeAppSettings(s AppSettings, present map[string]bool) AppSettings {
 
 	s.Playback.Lyrics = normalizeLyricsSettings(s.Playback.Lyrics, def.Playback.Lyrics)
 
+	if present != nil && !present.stream["trackCacheMaxMb"] {
+		s.Stream.TrackCacheMaxMB = def.Stream.TrackCacheMaxMB
+	}
+	s.Stream.TrackCacheMaxMB = clampTrackCacheMaxMB(s.Stream.TrackCacheMaxMB)
+
 	// An install that predates the field keeps its visualizer on; only an
 	// explicit false turns it off. On the save path present is nil and the value
 	// the panel sent is taken as-is.
-	if present != nil && !present["visualizerEnabled"] {
+	if present != nil && !present.general["visualizerEnabled"] {
 		s.General.VisualizerEnabled = def.General.VisualizerEnabled
 	}
 
@@ -320,7 +336,7 @@ func normalizeAppSettings(s AppSettings, present map[string]bool) AppSettings {
 	// visualizer: absent is not the same as "explicitly none". On the save path
 	// present is nil and the panel's value is taken as-is, so a user who dials
 	// the slider to zero keeps it.
-	if present != nil && !present["visualizerDelayMs"] {
+	if present != nil && !present.general["visualizerDelayMs"] {
 		s.General.VisualizerDelayMs = def.General.VisualizerDelayMs
 	}
 	s.General.VisualizerDelayMs = clampVisualizerDelayMs(s.General.VisualizerDelayMs)
@@ -336,6 +352,22 @@ func normalizeAppSettings(s AppSettings, present map[string]bool) AppSettings {
 	s.General.LogFile = strings.TrimSpace(s.General.LogFile)
 
 	return s
+}
+
+const (
+	defaultTrackCacheMaxMB = 512
+	maxTrackCacheMaxMB     = 4096
+)
+
+func clampTrackCacheMaxMB(mb int) int {
+	switch {
+	case mb < 0:
+		return 0
+	case mb > maxTrackCacheMaxMB:
+		return maxTrackCacheMaxMB
+	default:
+		return mb
+	}
 }
 
 // maxVisualizerDelayMs bounds the compensation. It sits well under the tap
@@ -544,6 +576,7 @@ func (s *PlayerService) SetAppSettings(next AppSettings) (AppSettings, error) {
 	// The log file follows the document on the same path the engine settings
 	// do, so a toggle, a level or a new path takes effect on the save itself.
 	s.applyLogSettings()
+	s.applyTrackCacheSettings()
 
 	if err := saveAppSettings(s.log, next); err != nil {
 		s.log.Warn("settings: could not persist", "error", err)
@@ -589,4 +622,43 @@ func (s *PlayerService) applyAppSettingsLocked() {
 		FFT:     shape.FFT,
 		Enabled: visualizer,
 	})
+}
+
+func (s *PlayerService) applyTrackCacheSettings() {
+	if s.tracks == nil {
+		return
+	}
+	s.appSettingsMu.Lock()
+	mb := s.appSettings.Stream.TrackCacheMaxMB
+	s.appSettingsMu.Unlock()
+
+	_ = s.tracks.SetMaxBytes(int64(mb) << 20)
+}
+
+// TrackCacheClear reports what ClearTrackCache removed: the cached track count
+// and the bytes freed.
+type TrackCacheClear struct {
+	Files int   `json:"files"`
+	Bytes int64 `json:"bytes"`
+}
+
+// ClearTrackCache removes every cached online track file that is not currently
+// open for playback.
+func (s *PlayerService) ClearTrackCache() (TrackCacheClear, error) {
+	if s.tracks == nil {
+		return TrackCacheClear{}, nil
+	}
+	before := s.tracks.Stats()
+	err := s.tracks.Clear()
+	after := s.tracks.Stats()
+	files := before.Count - after.Count
+	if files < 0 {
+		files = 0
+	}
+	freed := before.TotalBytes - after.TotalBytes
+	if freed < 0 {
+		freed = 0
+	}
+
+	return TrackCacheClear{Files: files, Bytes: freed}, err
 }

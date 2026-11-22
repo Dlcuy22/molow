@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dlcuy22/molo"
+	"github.com/dlcuy22/molow/internal/trackcache"
 )
 
 // quietLog keeps the config log lines out of the test output.
@@ -578,5 +579,72 @@ func TestPetitLyricsDelayClampsAndPersists(t *testing.T) {
 		if loaded != tc.want {
 			t.Fatalf("loaded(%d) = %d, want %d", tc.in, loaded, tc.want)
 		}
+	}
+}
+
+func TestTrackCacheSettingsAndClear(t *testing.T) {
+	isolateConfig(t)
+
+	if got := defaultAppSettings().Stream.TrackCacheMaxMB; got != defaultTrackCacheMaxMB {
+		t.Fatalf("default trackCacheMaxMb = %d, want %d", got, defaultTrackCacheMaxMB)
+	}
+
+	// Old file without stream.trackCacheMaxMb keeps the shipped default.
+	p, err := settingsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(`{"version":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadAppSettings(quietLog, "loaded").Stream.TrackCacheMaxMB; got != defaultTrackCacheMaxMB {
+		t.Fatalf("old schema trackCacheMaxMb = %d, want %d", got, defaultTrackCacheMaxMB)
+	}
+
+	svc := newPlayerService()
+	svc.player = newFakePlayer()
+	tc, err := trackcache.Open(t.TempDir(), 10<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.tracks = tc
+	if err := tc.Put("a", []byte("123456")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Explicit 0 disables caching and evicts unused files.
+	next := defaultAppSettings()
+	next.Stream.TrackCacheMaxMB = 0
+	saved, err := svc.SetAppSettings(next)
+	if err != nil {
+		t.Fatalf("SetAppSettings(0): %v", err)
+	}
+	if saved.Stream.TrackCacheMaxMB != 0 {
+		t.Fatalf("saved = %d, want 0", saved.Stream.TrackCacheMaxMB)
+	}
+	if loadAppSettings(quietLog, "loaded").Stream.TrackCacheMaxMB != 0 {
+		t.Fatal("reloaded explicit 0 was overwritten with default")
+	}
+	if tc.Has("a") {
+		t.Fatal("setting budget to 0 should evict unused cached tracks")
+	}
+
+	// Re-enable and verify ClearTrackCache reports freed files and bytes.
+	next.Stream.TrackCacheMaxMB = 256
+	if _, err := svc.SetAppSettings(next); err != nil {
+		t.Fatal(err)
+	}
+	if err := tc.Put("b", []byte("abcdef")); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := svc.ClearTrackCache()
+	if err != nil {
+		t.Fatalf("ClearTrackCache: %v", err)
+	}
+	if cleared.Files != 1 || cleared.Bytes != 6 {
+		t.Fatalf("ClearTrackCache = %+v, want {Files:1 Bytes:6}", cleared)
 	}
 }

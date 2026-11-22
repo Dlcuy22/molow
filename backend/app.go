@@ -95,7 +95,8 @@ func Run(assets embed.FS) {
 			application.NewService(service),
 		},
 		Assets: application.AssetOptions{
-			Handler: application.AssetFileServerFS(assets),
+			Handler:    application.AssetFileServerFS(assets),
+			Middleware: service.artworkMiddleware(),
 		},
 		Linux: application.LinuxOptions{
 			// The Wayland app_id is the desktop entry's identity: KDE and

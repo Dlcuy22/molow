@@ -297,14 +297,19 @@ func TestCoverCachesByIdentity(t *testing.T) {
 		t.Fatalf("Cover(%q) = %q, want jpeg data URL", id, first)
 	}
 
-	// Remove the disk file to prove the second call serves from the memory LRU.
+	// Repeated reads return the same normalized data URL from disk.
+	if second := svc.Cover(id); second != first {
+		t.Fatalf("second Cover(%q) = %q, want %q", id, second, first)
+	}
+	// Removing the disk file causes a miss now that the in-memory data-URL LRU
+	// is gone.
 	if p, ok := art.FilePath(id); ok {
 		if err := os.Remove(p); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if second := svc.Cover(id); second != first {
-		t.Fatalf("second Cover(%q) = %q, want %q", id, second, first)
+	if third := svc.Cover(id); third != "" {
+		t.Fatalf("Cover(%q) after disk removal = %q, want empty", id, third)
 	}
 }
 

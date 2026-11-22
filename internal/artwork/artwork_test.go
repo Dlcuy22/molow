@@ -202,13 +202,6 @@ func TestDataURLAndAccentsLRUEvictionAndConcurrency(t *testing.T) {
 		ids = append(ids, cid)
 	}
 
-	s.urlMu.Lock()
-	urlCount := len(s.urlLRU.items)
-	s.urlMu.Unlock()
-	if urlCount != cacheMax {
-		t.Fatalf("urlLRU len = %d, want %d", urlCount, cacheMax)
-	}
-
 	s.accentMu.Lock()
 	accentCount := len(s.accentLRU.items)
 	s.accentMu.Unlock()
@@ -216,8 +209,8 @@ func TestDataURLAndAccentsLRUEvictionAndConcurrency(t *testing.T) {
 		t.Fatalf("accentLRU len = %d, want %d", accentCount, cacheMax)
 	}
 
-	// Delete the disk files: the newest entry must still serve from LRU, while
-	// the oldest evicted entry must miss.
+	// Delete the disk files: DataURL reads directly from disk so removed files
+	// miss, while the newest accent palette still serves from accentLRU.
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -226,10 +219,13 @@ func TestDataURLAndAccentsLRUEvictionAndConcurrency(t *testing.T) {
 		_ = os.Remove(filepath.Join(dir, e.Name()))
 	}
 	if _, ok := s.DataURL(ids[0]); ok {
-		t.Fatal("evicted entry still served after disk removal")
+		t.Fatal("removed disk file still served by DataURL")
 	}
-	if _, ok := s.DataURL(ids[len(ids)-1]); !ok {
-		t.Fatal("most recent entry missed LRU")
+	if cs, err := s.Accents(ids[len(ids)-1], 5); err != nil || len(cs) == 0 {
+		t.Fatalf("most recent entry missed accentLRU: cs=%v err=%v", cs, err)
+	}
+	if cs, err := s.Accents(ids[0], 5); err != nil || len(cs) != 0 {
+		t.Fatalf("evicted entry still served by accentLRU: cs=%v err=%v", cs, err)
 	}
 }
 

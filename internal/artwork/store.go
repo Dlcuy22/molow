@@ -112,15 +112,12 @@ func copyAndRemove(src, dst string) error {
 }
 
 // Store owns the canonical on-disk artwork cache, singleflight ingest, and
-// bounded in-memory LRUs for data URLs and accent palettes.
+// bounded in-memory LRU for accent palettes.
 type Store struct {
 	dir string
 
 	putMu       sync.Mutex
 	putInflight map[string]*putCall
-
-	urlMu  sync.Mutex
-	urlLRU *lruCache[string, string]
 
 	accentMu       sync.Mutex
 	accentLRU      *lruCache[accentKey, []color.Colour]
@@ -159,7 +156,6 @@ func Open(dir string) (*Store, error) {
 	return &Store{
 		dir:            dir,
 		putInflight:    make(map[string]*putCall),
-		urlLRU:         newLRU[string, string](cacheMax),
 		accentLRU:      newLRU[accentKey, []color.Colour](cacheMax),
 		accentInflight: make(map[accentKey]*accentCall),
 	}, nil
@@ -310,31 +306,14 @@ func (s *Store) FilePath(id string) (string, bool) {
 	return p, ok
 }
 
-// DataURL returns id as an inline base64 data URL, backed by a bounded LRU.
+// DataURL returns id as an inline base64 data URL read directly from disk.
 func (s *Store) DataURL(id string) (string, bool) {
-	if s == nil || !safeID(id) {
-		return "", false
-	}
-
-	s.urlMu.Lock()
-	if url, ok := s.urlLRU.get(id); ok {
-		s.urlMu.Unlock()
-
-		return url, true
-	}
-	s.urlMu.Unlock()
-
 	data, mime, ok := s.Bytes(id)
 	if !ok {
 		return "", false
 	}
-	url := FormatDataURL(data, mime)
 
-	s.urlMu.Lock()
-	s.urlLRU.put(id, url)
-	s.urlMu.Unlock()
-
-	return url, true
+	return FormatDataURL(data, mime), true
 }
 
 // Accents returns the top n accent colours for id, backed by singleflight and a

@@ -50,12 +50,11 @@ func (a *ytmArtistIndex) put(id, url string) {
 	a.urls[id] = url
 }
 
-// artistAvatarDataURL resolves the artist's avatar and returns it as an inline
-// data URL, or "" when there is none. Fetched bytes are normalized once into
-// the shared artwork store so data URLs share its bounded LRU.
-func (p *ytmProvider) artistAvatarDataURL(ctx context.Context, artistID string) string {
+// artistAvatarBytes resolves the artist's avatar and returns normalized image
+// bytes and MIME type, or false when none is available.
+func (p *ytmProvider) artistAvatarBytes(ctx context.Context, artistID string) ([]byte, string, bool) {
 	if artistID == "" {
-		return ""
+		return nil, "", false
 	}
 
 	if p.art != nil {
@@ -63,44 +62,54 @@ func (p *ytmProvider) artistAvatarDataURL(ctx context.Context, artistID string) 
 		artID := p.avatarIDs[artistID]
 		p.avatarMu.Unlock()
 		if artID != "" {
-			if url, ok := p.art.DataURL(artID); ok {
-				return url
+			if data, mime, ok := p.art.Bytes(artID); ok {
+				return data, mime, true
 			}
 		}
 	}
 
 	url := p.artistArt(ctx, artistID)
 	if url == "" {
-		return ""
+		return nil, "", false
 	}
 	data := p.thumbFor(ctx, url)
 	if len(data) == 0 {
-		return ""
+		return nil, "", false
 	}
 
 	if p.art != nil {
 		artID, err := p.art.Put(data)
 		if err != nil {
-			return ""
+			return nil, "", false
 		}
 		p.avatarMu.Lock()
 		p.avatarIDs[artistID] = artID
 		p.avatarMu.Unlock()
-		dataURL, _ := p.art.DataURL(artID)
 
-		return dataURL
+		return p.art.Bytes(artID)
 	}
 
 	img, err := artwork.Decode(data)
 	if err != nil {
-		return ""
+		return nil, "", false
 	}
 	encoded, mime, err := artwork.Encode(artwork.Resize(img, artwork.MaxEdge))
 	if err != nil {
+		return nil, "", false
+	}
+
+	return encoded, mime, true
+}
+
+// artistAvatarDataURL resolves the artist's avatar and returns it as an inline
+// data URL, or "" when there is none.
+func (p *ytmProvider) artistAvatarDataURL(ctx context.Context, artistID string) string {
+	data, mime, ok := p.artistAvatarBytes(ctx, artistID)
+	if !ok {
 		return ""
 	}
 
-	return artwork.FormatDataURL(encoded, mime)
+	return artwork.FormatDataURL(data, mime)
 }
 
 // logger returns the provider's logger, falling back to the default so a

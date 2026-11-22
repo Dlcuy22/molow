@@ -8,6 +8,7 @@ import (
 
 	"github.com/dlcuy22/molo"
 	"github.com/dlcuy22/molo/dsp"
+	"github.com/dlcuy22/molo/meta"
 )
 
 // fakePlayer is a scriptable molo.Player for the preview session tests. It
@@ -25,6 +26,7 @@ type fakePlayer struct {
 	path     string
 	pos      time.Duration
 	duration time.Duration
+	meta     meta.Meta
 
 	// autoActivate makes Play transition to Playing immediately. Tests that are
 	// not about the async build window set it; the ones that are leave it false
@@ -119,7 +121,7 @@ func (f *fakePlayer) Snapshot() molo.Snapshot {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	return molo.Snapshot{State: f.state, Path: f.path, Position: f.pos, Duration: f.duration}
+	return molo.Snapshot{State: f.state, Path: f.path, Position: f.pos, Duration: f.duration, Meta: f.meta}
 }
 
 func (f *fakePlayer) Events() <-chan molo.Event { return nil }

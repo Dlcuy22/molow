@@ -177,6 +177,15 @@ func (s *Store) path(key string) string {
 	return filepath.Join(s.dir, key+trackExt)
 }
 
+// Dir returns the directory backing s, or "" when s is nil.
+func (s *Store) Dir() string {
+	if s == nil {
+		return ""
+	}
+
+	return s.dir
+}
+
 // Has reports whether key is currently tracked in the cache index. It does not
 // update LRU order or open the file.
 func (s *Store) Has(key string) bool {
@@ -286,15 +295,46 @@ func (s *Store) Put(key string, data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Re-check budget and pin under the lock in case SetMaxBytes or Get raced
-	// with the temp write; on Windows os.Rename fails over an open file.
-	if s.maxBytes <= 0 || size > s.maxBytes || s.inUse[key] > 0 {
-		return nil
-	}
-	if err := os.Rename(tmpName, s.path(key)); err != nil {
-		return fmt.Errorf("trackcache: commit: %w", err)
+	if _, err := s.commitLocked(key, tmpName, size); err != nil {
+		return err
 	}
 	cleanup = false
+
+	return nil
+}
+
+// CommitFile promotes an already-written temp file into the cache under key
+// using an atomic rename, returning true when the file was stored. Empty files,
+// disabled caches (maxBytes <= 0), oversized files (> maxBytes), and keys
+// currently held open by a reader return (false, nil) without removing tmpPath.
+func (s *Store) CommitFile(key, tmpPath string) (bool, error) {
+	if s == nil || !safeKey(key) || tmpPath == "" {
+		return false, nil
+	}
+	info, err := os.Stat(tmpPath)
+	if err != nil {
+		return false, err
+	}
+	size := info.Size()
+	if size <= 0 {
+		return false, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.commitLocked(key, tmpPath, size)
+}
+
+func (s *Store) commitLocked(key, tmpPath string, size int64) (bool, error) {
+	// Re-check budget and pin under the lock in case SetMaxBytes or Get raced
+	// with the write; on Windows os.Rename fails over an open file.
+	if s.maxBytes <= 0 || size > s.maxBytes || s.inUse[key] > 0 {
+		return false, nil
+	}
+	if err := os.Rename(tmpPath, s.path(key)); err != nil {
+		return false, fmt.Errorf("trackcache: commit: %w", err)
+	}
 
 	now := s.now()
 	if elem, ok := s.items[key]; ok {
@@ -317,7 +357,7 @@ func (s *Store) Put(key string, data []byte) error {
 	}
 	s.evictLocked()
 
-	return nil
+	return true, nil
 }
 
 // SetMaxBytes updates the cache byte budget and immediately evicts unused

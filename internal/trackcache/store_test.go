@@ -232,3 +232,47 @@ func TestRejectsUnsafeKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestCommitFilePromotesAndEnforcesBudget(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Dir() != dir {
+		t.Fatalf("Dir() = %q, want %q", s.Dir(), dir)
+	}
+
+	writeTmp := func(name string, data []byte) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		return p
+	}
+
+	okTmp := writeTmp("a.tmp1", bytes.Repeat([]byte("a"), 30))
+	promoted, err := s.CommitFile("a", okTmp)
+	if err != nil || !promoted {
+		t.Fatalf("CommitFile(a) = (%v, %v), want (true, nil)", promoted, err)
+	}
+	if _, err := os.Stat(okTmp); !os.IsNotExist(err) {
+		t.Fatal("temp file still exists after promotion")
+	}
+	if !s.Has("a") {
+		t.Fatal("promoted entry missing from store")
+	}
+
+	bigTmp := writeTmp("big.tmp2", bytes.Repeat([]byte("b"), 80))
+	promoted, err = s.CommitFile("big", bigTmp)
+	if err != nil || promoted {
+		t.Fatalf("CommitFile(big) = (%v, %v), want (false, nil)", promoted, err)
+	}
+	if _, err := os.Stat(bigTmp); err != nil {
+		t.Fatalf("unpromoted temp file should stay for caller cleanup: %v", err)
+	}
+	if !s.Has("a") {
+		t.Fatal("oversized CommitFile evicted existing entry")
+	}
+}

@@ -158,8 +158,57 @@ export function closePlaylist(): void {
   activePlaylistError.set("");
 }
 
+/** openAlbumView loads an album's metadata and tracks into the dedicated playlist/album view. */
+export async function openAlbumView(album: Album): Promise<void> {
+  const libId = album.libraryId || get(libraryId);
+  if (libId === "" || album.name === "") {
+    return;
+  }
+
+  const meta: Playlist = {
+    id: album.id,
+    libraryId: libId,
+    name: album.name,
+    description: "",
+    creator: album.artist,
+    trackCount: album.songCount,
+    coverId: album.coverId,
+    album,
+  };
+
+  const seq = ++playlistSeq;
+  activePlaylist.set(meta);
+  activePlaylistTracks.set([]);
+  activePlaylistError.set("");
+  activePlaylistLoading.set(true);
+
+  try {
+    const rows = (await PlayerService.LibraryAlbumTracks(libId, album.name, album.artist)) ?? [];
+    if (seq !== playlistSeq) {
+      return;
+    }
+    const collected = rows.map(toTrack);
+    activePlaylistTracks.set(collected);
+    activePlaylist.update((cur) =>
+      cur && cur.id === album.id ? { ...cur, trackCount: collected.length } : cur,
+    );
+  } catch (err) {
+    if (seq !== playlistSeq) {
+      return;
+    }
+    activePlaylistError.set(libraryErrorText(err, "Could not load this album"));
+  } finally {
+    if (seq === playlistSeq) {
+      activePlaylistLoading.set(false);
+    }
+  }
+}
+
 /** openPlaylist loads a playlist's metadata and all of its tracks into the dedicated view. */
 export async function openPlaylist(target: Playlist | string): Promise<void> {
+  if (typeof target !== "string" && target.album) {
+    return openAlbumView(target.album);
+  }
   const id = typeof target === "string" ? target : target.id;
   const libId = typeof target === "string" ? get(libraryId) : target.libraryId || get(libraryId);
   if (libId === "" || id === "") {

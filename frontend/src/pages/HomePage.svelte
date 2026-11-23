@@ -92,7 +92,7 @@
     <div class="mt-4 flex flex-wrap gap-5">
       {#if featured}
         <button
-          class="relative h-[175px] w-[340px] shrink-0 overflow-hidden rounded-lg text-left"
+          class="relative h-[175px] w-[340px] shrink-0 cursor-pointer overflow-hidden rounded-lg text-left"
           style="background:{gradient}"
           aria-label="Open {featured.name}"
           onclick={() => onopenAlbum(featured)}

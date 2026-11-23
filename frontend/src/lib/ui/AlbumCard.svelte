@@ -33,7 +33,7 @@
 
 <div class="group w-[166px] shrink-0">
   <button
-    class="relative block w-[166px] overflow-hidden rounded-lg"
+    class="relative block w-[166px] cursor-pointer overflow-hidden rounded-lg"
     style="height:{home ? 175 : 166}px"
     aria-label="{album.name} by {album.artist}"
     onclick={() => onopen(album)}
@@ -53,7 +53,7 @@
   </button>
   <div class="pt-1.5">
     <button
-      class="block max-w-full truncate text-left font-display font-bold leading-tight hover:underline"
+      class="block max-w-full cursor-pointer truncate text-left font-display font-bold leading-tight"
       class:text-[20px]={home}
       class:text-[15px]={!home}
       onclick={() => onopen(album)}

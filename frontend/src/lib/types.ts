@@ -48,6 +48,7 @@ export interface Playlist {
   creator?: string;
   coverId?: string;
   customCover?: boolean;
+  album?: Album;
 }
 
 export type ShelfLayout = "list" | "grid";

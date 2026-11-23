@@ -32,6 +32,7 @@
     isActiveQueue = false,
     isPlaying = false,
     showDislike = false,
+    backLabel = "Your Library",
     onback = () => {},
     onretry = () => {},
     onplayAll = (_tracks: Track[]) => {},
@@ -49,6 +50,7 @@
     isActiveQueue?: boolean;
     isPlaying?: boolean;
     showDislike?: boolean;
+    backLabel?: string;
     onback?: () => void;
     onretry?: () => void;
     onplayAll?: (tracks: Track[]) => void;
@@ -62,8 +64,16 @@
   let sortBy = $state<PlaylistSort>("order");
   let sortOpen = $state(false);
 
+  const isAlbum = $derived(playlist.album !== undefined);
+  const kindNoun = $derived(isAlbum ? "album" : "playlist");
+  const sortLabel = (id: PlaylistSort, fallback: string) =>
+    isAlbum && id === "order" ? "Track order" : fallback;
+
   const activeSortLabel = $derived(
-    PLAYLIST_SORTS.find((opt) => opt.id === sortBy)?.label ?? "Playlist order",
+    sortLabel(
+      sortBy,
+      PLAYLIST_SORTS.find((opt) => opt.id === sortBy)?.label ?? "Playlist order",
+    ),
   );
   const sortedTracks = $derived(sortPlaylistTracks(tracks, sortBy));
   const fallbackCover = $derived(
@@ -105,6 +115,16 @@
   });
 
   function openPlaylistMenu(e: MouseEvent) {
+    if (playlist.album) {
+      openContextMenu(e, {
+        kind: "catalogue",
+        id: playlist.album.id,
+        label: playlist.album.name || "this album",
+        libraryId: playlist.album.libraryId,
+        album: playlist.album,
+      });
+      return;
+    }
     openContextMenu(e, {
       kind: "playlist",
       id: playlist.id,
@@ -132,7 +152,7 @@
       onclick={onback}
     >
       <ArrowLeft size="15" weight="bold" />
-      <span>Your Library</span>
+      <span>{backLabel}</span>
     </button>
   </div>
 
@@ -174,19 +194,21 @@
       </p>
 
       <div class="mt-5 flex items-center justify-center gap-3">
-        <button
-          class="grid size-9 place-items-center rounded-full bg-surface text-fg transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-focus"
-          aria-label="Rename playlist"
-          title="Rename playlist"
-          onclick={() => onrename(playlist)}
-        >
-          <PencilSimple size="17" />
-        </button>
+        {#if !isAlbum}
+          <button
+            class="grid size-9 place-items-center rounded-full bg-surface text-fg transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-focus"
+            aria-label="Rename playlist"
+            title="Rename playlist"
+            onclick={() => onrename(playlist)}
+          >
+            <PencilSimple size="17" />
+          </button>
+        {/if}
 
         <button
           class="dock-play grid size-12 place-items-center rounded-full bg-fg text-bg-dark focus-visible:ring-2 focus-visible:ring-focus disabled:bg-disabled"
-          aria-label={isPlaying ? "Pause playlist" : isActiveQueue ? "Resume playlist" : "Play playlist"}
-          title={isPlaying ? "Pause playlist" : isActiveQueue ? "Resume playlist" : "Play playlist"}
+          aria-label={isPlaying ? `Pause ${kindNoun}` : isActiveQueue ? `Resume ${kindNoun}` : `Play ${kindNoun}`}
+          title={isPlaying ? `Pause ${kindNoun}` : isActiveQueue ? `Resume ${kindNoun}` : `Play ${kindNoun}`}
           aria-pressed={isPlaying}
           disabled={!isActiveQueue && sortedTracks.length === 0}
           onclick={() => (isActiveQueue ? ontogglePause() : onplayAll(sortedTracks))}
@@ -200,8 +222,8 @@
 
         <button
           class="grid size-9 place-items-center rounded-full bg-surface text-fg transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-focus"
-          aria-label="Playlist options"
-          title="Playlist options"
+          aria-label={isAlbum ? "Album options" : "Playlist options"}
+          title={isAlbum ? "Album options" : "Playlist options"}
           aria-haspopup="menu"
           onclick={openPlaylistMenu}
         >
@@ -240,7 +262,7 @@
                   sortOpen = false;
                 }}
               >
-                {option.label}
+                {sortLabel(option.id, option.label)}
               </button>
             {/each}
           </div>
@@ -250,11 +272,11 @@
       <div class="scroll-thin min-h-0 flex-1 overflow-y-auto pb-6 pr-1 @max-[680px]:overflow-visible">
         {#if loading && tracks.length === 0}
           <p class="px-2 py-4 text-[12px] text-muted" role="status">
-            Loading playlist tracks...
+            Loading {kindNoun} tracks...
           </p>
         {:else if error !== ""}
           <div class="rounded-lg bg-surface p-4" role="alert">
-            <p class="text-[13px] font-medium text-fg">Could not load this playlist</p>
+            <p class="text-[13px] font-medium text-fg">Could not load this {kindNoun}</p>
             <p class="mt-1 text-[12px] text-muted">{error}</p>
             <button
               class="mt-3 h-8 rounded-md bg-fg px-3 text-[12px] font-medium text-bg-dark focus-visible:ring-2 focus-visible:ring-focus"
@@ -266,13 +288,15 @@
         {:else if sortedTracks.length === 0}
           <div class="max-w-[380px] px-2 py-4">
             <p class="text-[12px] text-muted">
-              This playlist has no songs yet. Right-click any track in your library to add it here.
+              {isAlbum
+                ? "No songs found in this album."
+                : "This playlist has no songs yet. Right-click any track in your library to add it here."}
             </p>
             <button
               class="mt-3 h-8 rounded-md bg-surface px-3 text-[12px] font-medium text-fg transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-focus"
               onclick={onback}
             >
-              Back to library
+              {backLabel === "Home" ? "Back to home" : "Back to library"}
             </button>
           </div>
         {:else}

@@ -38,7 +38,7 @@
       </span>
     {/if}
   </span>
-  <span class="mt-1.5 block truncate font-display text-[15px] font-bold group-hover:underline">
+  <span class="mt-1.5 block truncate font-display text-[15px] font-bold">
     {list.name}
   </span>
   <span class="block text-[11px] text-muted">

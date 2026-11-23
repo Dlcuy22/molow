@@ -27,6 +27,7 @@
     activePlaylistError,
     loadLibrary,
     selectLibrary,
+    openAlbumView,
     openPlaylist,
     closePlaylist,
     playTrack,
@@ -72,6 +73,7 @@
   import HomePage from "./pages/HomePage.svelte";
   import LibraryPage from "./pages/LibraryPage.svelte";
   import AlbumPlayer from "./pages/AlbumPlayer.svelte";
+  import PlaylistView from "./lib/ui/PlaylistView.svelte";
   import CommandPalette from "./lib/components/CommandPalette.svelte";
   import SettingsPanel from "./lib/components/settings/SettingsPanel.svelte";
   import Toaster from "./lib/components/Toaster.svelte";
@@ -372,9 +374,7 @@
   }
 
   function openAlbum(album: Album) {
-    playlistPlayback = null;
-    void playAlbum(album);
-    showPlayer();
+    void openAlbumView(album);
   }
 
   // closePlayer lowers the sheet before unmounting it: the CSS transition owns
@@ -771,7 +771,7 @@
       closePlayer();
     } else if (searchOpen) {
       searchOpen = false;
-    } else if (tab === "library" && $activePlaylist !== null) {
+    } else if ($activePlaylist !== null) {
       closePlaylist();
     }
   }}
@@ -797,8 +797,8 @@
       onnewlibrary={openCreateLibrary}
       onwidthcommit={commitSidebarWidth}
       onnav={(next) => {
+        closePlaylist();
         if (next === "library") {
-          closePlaylist();
           tab = "library";
         } else {
           tab = "home";
@@ -814,7 +814,29 @@
     />
 
     <main class="relative min-w-0 flex-1 overflow-hidden">
-      {#if tab === "home"}
+      {#if $activePlaylist}
+        <PlaylistView
+          playlist={$activePlaylist}
+          tracks={$activePlaylistTracks}
+          loading={$activePlaylistLoading}
+          error={$activePlaylistError}
+          currentPath={snap.path}
+          isActiveQueue={playlistQueueActive}
+          isPlaying={playlistQueuePlaying}
+          backLabel={tab === "home" ? "Home" : "Your Library"}
+          onback={closePlaylist}
+          onretry={() => {
+            if ($activePlaylist) {
+              void openPlaylist($activePlaylist);
+            }
+          }}
+          onplayAll={(tracks) => playPlaylistTracks(tracks, 0)}
+          ontogglePause={() => commands.togglePause()}
+          onplayTrack={(_track, index, ordered) => playPlaylistTracks(ordered, index)}
+          onlike={handleLikeTrack}
+          onrename={(list) => (renaming = list)}
+        />
+      {:else if tab === "home"}
         <HomePage
           hasLibraries={$libraries.length > 0}
           shelves={$homePage.shelves}

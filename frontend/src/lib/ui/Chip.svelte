@@ -7,7 +7,7 @@
 </script>
 
 <button
-  class="h-7 rounded-md px-3 text-[12px] font-medium leading-none transition-colors"
+  class="h-7 cursor-pointer rounded-md px-3 text-[12px] font-medium leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
   class:bg-selected={selected}
   class:text-fg={selected}
   class:bg-surface={!selected}

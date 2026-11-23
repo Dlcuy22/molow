@@ -37,6 +37,26 @@ export const activePlaylistError = writable("");
 
 let currentLibraryTab = "all";
 let playlistSeq = 0;
+let librarySeq = 0;
+const libraryTabCache = new Map<string, Page>();
+const libraryPlaylistsCache = new Map<string, Playlist[]>();
+
+/** invalidateLibraryCache drops cached tab pages so the next load fetches fresh data. */
+export function invalidateLibraryCache(id?: string): void {
+  if (!id) {
+    libraryTabCache.clear();
+    libraryPlaylistsCache.clear();
+
+    return;
+  }
+  const prefix = `${id}:`;
+  for (const key of libraryTabCache.keys()) {
+    if (key.startsWith(prefix)) {
+      libraryTabCache.delete(key);
+    }
+  }
+  libraryPlaylistsCache.delete(id);
+}
 
 function toTrack(t: GenTrack): Track {
   return {
@@ -295,49 +315,78 @@ export async function loadHome(): Promise<void> {
 
     return;
   }
-  libraryLoading.set(true);
   try {
     homePage.set(toPage(await PlayerService.LibraryFeed(id, "home", "", 9)));
   } catch {
     homePage.set({ shelves: [], cursor: "" });
-  } finally {
-    libraryLoading.set(false);
   }
 }
 
-export async function loadLibrary(tab = currentLibraryTab): Promise<void> {
+export async function loadLibrary(
+  tab = currentLibraryTab,
+  options: { force?: boolean; silent?: boolean } = {},
+): Promise<void> {
+  const { force = false, silent = false } = options;
   currentLibraryTab = tab;
   const id = get(libraryId);
   if (id === "") {
+    librarySeq++;
     libraryPage.set({ shelves: [], cursor: "" });
     libraryPlaylists.set([]);
+    libraryLoading.set(false);
 
     return;
   }
-  libraryLoading.set(true);
+  const cacheKey = `${id}:${tab}`;
+  if (!force) {
+    const cachedPage = libraryTabCache.get(cacheKey);
+    const cachedLists = libraryPlaylistsCache.get(id);
+    if (cachedPage !== undefined && cachedLists !== undefined) {
+      librarySeq++;
+      libraryPage.set(cachedPage);
+      libraryPlaylists.set(cachedLists);
+      libraryLoading.set(false);
+
+      return;
+    }
+  }
+  const seq = ++librarySeq;
+  if (!silent) {
+    libraryLoading.set(true);
+  }
   try {
     const [page, lists] = await Promise.all([
       PlayerService.LibraryFeed(id, tab, "", 60),
       PlayerService.Playlists(id).catch(() => []),
     ]);
-    libraryPage.set(toPage(page));
-    libraryPlaylists.set(
-      (lists ?? []).map((p) => ({
-        id: p.id,
-        libraryId: p.libraryId,
-        name: p.name,
-        description: p.description ?? "",
-        trackCount: p.trackCount,
-        coverId: p.coverId ?? "",
-        customCover: p.customCover ?? false,
-        coverIds: p.coverIds ?? [],
-      })),
-    );
+    const mappedPage = toPage(page);
+    const mappedLists = (lists ?? []).map((p) => ({
+      id: p.id,
+      libraryId: p.libraryId,
+      name: p.name,
+      description: p.description ?? "",
+      trackCount: p.trackCount,
+      coverId: p.coverId ?? "",
+      customCover: p.customCover ?? false,
+      coverIds: p.coverIds ?? [],
+    }));
+    libraryTabCache.set(cacheKey, mappedPage);
+    libraryPlaylistsCache.set(id, mappedLists);
+    if (seq !== librarySeq) {
+      return;
+    }
+    libraryPage.set(mappedPage);
+    libraryPlaylists.set(mappedLists);
   } catch {
+    if (seq !== librarySeq) {
+      return;
+    }
     libraryPage.set({ shelves: [], cursor: "" });
     libraryPlaylists.set([]);
   } finally {
-    libraryLoading.set(false);
+    if (seq === librarySeq) {
+      libraryLoading.set(false);
+    }
   }
 }
 
@@ -393,9 +442,10 @@ export async function addLibrary(): Promise<LibraryInfo | null> {
       return null;
     }
     const info = toInfo(await PlayerService.ImportFolder(target, path));
+    invalidateLibraryCache(info.id);
     await refreshLibraries();
     libraryId.set(info.id);
-    await Promise.all([loadHome(), loadLibrary()]);
+    await Promise.all([loadHome(), loadLibrary(currentLibraryTab, { force: true })]);
 
     return info;
   } catch (err) {
@@ -417,10 +467,11 @@ export async function createLibrary(
 ): Promise<{ info: LibraryInfo | null; error: string }> {
   try {
     const info = toInfo(await PlayerService.CreateLibrary(name, description));
+    invalidateLibraryCache(info.id);
     await refreshLibraries();
     closePlaylist();
     libraryId.set(info.id);
-    await Promise.all([loadHome(), loadLibrary("all")]);
+    await Promise.all([loadHome(), loadLibrary("all", { force: true })]);
 
     return { info, error: "" };
   } catch (err) {
@@ -471,7 +522,8 @@ export async function importYTM(hit: YTMResult): Promise<boolean> {
       label: res.playlistId ? `${res.name}: ${songs}` : `${songs} added to ${name}`,
       icon: CheckCircle,
     });
-    await Promise.all([refreshLibraries(), loadHome(), loadLibrary()]);
+    invalidateLibraryCache(id);
+    await Promise.all([refreshLibraries(), loadHome(), loadLibrary(currentLibraryTab, { force: true })]);
 
     return true;
   } catch (err) {
@@ -490,11 +542,12 @@ export async function removeLibrary(id: string): Promise<void> {
   try {
     await PlayerService.RemoveLibrary(id);
   } finally {
+    invalidateLibraryCache(id);
     if (get(libraryId) === id) {
       closePlaylist();
     }
     await refreshLibraries();
-    await Promise.all([loadHome(), loadLibrary()]);
+    await Promise.all([loadHome(), loadLibrary(currentLibraryTab, { force: true })]);
   }
 }
 
@@ -568,7 +621,8 @@ export async function toggleLike(track: Track): Promise<void> {
   }
   try {
     await PlayerService.SetLiked(id, track.ref, !track.liked);
-    await Promise.all([loadHome(), loadLibrary()]);
+    invalidateLibraryCache(id);
+    await Promise.all([loadHome(), loadLibrary(currentLibraryTab, { force: true, silent: true })]);
   } catch {
     // The row keeps its old state; a failed write is the honest result.
   }
@@ -609,7 +663,8 @@ export async function setLiked(track: Track, liked: boolean): Promise<boolean> {
   );
   try {
     await PlayerService.SetLiked(track.libraryId, track.ref, liked);
-    await Promise.all([loadHome(), loadLibrary()]);
+    invalidateLibraryCache(track.libraryId);
+    await Promise.all([loadHome(), loadLibrary(currentLibraryTab, { force: true, silent: true })]);
 
     return true;
   } catch {
@@ -628,7 +683,8 @@ export async function addToPlaylist(playlistID: string, refs: string[]): Promise
   }
   try {
     await PlayerService.AddToPlaylist(id, playlistID, refs);
-    await loadLibrary();
+    invalidateLibraryCache(id);
+    await loadLibrary(currentLibraryTab, { force: true, silent: true });
     const open = get(activePlaylist);
     if (open && open.id === playlistID) {
       await openPlaylist(open);
@@ -649,7 +705,8 @@ export async function renamePlaylist(playlistID: string, name: string): Promise<
     activePlaylist.update((cur) =>
       cur && cur.id === playlistID ? { ...cur, name: trimmed } : cur,
     );
-    await Promise.all([loadHome(), loadLibrary()]);
+    invalidateLibraryCache(id);
+    await Promise.all([loadHome(), loadLibrary(currentLibraryTab, { force: true, silent: true })]);
   } catch (err) {
     showToast({
       key: "playlist-rename",
@@ -670,7 +727,8 @@ export async function deletePlaylist(playlistID: string): Promise<void> {
     if (get(activePlaylist)?.id === playlistID) {
       closePlaylist();
     }
-    await Promise.all([loadHome(), loadLibrary()]);
+    invalidateLibraryCache(id);
+    await Promise.all([loadHome(), loadLibrary(currentLibraryTab, { force: true, silent: true })]);
   } catch (err) {
     showToast({
       key: "playlist-delete",
@@ -687,7 +745,10 @@ export async function likeRef(path: string): Promise<boolean> {
     return false;
   }
   try {
-    return await PlayerService.ToggleLike(path);
+    const next = await PlayerService.ToggleLike(path);
+    invalidateLibraryCache();
+
+    return next;
   } catch {
     // A remote ref or a file outside the catalogue has no like; the button
     // stays as it was.
@@ -717,7 +778,12 @@ export function connectLibrary(): () => void {
     libraryProgress.set({ done: p.done, total: p.total, state: p.state });
     if (p.state === "ready") {
       libraryProgress.set(null);
-      void Promise.all([loadHome(), loadLibrary(), refreshLibraries()]);
+      invalidateLibraryCache(p.libraryId);
+      void Promise.all([
+        loadHome(),
+        loadLibrary(currentLibraryTab, { force: true, silent: true }),
+        refreshLibraries(),
+      ]);
     }
   });
 

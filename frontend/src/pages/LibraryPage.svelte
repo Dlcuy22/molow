@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { fade } from "svelte/transition";
   import CaretDown from "phosphor-svelte/lib/CaretDown";
   import Plus from "phosphor-svelte/lib/Plus";
   import type { Album, LibraryInfo, Playlist, Shelf, Track } from "../lib/types";
   import AlbumCard from "../lib/ui/AlbumCard.svelte";
   import Chip from "../lib/ui/Chip.svelte";
   import Cover from "../lib/ui/Cover.svelte";
+  import LoadingSpinner from "../lib/ui/LoadingSpinner.svelte";
   import PlaylistCard from "../lib/ui/PlaylistCard.svelte";
   import PlaylistView from "../lib/ui/PlaylistView.svelte";
   import TrackTile from "../lib/ui/TrackTile.svelte";
@@ -82,6 +84,44 @@
   const sorts = ["Recently added", "Title A–Z", "Artist A–Z"];
   let sortBy = $state("Recently added");
   let sortOpen = $state(false);
+  let scroller = $state<HTMLDivElement | null>(null);
+
+  const SPINNER_FADE_MS = 180;
+  let spinnerMounted = $state(false);
+  let spinnerLeaving = $state(false);
+  let spinnerTimer: ReturnType<typeof setTimeout> | undefined;
+
+  $effect(() => {
+    clearTimeout(spinnerTimer);
+    if (loading) {
+      spinnerMounted = true;
+      spinnerLeaving = false;
+
+      return;
+    }
+    if (!spinnerMounted) {
+      return;
+    }
+    spinnerLeaving = true;
+    spinnerTimer = setTimeout(() => {
+      spinnerLeaving = false;
+      spinnerMounted = false;
+    }, SPINNER_FADE_MS);
+
+    return () => clearTimeout(spinnerTimer);
+  });
+
+  const showSpinner = $derived(loading || spinnerMounted);
+
+  let lastFilter = "";
+  $effect(() => {
+    if (filter !== lastFilter) {
+      lastFilter = filter;
+      if (scroller) {
+        scroller.scrollTop = 0;
+      }
+    }
+  });
 
   const sortedAlbums = $derived(
     [...albums].sort((a, b) => {
@@ -201,82 +241,95 @@
     </div>
   </div>
 
-  <div class="scroll-thin mt-6 min-h-0 flex-1 overflow-y-auto pb-6">
-    {#if loading}
-      <p class="text-[12px] text-muted">Reading the catalogue…</p>
-    {:else if filter === "artists"}
-      {#if artists.length === 0}
-        <p class="text-[12px] text-muted">No artists in this library yet.</p>
-      {:else}
-        <div class="flex flex-wrap gap-x-4 gap-y-5">
-          {#each artists as artist (artist.id)}
-            <div class="w-[166px]">
-              <Cover id={artist.coverId} size={166} radius={8} />
-              <p class="mt-1.5 truncate font-display text-[15px] font-bold">{artist.name}</p>
-              <p class="text-[11px] text-muted">
-                Artist · {artist.songCount} {artist.songCount === 1 ? "song" : "songs"}
-              </p>
-            </div>
-          {/each}
-        </div>
-      {/if}
-    {:else if filter === "playlists"}
-      {#if playlists.length === 0}
-        <p class="text-[12px] text-muted">No playlists yet.</p>
-      {:else}
-        <div class="flex flex-wrap gap-x-4 gap-y-5">
-          {#each playlists as list (list.id)}
-            {@render playlistCard(list)}
-          {/each}
-        </div>
-      {/if}
-    {:else if filter === "all"}
-      {#if tracks.length === 0 && albums.length === 0 && playlists.length === 0}
-        <div class="max-w-[440px]">
-          <p class="text-[12px] leading-relaxed text-muted">
-            This library is empty. Import a folder from your computer or add tracks from YouTube Music.
-          </p>
-          <div class="mt-4 flex flex-wrap gap-2">
-            <button
-              class="h-8 rounded-md bg-fg px-3 text-[12px] font-medium text-bg-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-              onclick={onimportFolder}
-            >
-              Import from computer
-            </button>
-            <button
-              class="h-8 rounded-md border border-line bg-surface px-3 text-[12px] text-fg transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-              onclick={onimportYTM}
-            >
-              Import from YTM
-            </button>
-          </div>
-        </div>
-      {:else}
-        <div class="flex flex-wrap gap-x-4 gap-y-5">
-          {#each playlists as list (list.id)}
-            {@render playlistCard(list)}
-          {/each}
-          {#each sortedAlbums as album (album.id)}
-            <AlbumCard
-              {album}
-              variant="library"
-              onopen={onopenAlbum}
-              onplay={onplayAlbum}
-            />
-          {/each}
-          {#each tracks.slice(0, 5) as track (track.ref)}
-            <TrackTile {track} onplay={onplay} />
-          {/each}
-        </div>
-      {/if}
-    {:else if albums.length === 0}
-      <p class="text-[12px] text-muted">No albums in this library yet.</p>
-    {:else}
-      <div class="flex flex-wrap gap-x-4 gap-y-5">
-        {#each sortedAlbums as album (album.id)}
-          <AlbumCard {album} variant="library" onopen={onopenAlbum} onplay={onplayAlbum} />
-        {/each}
+  <div bind:this={scroller} class="scroll-thin mt-6 min-h-0 flex-1 overflow-y-auto pb-6">
+    {#if showSpinner}
+      <div
+        class="flex h-full min-h-[240px] items-center justify-center transition-opacity duration-[180ms] ease-out"
+        class:opacity-0={spinnerLeaving}
+        class:opacity-100={!spinnerLeaving}
+        in:fade={{ duration: 160 }}
+      >
+        <LoadingSpinner label="Loading catalogue ../\/\/\...." />
       </div>
+    {:else}
+      {#key filter}
+        <div in:fade={{ duration: 160 }}>
+          {#if filter === "artists"}
+            {#if artists.length === 0}
+              <p class="text-[12px] text-muted">No artists in this library yet.</p>
+            {:else}
+              <div class="flex flex-wrap gap-x-4 gap-y-5">
+                {#each artists as artist (artist.id)}
+                  <div class="w-[166px]">
+                    <Cover id={artist.coverId} size={166} radius={8} />
+                    <p class="mt-1.5 truncate font-display text-[15px] font-bold">{artist.name}</p>
+                    <p class="text-[11px] text-muted">
+                      Artist · {artist.songCount} {artist.songCount === 1 ? "song" : "songs"}
+                    </p>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          {:else if filter === "playlists"}
+            {#if playlists.length === 0}
+              <p class="text-[12px] text-muted">No playlists yet.</p>
+            {:else}
+              <div class="flex flex-wrap gap-x-4 gap-y-5">
+                {#each playlists as list (list.id)}
+                  {@render playlistCard(list)}
+                {/each}
+              </div>
+            {/if}
+          {:else if filter === "all"}
+            {#if tracks.length === 0 && albums.length === 0 && playlists.length === 0}
+              <div class="max-w-[440px]">
+                <p class="text-[12px] leading-relaxed text-muted">
+                  This library is empty. Import a folder from your computer or add tracks from YouTube Music.
+                </p>
+                <div class="mt-4 flex flex-wrap gap-2">
+                  <button
+                    class="h-8 rounded-md bg-fg px-3 text-[12px] font-medium text-bg-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+                    onclick={onimportFolder}
+                  >
+                    Import from computer
+                  </button>
+                  <button
+                    class="h-8 rounded-md border border-line bg-surface px-3 text-[12px] text-fg transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+                    onclick={onimportYTM}
+                  >
+                    Import from YTM
+                  </button>
+                </div>
+              </div>
+            {:else}
+              <div class="flex flex-wrap gap-x-4 gap-y-5">
+                {#each playlists as list (list.id)}
+                  {@render playlistCard(list)}
+                {/each}
+                {#each sortedAlbums as album (album.id)}
+                  <AlbumCard
+                    {album}
+                    variant="library"
+                    onopen={onopenAlbum}
+                    onplay={onplayAlbum}
+                  />
+                {/each}
+                {#each tracks.slice(0, 5) as track (track.ref)}
+                  <TrackTile {track} onplay={onplay} />
+                {/each}
+              </div>
+            {/if}
+          {:else if albums.length === 0}
+            <p class="text-[12px] text-muted">No albums in this library yet.</p>
+          {:else}
+            <div class="flex flex-wrap gap-x-4 gap-y-5">
+              {#each sortedAlbums as album (album.id)}
+                <AlbumCard {album} variant="library" onopen={onopenAlbum} onplay={onplayAlbum} />
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/key}
     {/if}
   </div>
   {/if}

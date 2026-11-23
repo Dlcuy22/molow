@@ -196,6 +196,10 @@ func (s *PlayerService) openEffectWindow() {
 		BackgroundColour: application.NewRGB(0x13, 0x13, 0x15),
 		URL:              "/?window=effects",
 	})
+	w.OnWindowEvent(events.Common.WindowClosing, func(*application.WindowEvent) {
+		s.logger().Debug("window: effects closed")
+	})
+	s.logger().Debug("window: effects opened")
 	w.Show()
 	w.Focus()
 }

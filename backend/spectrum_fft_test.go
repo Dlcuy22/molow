@@ -1,6 +1,9 @@
 package backend
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -295,5 +298,45 @@ func TestSpectrumRateChangeKeepsTheRunner(t *testing.T) {
 	}
 	if got := svc.spectrumPeriod(); got != time.Second/120 {
 		t.Fatalf("spectrumPeriod = %v, want %v", got, time.Second/120)
+	}
+}
+
+// TestUIAndVisualizerDebugLogs pins the debug transitions for minimizing the
+// window, closing or opening the album player, and toggling the visualizer.
+func TestUIAndVisualizerDebugLogs(t *testing.T) {
+	var buf bytes.Buffer
+	svc := spectrumService(t)
+	svc.log = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	svc.SetAlbumPlayerOpen(false)
+	svc.SetAlbumPlayerOpen(false)
+	svc.SetAlbumPlayerOpen(true)
+
+	svc.setMainWindowMinimised(true)
+	svc.setMainWindowMinimised(true)
+	svc.setMainWindowMinimised(false)
+
+	if err := svc.ConfigureSpectrum(SpectrumConfig{Bars: 150, MinHz: 20, MaxHz: 20000, Enabled: false}); err != nil {
+		t.Fatalf("disable visualizer: %v", err)
+	}
+	if err := svc.ConfigureSpectrum(SpectrumConfig{Bars: 150, MinHz: 20, MaxHz: 20000, Enabled: false}); err != nil {
+		t.Fatalf("repeat disable visualizer: %v", err)
+	}
+	if err := svc.ConfigureSpectrum(SpectrumConfig{Bars: 150, MinHz: 20, MaxHz: 20000, Enabled: true}); err != nil {
+		t.Fatalf("enable visualizer: %v", err)
+	}
+
+	got := buf.String()
+	for _, want := range []string{
+		`level=DEBUG msg="album player: closed"`,
+		`level=DEBUG msg="album player: opened"`,
+		`level=DEBUG msg="window: minimized"`,
+		`level=DEBUG msg="window: restored"`,
+		`level=DEBUG msg="visualizer: disabled"`,
+		`level=DEBUG msg="visualizer: enabled"`,
+	} {
+		if count := strings.Count(got, want); count != 1 {
+			t.Errorf("log count for %s = %d, want 1\nfull log:\n%s", want, count, got)
+		}
 	}
 }

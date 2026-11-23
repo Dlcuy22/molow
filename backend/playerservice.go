@@ -560,8 +560,18 @@ func (s *PlayerService) publishSpectrum() {
 // come from the window itself.
 func (s *PlayerService) setMainWindowMinimised(hidden bool) {
 	s.spectrumMu.Lock()
+	wasHidden := s.windowHidden
 	s.windowHidden = hidden
 	s.spectrumMu.Unlock()
+
+	if hidden == wasHidden {
+		return
+	}
+	if hidden {
+		s.logger().Debug("window: minimized")
+	} else {
+		s.logger().Debug("window: restored")
+	}
 }
 
 // SetAlbumPlayerOpen reports whether the album player sheet is showing. The
@@ -580,6 +590,15 @@ func (s *PlayerService) SetAlbumPlayerOpen(open bool) {
 		s.spectrumLastSilent = false
 	}
 	s.spectrumMu.Unlock()
+
+	if open == wasOpen {
+		return
+	}
+	if open {
+		s.logger().Debug("album player: opened")
+	} else {
+		s.logger().Debug("album player: closed")
+	}
 }
 
 // suppressSpectrum reports whether bands is not worth emitting, recording it
@@ -1167,6 +1186,15 @@ func (s *PlayerService) ConfigureSpectrum(cfg SpectrumConfig) error {
 		if err := s.rebuildRunner(); err != nil {
 			return err
 		}
+	}
+	if cfg.Enabled != wasEnabled {
+		if cfg.Enabled {
+			s.logger().Debug("visualizer: enabled", "bars", next.Bars, "fft", next.FFT, "rate", next.Rate)
+		} else {
+			s.logger().Debug("visualizer: disabled")
+		}
+	} else if haveRunner && (shapeChanged || rateChanged) {
+		s.logger().Debug("visualizer: configured", "bars", next.Bars, "fft", next.FFT, "rate", next.Rate, "scale", next.Scale, "delayMs", next.DelayMs, "enabled", cfg.Enabled)
 	}
 	s.emit(eventSnapshot, s.Snapshot())
 

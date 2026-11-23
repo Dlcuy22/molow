@@ -13,8 +13,6 @@ build/android/gen/
 # not source.
 /molow
 /molow.exe
-# Local benchmark and process-monitor output: evidence kept on disk, not source.
-/tools/
 /*stats*.json
 __pycache__/
 .env

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import CardPlayButton from "./CardPlayButton.svelte";
   import Cover from "./Cover.svelte";
   import type { Album } from "../types";
   import { openContextMenu } from "./context-menu.svelte";
@@ -40,16 +41,7 @@
     oncontextmenu={menu}
   >
     <Cover id={album.coverId} alt="" size={166} radius={8} class="transition-opacity group-hover:opacity-90" />
-    <span
-      class="absolute bottom-2 right-2 grid size-9 place-items-center rounded-full bg-fg text-bg-dark opacity-0 shadow-lift transition-opacity group-hover:opacity-100"
-      role="presentation"
-      onclick={(e) => {
-        e.stopPropagation();
-        onplay(album);
-      }}
-    >
-      <span class="ml-0.5 size-0 border-y-[6px] border-l-[9px] border-y-transparent border-l-bg-dark"></span>
-    </span>
+    <CardPlayButton onplay={() => onplay(album)} />
   </button>
   <div class="pt-1.5">
     <button

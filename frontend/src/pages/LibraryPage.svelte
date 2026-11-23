@@ -32,6 +32,7 @@
     onplayAlbum = (_a: Album) => {},
     onplay = (_t: Track) => {},
     onopenPlaylist = (_list: Playlist) => {},
+    onplayPlaylistCard = (_list: Playlist) => {},
     onclosePlaylist = () => {},
     onretryPlaylist = () => {},
     onplayPlaylist = (_tracks: Track[]) => {},
@@ -60,6 +61,7 @@
     onplayAlbum?: (a: Album) => void;
     onplay?: (t: Track) => void;
     onopenPlaylist?: (list: Playlist) => void;
+    onplayPlaylistCard?: (list: Playlist) => void;
     onclosePlaylist?: () => void;
     onretryPlaylist?: () => void;
     onplayPlaylist?: (tracks: Track[]) => void;
@@ -138,7 +140,7 @@
 </script>
 
 {#snippet playlistCard(list: Playlist)}
-  <PlaylistCard list={list} onopen={() => onopenPlaylist(list)} />
+  <PlaylistCard list={list} onopen={() => onopenPlaylist(list)} onplay={onplayPlaylistCard} />
 {/snippet}
 
 {#if activePlaylist}
@@ -197,7 +199,7 @@
       </button>
     </div>
   {:else}
-  <div class="mt-[31px] flex items-center justify-between">
+  <div class="mt-4 flex items-center justify-between">
     <div class="flex gap-2">
       {#each filters as f (f.id)}
         <Chip
@@ -241,7 +243,7 @@
     </div>
   </div>
 
-  <div bind:this={scroller} class="scroll-thin mt-6 min-h-0 flex-1 overflow-y-auto pb-6">
+  <div bind:this={scroller} class="scroll-thin mt-4 min-h-0 flex-1 overflow-y-auto pb-6">
     {#if showSpinner}
       <div
         class="flex h-full min-h-[240px] items-center justify-center transition-opacity duration-[180ms] ease-out"

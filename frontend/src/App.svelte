@@ -32,6 +32,7 @@
     closePlaylist,
     playTrack,
     playAlbum,
+    playPlaylist,
     playRefs,
     albumRefs,
     setLiked,
@@ -879,6 +880,10 @@
           }}
           onplay={playLibraryTrack}
           onopenPlaylist={(list) => void openPlaylist(list)}
+          onplayPlaylistCard={(list) => {
+            playlistPlayback = null;
+            void playPlaylist(list);
+          }}
           onclosePlaylist={closePlaylist}
           onretryPlaylist={() => {
             if ($activePlaylist) {

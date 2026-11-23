@@ -604,14 +604,45 @@ export async function playRefs(refs: string[]): Promise<void> {
 /** playAlbum starts an album in track order. */
 export async function playAlbum(album: Album): Promise<void> {
   const refs = await albumRefs(album);
-  if (refs.length === 0) {
-    return;
+  await playRefs(refs);
+}
+
+/** playlistRefs collects playable track refs for a playlist in order. */
+export async function playlistRefs(list: Playlist): Promise<string[]> {
+  const id = list.libraryId || get(libraryId);
+  if (id === "" || list.id === "") {
+    return [];
   }
   try {
-    await PlayerService.PlayRefs(refs);
+    const refs: string[] = [];
+    let cursor = "";
+    for (;;) {
+      const page = toPage(await PlayerService.LibraryFeed(id, "playlist:" + list.id, cursor, 200));
+      const shelf = page.shelves[0];
+      if (!shelf || shelf.items.length === 0) {
+        break;
+      }
+      for (const t of shelf.items) {
+        if (t.ref !== "") {
+          refs.push(t.ref);
+        }
+      }
+      if (!shelf.cursor) {
+        break;
+      }
+      cursor = shelf.cursor;
+    }
+
+    return refs;
   } catch {
-    // Surfaced by the snapshot error line.
+    return [];
   }
+}
+
+/** playPlaylist starts a playlist in track order. */
+export async function playPlaylist(list: Playlist): Promise<void> {
+  const refs = await playlistRefs(list);
+  await playRefs(refs);
 }
 
 export async function toggleLike(track: Track): Promise<void> {

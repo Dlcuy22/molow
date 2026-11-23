@@ -1,13 +1,19 @@
 <script lang="ts">
   import MusicNotes from "phosphor-svelte/lib/MusicNotes";
   import type { Playlist } from "../types";
+  import CardPlayButton from "./CardPlayButton.svelte";
   import Cover from "./Cover.svelte";
   import { openContextMenu } from "./context-menu.svelte";
 
   let {
     list,
     onopen = (_id: string) => {},
-  }: { list: Playlist; onopen?: (id: string) => void } = $props();
+    onplay = (_list: Playlist) => {},
+  }: {
+    list: Playlist;
+    onopen?: (id: string) => void;
+    onplay?: (list: Playlist) => void;
+  } = $props();
 
   const coverId = $derived(
     list.trackCount === 0 && !list.customCover ? "" : list.coverId || list.coverIds?.[0] || "",
@@ -29,13 +35,16 @@
   onclick={() => onopen(list.id)}
   oncontextmenu={menu}
 >
-  <span class="block size-[166px] overflow-hidden rounded-lg bg-surface transition-opacity group-hover:opacity-90">
+  <span class="relative block size-[166px] overflow-hidden rounded-lg bg-surface">
     {#if coverId}
-      <Cover id={coverId} size={166} radius={0} class="block" />
+      <Cover id={coverId} size={166} radius={0} class="block transition-opacity group-hover:opacity-90" />
     {:else}
-      <span class="grid h-full w-full place-items-center text-muted">
+      <span class="grid h-full w-full place-items-center text-muted transition-opacity group-hover:opacity-90">
         <MusicNotes size="36" />
       </span>
+    {/if}
+    {#if list.trackCount > 0}
+      <CardPlayButton onplay={() => onplay(list)} />
     {/if}
   </span>
   <span class="mt-1.5 block truncate font-display text-[15px] font-bold">

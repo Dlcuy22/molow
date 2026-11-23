@@ -17,7 +17,8 @@ func wordLine(ms int, text string, end int) Line {
 	}}
 }
 
-// A word-timed line knows where it ends, so the mark starts exactly there.
+// A word-timed line knows where it ends, and the mark waits for the post-line
+// vocal hold after that word end.
 func TestMarkInstrumentalUsesTheWordEnd(t *testing.T) {
 	lines := []Line{
 		wordLine(0, "one", 2000),
@@ -28,8 +29,8 @@ func TestMarkInstrumentalUsesTheWordEnd(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("lines = %d, want one mark", len(got))
 	}
-	if got[1].Text != InstrumentalMark || got[1].TimeMs != 2000 {
-		t.Fatalf("mark = %q at %d", got[1].Text, got[1].TimeMs)
+	if got[1].Text != InstrumentalMark || got[1].TimeMs != 2000+instrumentalHoldMs {
+		t.Fatalf("mark = %q at %d, want %d", got[1].Text, got[1].TimeMs, 2000+instrumentalHoldMs)
 	}
 }
 
@@ -64,8 +65,8 @@ func TestMarkInstrumentalEstimatesLineTimedEnds(t *testing.T) {
 	if mark.Text != InstrumentalMark {
 		t.Fatalf("mark = %q", mark.Text)
 	}
-	if mark.TimeMs < 7000 || mark.TimeMs > 9000 {
-		t.Fatalf("mark at %d, want the estimated end of the 6 s line", mark.TimeMs)
+	if mark.TimeMs < 7000+instrumentalHoldMs || mark.TimeMs > 9000+instrumentalHoldMs {
+		t.Fatalf("mark at %d, want the estimated end of the 6 s line plus hold", mark.TimeMs)
 	}
 }
 
@@ -88,8 +89,26 @@ func TestMarkInstrumentalFillsTheTail(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("lines = %d, want one tail mark", len(got))
 	}
-	if last := got[len(got)-1]; last.Text != InstrumentalMark || last.TimeMs != 166896 {
-		t.Fatalf("tail = %q at %d", last.Text, last.TimeMs)
+	if last := got[len(got)-1]; last.Text != InstrumentalMark || last.TimeMs != 166896+instrumentalHoldMs {
+		t.Fatalf("tail = %q at %d, want %d", last.Text, last.TimeMs, 166896+instrumentalHoldMs)
+	}
+}
+
+// Providers often stamp a final line's trailing syllable or exclamation mark
+// with a sub-second onset window (e.g. 790 ms for "Happy 2 U!"). The mark must
+// wait for at least instrumentalMinLineMs + instrumentalHoldMs after the line
+// starts so the active highlight does not jump away mid-vocal.
+func TestMarkInstrumentalHoldsCompressedWordEnds(t *testing.T) {
+	lines := []Line{
+		wordLine(238917, "Happy 2 U！", 239708),
+	}
+	got := MarkInstrumental(lines, 264000)
+	if len(got) != 2 {
+		t.Fatalf("lines = %d, want one tail mark", len(got))
+	}
+	wantMin := int64(238917 + instrumentalMinLineMs + instrumentalHoldMs)
+	if last := got[len(got)-1]; last.Text != InstrumentalMark || last.TimeMs < wantMin {
+		t.Fatalf("tail = %q at %d, want >= %d", last.Text, last.TimeMs, wantMin)
 	}
 }
 

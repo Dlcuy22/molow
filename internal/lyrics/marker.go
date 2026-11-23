@@ -15,6 +15,15 @@ const InstrumentalMark = "♪"
 // a breath between lines and stays empty.
 const instrumentalGapMs = 4000
 
+// instrumentalMinLineMs floors how long a sung line stays active before its
+// vocal is considered finished, guarding against providers that stamp the last
+// syllable or punctuation with a zero-length or sub-second onset token.
+const instrumentalMinLineMs = 1200
+
+// instrumentalHoldMs is the vocal-sustain and reading hold after lineEnd before
+// switching focus to the instrumental mark.
+const instrumentalHoldMs = 1000
+
 // instrumentalMinSamples is how many short gaps a sheet needs before its own
 // pacing can estimate a line end.
 const instrumentalMinSamples = 3
@@ -45,14 +54,14 @@ func MarkInstrumental(lines []Line, durationMs int64) []Line {
 		if end <= 0 || next.TimeMs-end <= instrumentalGapMs {
 			continue
 		}
-		out = append(out, Line{TimeMs: end, Text: InstrumentalMark})
+		out = append(out, Line{TimeMs: end + instrumentalHoldMs, Text: InstrumentalMark})
 		inserted = true
 	}
 
 	if durationMs > 0 && len(out) > 0 {
 		last := out[len(out)-1]
 		if end := lineEnd(last, rate); end > 0 && durationMs-end > instrumentalGapMs {
-			out = append(out, Line{TimeMs: end, Text: InstrumentalMark})
+			out = append(out, Line{TimeMs: end + instrumentalHoldMs, Text: InstrumentalMark})
 			inserted = true
 		}
 	}
@@ -77,25 +86,32 @@ func dropInstrumentalMarks(lines []Line) []Line {
 	return kept
 }
 
-// lineEnd is when a line stops being sung. A word-timed line knows; a
-// line-timed one is estimated from its length at the sheet's own rate.
+// lineEnd is when a line stops being sung. Word-timed lines use their last
+// word's end, floored by the sheet's character pacing and instrumentalMinLineMs
+// so compressed trailing word tags do not cut off sustained vocals early.
 func lineEnd(line Line, rate float64) int64 {
 	if line.TimeMs < 0 || line.Text == "" {
 		return 0
 	}
+	var end int64
 	if n := len(line.Words); n > 0 {
-		if end := line.Words[n-1].EndMs; end > line.TimeMs {
-			return end
+		if wEnd := line.Words[n-1].EndMs; wEnd > line.TimeMs {
+			end = wEnd
 		}
-
+	}
+	if chars := utf8.RuneCountInString(line.Text); rate > 0 && chars > 0 {
+		if est := line.TimeMs + int64(float64(chars)/rate); est > end {
+			end = est
+		}
+	}
+	if end <= 0 {
 		return 0
 	}
-	chars := utf8.RuneCountInString(line.Text)
-	if rate <= 0 || chars == 0 {
-		return 0
+	if minEnd := line.TimeMs + instrumentalMinLineMs; end < minEnd {
+		end = minEnd
 	}
 
-	return line.TimeMs + int64(float64(chars)/rate)
+	return end
 }
 
 // charsPerMs measures how fast a sheet sings, from the lines that follow the

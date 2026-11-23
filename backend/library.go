@@ -788,6 +788,32 @@ func (s *PlayerService) catalogYTMTrack(ref string) (ytmTrack, bool) {
 	}, true
 }
 
+// catalogLocalTrack reads a catalogued local track's tags and CoverID from
+// SQLite so queue indexing and transient track-switch snapshots do not wait for
+// asynchronous file tag parsing when the track is already in a library.
+func (s *PlayerService) catalogLocalTrack(path string) (trackTags, bool) {
+	if path == "" || isYTMRef(path) {
+		return trackTags{}, false
+	}
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return trackTags{}, false
+	}
+	tr, ok, err := store.TrackByRef(path)
+	if err != nil || !ok {
+		return trackTags{}, false
+	}
+
+	return trackTags{
+		Title:   tr.Title,
+		Artist:  tr.Artist,
+		Album:   tr.Album,
+		CoverID: tr.CoverID,
+	}, true
+}
+
 // backfillYTMTrackMeta persists hydrated remote metadata onto pre-migration
 // catalogued tracks so later restarts do not need another song lookup.
 func (s *PlayerService) backfillYTMTrackMeta(ref, thumbnailURL, artistID, album string) {

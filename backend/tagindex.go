@@ -108,6 +108,15 @@ func (s *PlayerService) indexQueue(paths []string) {
 	s.index.keep(current)
 
 	for _, p := range paths {
+		if isYTMRef(p) {
+			continue
+		}
+		if !s.index.resolved(p) {
+			if cat, ok := s.catalogLocalTrack(p); ok && cat.Title != "" {
+				s.index.finish(p, cat)
+				continue
+			}
+		}
 		if s.index.begin(p) {
 			s.resolveTags(p)
 		}

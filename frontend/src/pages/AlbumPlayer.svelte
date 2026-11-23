@@ -55,6 +55,19 @@
   const position = $derived(snap.position);
   const remaining = $derived(duration > 0 ? Math.max(0, duration - position) : 0);
 
+  // Hold the current cover across transient empty-metadata frames during track
+  // switches; clear once idle/stopped or a loaded track genuinely has no cover.
+  let heldCoverId = $state("");
+  $effect.pre(() => {
+    if (snap.coverId !== "") {
+      heldCoverId = snap.coverId;
+      return;
+    }
+    if (snap.path === "" || snap.title !== "") {
+      heldCoverId = "";
+    }
+  });
+
   const background = $derived(
     stops.length >= 2
       ? `linear-gradient(180deg, ${stops[0]} 11.66%, ${stops[1]} 75.95%)`
@@ -496,11 +509,11 @@
   <div
     class="player-stage absolute top-[18%] w-[28.2%] min-w-[240px] max-w-[333px] {centerPlayer ? 'left-1/2 -translate-x-1/2' : 'left-[12%] translate-x-0'}"
   >
-    <Cover id={snap.coverId} alt={snap.album} size={333} radius={16} fill class="w-full" />
+    <Cover id={heldCoverId} alt={snap.album} size={333} radius={16} fill class="w-full" />
 
     <Marquee
       text={snap.title || "Nothing playing"}
-      class="mt-[11px] font-display text-[20px] font-bold leading-tight"
+      class="mt-[11px] font-display text-[20px] font-[600] leading-tight"
     />
     <p class="truncate text-[12px] leading-tight text-fg/56">{snap.artist}</p>
 

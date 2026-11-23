@@ -54,6 +54,17 @@
 
   const volume = $derived(Math.round(snap.volume * 100));
   const remaining = $derived(duration > 0 ? Math.max(0, duration - snap.position) : 0);
+
+  let heldCoverId = $state("");
+  $effect.pre(() => {
+    if (snap.coverId !== "") {
+      heldCoverId = snap.coverId;
+      return;
+    }
+    if (snap.path === "" || snap.title !== "") {
+      heldCoverId = "";
+    }
+  });
 </script>
 
 {#snippet transport()}
@@ -146,7 +157,7 @@
     class="absolute left-0 top-1/2 flex min-w-0 -translate-y-1/2 items-center gap-3 pl-2"
     style="right: calc(50% + 120px)"
   >
-    <Cover id={snap.coverId} alt="" size={68} radius={8} class="shrink-0" />
+    <Cover id={heldCoverId} alt="" size={68} radius={8} class="shrink-0" />
     <div class="flex min-w-0 flex-1 flex-col gap-[2px]">
       <Marquee
         text={snap.title || "Nothing playing"}

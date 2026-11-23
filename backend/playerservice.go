@@ -708,21 +708,24 @@ func (s *PlayerService) Snapshot() Snapshot {
 		preview = s.preview.state()
 	}
 
+	rows := s.queueRows(queue, snap.QueueIndex)
+	title, artist, album, coverID := s.snapshotMeta(snap, rows)
+
 	return Snapshot{
 		State:       stateName(snap.State),
 		Path:        snap.Path,
-		Title:       snap.Meta.Tags.Title,
-		Artist:      snap.Meta.Tags.Artist,
-		Album:       snap.Meta.Tags.Album,
+		Title:       title,
+		Artist:      artist,
+		Album:       album,
 		ArtistID:    s.currentArtistID(snap.Path),
-		CoverID:     s.snapshotCoverID(snap),
+		CoverID:     coverID,
 		CoverMime:   snap.Meta.Tags.CoverMIME,
 		Codec:       snap.Meta.Codec,
 		Container:   snap.Meta.Container,
 		Position:    snap.Position.Milliseconds(),
 		Duration:    snap.Duration.Milliseconds(),
 		Volume:      snap.Volume,
-		Queue:       s.queueRows(queue, snap.QueueIndex),
+		Queue:       rows,
 		QueueIdx:    snap.QueueIndex,
 		Shuffled:    s.player.Shuffled(),
 		Repeat:      repeatName(snap.Repeat),
@@ -734,6 +737,46 @@ func (s *PlayerService) Snapshot() Snapshot {
 		Error:       lastErr,
 		Preview:     preview,
 	}
+}
+
+// snapshotMeta fills in title, artist, album and coverID from the active queue
+// row or catalogue index during the window between a track switch and the
+// engine's asynchronous tag resolution landing.
+func (s *PlayerService) snapshotMeta(snap molo.Snapshot, rows []QueueRow) (title, artist, album, coverID string) {
+	title = snap.Meta.Tags.Title
+	artist = snap.Meta.Tags.Artist
+	album = snap.Meta.Tags.Album
+	coverID = s.snapshotCoverID(snap)
+	if snap.Path == "" {
+		return title, artist, album, coverID
+	}
+	if snap.QueueIndex >= 0 && snap.QueueIndex < len(rows) && rows[snap.QueueIndex].Path == snap.Path {
+		row := rows[snap.QueueIndex]
+		title = firstNonEmpty(title, row.Title)
+		artist = firstNonEmpty(artist, row.Artist)
+		album = firstNonEmpty(album, row.Album)
+		coverID = firstNonEmpty(coverID, row.CoverID)
+	}
+	if isYTMRef(snap.Path) {
+		if t, ok := s.ytm.lookup(snap.Path); ok {
+			title = firstNonEmpty(title, t.Title)
+			artist = firstNonEmpty(artist, t.Artist)
+			album = firstNonEmpty(album, t.Album)
+		}
+	} else {
+		tags := s.index.lookup(snap.Path)
+		if tags.Title == "" && tags.CoverID == "" {
+			if cat, ok := s.catalogLocalTrack(snap.Path); ok {
+				tags = cat
+			}
+		}
+		title = firstNonEmpty(title, tags.Title)
+		artist = firstNonEmpty(artist, tags.Artist)
+		album = firstNonEmpty(album, tags.Album)
+		coverID = firstNonEmpty(coverID, tags.CoverID)
+	}
+
+	return title, artist, album, coverID
 }
 
 // currentArtistID returns the first credited artist's browse id for a remote
@@ -766,8 +809,19 @@ func (s *PlayerService) snapshotCoverID(snap molo.Snapshot) string {
 			return cat.CoverID
 		}
 	}
+	if cid := artwork.ID(snap.Meta.Tags.Cover); cid != "" {
+		return cid
+	}
+	if snap.Path != "" && !isYTMRef(snap.Path) {
+		if tags := s.index.lookup(snap.Path); tags.CoverID != "" {
+			return tags.CoverID
+		}
+		if cat, ok := s.catalogLocalTrack(snap.Path); ok && cat.CoverID != "" {
+			return cat.CoverID
+		}
+	}
 
-	return artwork.ID(snap.Meta.Tags.Cover)
+	return ""
 }
 
 // syncIndex reconciles the tag index with the queue, but only when the queue

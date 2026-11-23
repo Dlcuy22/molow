@@ -227,6 +227,15 @@ func (x *ytmIndex) put(t ytmTrack) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	prev := x.entries[ref]
+	if t.Title == "" {
+		t.Title = prev.Title
+	}
+	if t.Artist == "" {
+		t.Artist = prev.Artist
+	}
+	if t.DurationMs <= 0 {
+		t.DurationMs = prev.DurationMs
+	}
 	if t.ThumbnailURL == "" {
 		t.ThumbnailURL = prev.ThumbnailURL
 	}
@@ -544,6 +553,24 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 		p.logger().Debug("trackcache: hit", "id", id)
 		track := p.hydrateTrackThumb(ctx, ref, p.trackFor(ref, nil))
 		src := ytmSourceMeta(track)
+		var infoMu sync.Mutex
+		var openedInfo core.StreamInfo
+		recordInfo := func(info core.StreamInfo) {
+			if info.TotalFrames <= 0 {
+				return
+			}
+			infoMu.Lock()
+			openedInfo = info
+			infoMu.Unlock()
+			if ms := info.Duration().Milliseconds(); ms > 0 {
+				t, _ := p.index.lookup(ref)
+				if t.DurationMs <= 0 {
+					t.ID = firstNonEmpty(t.ID, id)
+					t.DurationMs = ms
+					p.index.put(t)
+				}
+			}
+		}
 		src.Opener = func(stop <-chan struct{}) (decode.Decoder, error) {
 			if rc, _, ok := p.tracks.Get(id); ok {
 				p.setOpenCached(ref, true)
@@ -553,6 +580,7 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 
 					return nil, err
 				}
+				recordInfo(dec.Info())
 
 				return wrapClosingDecoder(dec, rc), nil
 			}
@@ -562,7 +590,38 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 			p.setOpenCached(ref, false)
 			p.logger().Debug("trackcache: evicted before open, falling back to network", "id", id)
 
-			return p.fetchRemoteDecoder(ctx, stop, id)
+			dec, err := p.fetchRemoteDecoder(ctx, stop, id)
+			if err != nil {
+				return nil, err
+			}
+			recordInfo(dec.Info())
+
+			return dec, nil
+		}
+		baseProbe := src.Probe
+		src.Probe = func(mode core.DurationMode) (core.StreamInfo, error) {
+			infoMu.Lock()
+			info := openedInfo
+			infoMu.Unlock()
+			if info.TotalFrames > 0 {
+				return info, nil
+			}
+			if rc, _, ok := p.tracks.Get(id); ok {
+				defer rc.Close()
+				if dec, err := decode.NewWebMOpusFactory().OpenReader(rc); err == nil {
+					info = dec.Info()
+					_ = dec.Close()
+					recordInfo(info)
+					if info.TotalFrames > 0 {
+						return info, nil
+					}
+				}
+			}
+			if baseProbe != nil {
+				return baseProbe(mode)
+			}
+
+			return core.StreamInfo{Format: core.CanonicalFormat, TotalFrames: -1}, nil
 		}
 
 		return src, nil
@@ -642,6 +701,30 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 				buf.finish(err)
 			}()
 		})
+	}
+
+	if src.Probe == nil {
+		src.Probe = func(core.DurationMode) (core.StreamInfo, error) {
+			if err := buf.wait(ctx); err != nil {
+				return core.StreamInfo{Format: core.CanonicalFormat, TotalFrames: -1}, err
+			}
+			dec, err := buf.openSeekableDecoder()
+			if err != nil {
+				return core.StreamInfo{Format: core.CanonicalFormat, TotalFrames: -1}, err
+			}
+			info := dec.Info()
+			_ = dec.Close()
+			if ms := info.Duration().Milliseconds(); ms > 0 {
+				t, _ := p.index.lookup(ref)
+				if t.DurationMs <= 0 {
+					t.ID = firstNonEmpty(t.ID, id)
+					t.DurationMs = ms
+					p.index.put(t)
+				}
+			}
+
+			return info, nil
+		}
 	}
 
 	if p.seamless {

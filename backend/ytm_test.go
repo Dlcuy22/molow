@@ -840,3 +840,58 @@ func TestYTMProviderAbortedDownloadDoesNotCache(t *testing.T) {
 		t.Fatalf("failed download polluted trackcache: %+v", tc.Stats())
 	}
 }
+
+func TestYTMIndexPutPreservesDurationAndTrackCacheHitProbesFromFile(t *testing.T) {
+	data := fixtureBytes(t)
+	tc, err := trackcache.Open(t.TempDir(), int64(len(data)*4))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tc.Put("cached_zero_dur", data); err != nil {
+		t.Fatal(err)
+	}
+
+	index := newYTMIndex()
+	index.put(ytmTrack{ID: "cached_zero_dur", Title: "Song", Artist: "Artist", DurationMs: 180000})
+	// A later put with DurationMs == 0 (e.g. search hit or stale hydrateSongMeta)
+	// must not erase the known duration.
+	index.put(ytmTrack{ID: "cached_zero_dur", Album: "Album", DurationMs: 0})
+	if got, _ := index.lookup("ytm:cached_zero_dur"); got.DurationMs != 180000 {
+		t.Fatalf("DurationMs after zero-duration put = %d, want 180000", got.DurationMs)
+	}
+
+	// Even when a cached track has no duration in ytmIndex at all (e.g. after a
+	// restart or from a search hit that carried DurationMs == 0), Open on a
+	// trackcache hit must populate Source.Probe from the cached WebM file.
+	freshIndex := newYTMIndex()
+	freshIndex.put(ytmTrack{ID: "cached_zero_dur", Title: "Song", Artist: "Artist", DurationMs: 0})
+	p := &ytmProvider{
+		index:    freshIndex,
+		tracks:   tc,
+		seamless: true,
+	}
+
+	src, err := p.Open(context.Background(), "ytm:cached_zero_dur")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if src.Probe == nil {
+		t.Fatal("cached source has nil Probe when DurationMs == 0")
+	}
+	dec, err := src.Opener(nil)
+	if err != nil {
+		t.Fatalf("Opener: %v", err)
+	}
+	defer dec.Close()
+
+	info, err := src.Probe(core.DurationProbe)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if info.TotalFrames <= 0 {
+		t.Fatalf("probed TotalFrames = %d, want > 0 from cached WebM file", info.TotalFrames)
+	}
+	if got, _ := freshIndex.lookup("ytm:cached_zero_dur"); got.DurationMs <= 0 {
+		t.Fatalf("DurationMs in index after cached open = %d, want > 0", got.DurationMs)
+	}
+}

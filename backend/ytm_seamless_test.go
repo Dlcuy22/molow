@@ -3,10 +3,14 @@ package backend
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,6 +19,7 @@ import (
 	"github.com/dlcuy22/molo/core"
 	"github.com/dlcuy22/molo/decode"
 	"github.com/dlcuy22/molo/provider"
+	"github.com/dlcuy22/molow/internal/trackcache"
 	ytm "github.com/dlcuy22/ytm-go"
 )
 
@@ -440,8 +445,17 @@ func TestYTMSeamlessSurfacesDownloadFailure(t *testing.T) {
 // TestYTMStreamBufferWakesBlockedReader proves a reader parked on an empty
 // buffer is woken by the next append and returns exactly what arrived.
 func TestYTMStreamBufferWakesBlockedReader(t *testing.T) {
-	b := newYTMStreamBuffer()
-	r := b.reader()
+	b := newYTMStreamBuffer("wake", nil, nil)
+	b.dir = t.TempDir()
+	if err := b.initFile(); err != nil {
+		t.Fatal(err)
+	}
+	r, err := b.reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer b.finish(nil)
 
 	started := make(chan struct{})
 	got := make(chan string, 1)
@@ -461,7 +475,9 @@ func TestYTMStreamBufferWakesBlockedReader(t *testing.T) {
 	// Let the reader park on the empty buffer; the point is that the wake
 	// follows the append rather than a poll.
 	time.Sleep(10 * time.Millisecond)
-	b.append([]byte("abcd"))
+	if err := b.append([]byte("abcd")); err != nil {
+		t.Fatal(err)
+	}
 
 	select {
 	case s := <-got:
@@ -479,9 +495,18 @@ func TestYTMStreamBufferWakesBlockedReader(t *testing.T) {
 func TestYTMStreamBufferFinishesWithEOFOrError(t *testing.T) {
 	p := make([]byte, 8)
 
-	eof := newYTMStreamBuffer()
-	r := eof.reader()
-	eof.append([]byte("abc"))
+	eof := newYTMStreamBuffer("eof", nil, nil)
+	eof.dir = t.TempDir()
+	if err := eof.initFile(); err != nil {
+		t.Fatal(err)
+	}
+	r, err := eof.reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eof.append([]byte("abc")); err != nil {
+		t.Fatal(err)
+	}
 	eof.finish(nil)
 	if n, err := r.Read(p); n != 3 || err != nil {
 		t.Fatalf("Read = (%d, %v), want (3, nil)", n, err)
@@ -489,11 +514,21 @@ func TestYTMStreamBufferFinishesWithEOFOrError(t *testing.T) {
 	if n, err := r.Read(p); n != 0 || !errors.Is(err, io.EOF) {
 		t.Fatalf("Read after drain = (%d, %v), want (0, io.EOF)", n, err)
 	}
+	_ = r.Close()
 
 	cause := errors.New("download failed")
-	failed := newYTMStreamBuffer()
-	rf := failed.reader()
-	failed.append([]byte("xy"))
+	failed := newYTMStreamBuffer("fail", nil, nil)
+	failed.dir = t.TempDir()
+	if err := failed.initFile(); err != nil {
+		t.Fatal(err)
+	}
+	rf, err := failed.reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := failed.append([]byte("xy")); err != nil {
+		t.Fatal(err)
+	}
 	failed.finish(cause)
 	if n, err := rf.Read(p); n != 2 || err != nil {
 		t.Fatalf("Read = (%d, %v), want (2, nil)", n, err)
@@ -501,25 +536,39 @@ func TestYTMStreamBufferFinishesWithEOFOrError(t *testing.T) {
 	if n, err := rf.Read(p); n != 0 || !errors.Is(err, cause) {
 		t.Fatalf("Read after drain = (%d, %v), want (0, %v)", n, err, cause)
 	}
+	_ = rf.Close()
 }
 
-// TestYTMStreamBufferWaitReturnsBodyAndHonoursContext proves wait hands back
-// the complete body once the download ends and gives up promptly when its
-// context is cancelled before that.
+// TestYTMStreamBufferWaitAndHonoursContext proves wait returns once the
+// download ends and gives up promptly when its context is cancelled before that.
 func TestYTMStreamBufferWaitReturnsBodyAndHonoursContext(t *testing.T) {
-	b := newYTMStreamBuffer()
-	b.append([]byte("hello"))
+	b := newYTMStreamBuffer("wait", nil, nil)
+	b.dir = t.TempDir()
+	if err := b.initFile(); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.append([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
 	b.finish(nil)
-	data, err := b.wait(context.Background())
-	if err != nil || string(data) != "hello" {
-		t.Fatalf("wait = (%q, %v), want hello", data, err)
+	if err := b.wait(context.Background()); err != nil {
+		t.Fatalf("wait = %v, want nil", err)
+	}
+	rc, err := b.openSeekable()
+	if err != nil {
+		t.Fatalf("openSeekable: %v", err)
+	}
+	got, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil || string(got) != "hello" {
+		t.Fatalf("openSeekable read = (%q, %v), want hello", got, err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	blocked := newYTMStreamBuffer("cancel", nil, nil)
 	done := make(chan error, 1)
 	go func() {
-		_, err := newYTMStreamBuffer().wait(ctx)
-		done <- err
+		done <- blocked.wait(ctx)
 	}()
 	cancel()
 	select {
@@ -530,4 +579,255 @@ func TestYTMStreamBufferWaitReturnsBodyAndHonoursContext(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("wait did not return on context cancellation")
 	}
+}
+
+// TestYTMChunkedDownloadReassemblesAndResumes proves bounded 206 chunks
+// reassemble the whole file, resume from the exact offset after a mid-chunk
+// drop, and promote cleanly into trackcache.
+func TestYTMChunkedDownloadReassemblesAndResumes(t *testing.T) {
+	data := fixtureBytes(t)
+	chunkSize := int64(len(data) / 3)
+	if chunkSize < 1024 {
+		chunkSize = 1024
+	}
+
+	var reqs atomic.Int32
+	var droppedOnce atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqs.Add(1)
+		hdr := strings.TrimPrefix(r.Header.Get("Range"), "bytes=")
+		parts := strings.SplitN(hdr, "-", 2)
+		start, _ := strconv.ParseInt(parts[0], 10, 64)
+		end, _ := strconv.ParseInt(parts[1], 10, 64)
+		if end >= int64(len(data)) {
+			end = int64(len(data)) - 1
+		}
+		slice := data[start : end+1]
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(data)))
+		w.Header().Set("Content-Length", strconv.Itoa(len(slice)))
+		w.WriteHeader(http.StatusPartialContent)
+
+		// Cut the second request mid-chunk so download must resume from offset.
+		if start > 0 && droppedOnce.CompareAndSwap(false, true) {
+			half := len(slice) / 2
+			_, _ = w.Write(slice[:half])
+
+			return
+		}
+		_, _ = w.Write(slice)
+	}))
+	t.Cleanup(srv.Close)
+
+	tc, err := trackcache.Open(t.TempDir(), int64(len(data)*4))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := &ytmProvider{
+		index:      newYTMIndex(),
+		tracks:     tc,
+		http:       srv.Client(),
+		seamless:   true,
+		chunkBytes: chunkSize,
+		resolve: func(context.Context, string) (*ytm.Streams, error) {
+			return ytmStreams(srv.URL+"/media", time.Now().Add(time.Hour)), nil
+		},
+	}
+
+	src, err := p.Open(context.Background(), "ytm:chunked1")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	dec, err := src.Opener(make(chan struct{}))
+	if err != nil {
+		t.Fatalf("Opener: %v", err)
+	}
+	up, err := src.Upgrade(context.Background())
+	if err != nil {
+		_ = dec.Close()
+		t.Fatalf("Upgrade: %v", err)
+	}
+	seekable, err := up(make(chan struct{}))
+	if err != nil {
+		_ = dec.Close()
+		t.Fatalf("upgraded opener: %v", err)
+	}
+	if err := seekable.(decode.Seeker).SeekFrame(ytmSampleRate); err != nil {
+		_ = dec.Close()
+		_ = seekable.Close()
+		t.Fatalf("SeekFrame: %v", err)
+	}
+	_ = dec.Close()
+	_ = seekable.Close()
+
+	if reqs.Load() < 4 {
+		t.Fatalf("requests = %d, want >= 4 (chunked + resume)", reqs.Load())
+	}
+	if !tc.Has("chunked1") {
+		t.Fatal("chunked track was not promoted to trackcache after readers closed")
+	}
+	rc, size, ok := tc.Get("chunked1")
+	if !ok || size != int64(len(data)) {
+		t.Fatalf("cached size = (%d, %v), want (%d, true)", size, ok, len(data))
+	}
+	got, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil || len(got) != len(data) || string(got) != string(data) {
+		t.Fatalf("cached bytes mismatch (len=%d, want=%d, err=%v)", len(got), len(data), err)
+	}
+}
+
+// TestYTMOversizedTrackPlaysFromTempAndCleansUp proves a track larger than
+// trackcache's budget still plays, upgrades to seekable local playback, and
+// removes its temp file once closed without evicting cached tracks.
+func TestYTMOversizedTrackPlaysFromTempAndCleansUp(t *testing.T) {
+	data := fixtureBytes(t)
+	srv, _ := mediaServer(t)
+
+	cacheDir := t.TempDir()
+	// Budget holds small existing entry, but is smaller than fixture data.
+	tc, err := trackcache.Open(cacheDir, int64(len(data)/2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tc.Put("small", []byte("small-track")); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &ytmProvider{
+		index:    newYTMIndex(),
+		tracks:   tc,
+		http:     srv.Client(),
+		seamless: true,
+		resolve: func(context.Context, string) (*ytm.Streams, error) {
+			return ytmStreams(srv.URL+"/media", time.Now().Add(time.Hour)), nil
+		},
+	}
+
+	src, err := p.Open(context.Background(), "ytm:huge1")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	dec, err := src.Opener(make(chan struct{}))
+	if err != nil {
+		t.Fatalf("Opener: %v", err)
+	}
+	up, err := src.Upgrade(context.Background())
+	if err != nil {
+		_ = dec.Close()
+		t.Fatalf("Upgrade: %v", err)
+	}
+	seekable, err := up(make(chan struct{}))
+	if err != nil {
+		_ = dec.Close()
+		t.Fatalf("upgraded opener: %v", err)
+	}
+	if err := seekable.(decode.Seeker).SeekFrame(ytmSampleRate); err != nil {
+		_ = dec.Close()
+		_ = seekable.Close()
+		t.Fatalf("SeekFrame: %v", err)
+	}
+	_ = dec.Close()
+	_ = seekable.Close()
+
+	if tc.Has("huge1") {
+		t.Fatal("oversized track should not be stored in trackcache")
+	}
+	if !tc.Has("small") {
+		t.Fatal("oversized track evicted existing cached entry")
+	}
+	leftovers, _ := filepath.Glob(filepath.Join(cacheDir, "*.tmp*"))
+	if len(leftovers) != 0 {
+		t.Fatalf("leftover temp files after close: %v", leftovers)
+	}
+}
+
+// TestYTMLongTrackLive verifies end-to-end playback, chunked download, upgrade
+// seeking, and trackcache promotion on a real multi-hour YouTube stream:
+//
+//	MOLOW_LIVE=1 go test ./backend -run TestYTMLongTrackLive -v -timeout 5m
+func TestYTMLongTrackLive(t *testing.T) {
+	if os.Getenv("MOLOW_LIVE") == "" {
+		t.Skip("set MOLOW_LIVE=1 to run the live long-track check")
+	}
+
+	tc, err := trackcache.Open(t.TempDir(), trackcache.DefaultMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := newYTMProvider(newYTMIndex(), nil, true, nil)
+	p.tracks = tc
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+
+	t0 := time.Now()
+	src, err := p.Open(ctx, "ytm:apvnviG7rjs")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	dec, err := src.Opener(make(chan struct{}))
+	if err != nil {
+		t.Fatalf("Opener: %v", err)
+	}
+	buf := make([]float32, 4800)
+	if n, err := dec.ReadFrames(buf); err != nil || n == 0 {
+		_ = dec.Close()
+		t.Fatalf("forward ReadFrames = (%d, %v)", n, err)
+	}
+	t.Logf("first audio decoded in %s", time.Since(t0).Round(time.Millisecond))
+
+	up, err := src.Upgrade(ctx)
+	if err != nil {
+		_ = dec.Close()
+		t.Fatalf("Upgrade: %v", err)
+	}
+	seekable, err := up(make(chan struct{}))
+	if err != nil {
+		_ = dec.Close()
+		t.Fatalf("upgraded opener: %v", err)
+	}
+	// Seek 1 hour into the 3.44-hour stream to verify full local seekability.
+	if err := seekable.(decode.Seeker).SeekFrame(3600 * ytmSampleRate); err != nil {
+		_ = dec.Close()
+		_ = seekable.Close()
+		t.Fatalf("SeekFrame(1h): %v", err)
+	}
+	if n, err := seekable.ReadFrames(buf); err != nil || n == 0 {
+		_ = dec.Close()
+		_ = seekable.Close()
+		t.Fatalf("upgraded ReadFrames after seek = (%d, %v)", n, err)
+	}
+	t.Logf("full download + upgrade + 1h seek completed in %s", time.Since(t0).Round(time.Millisecond))
+
+	_ = dec.Close()
+	_ = seekable.Close()
+
+	if !tc.Has("apvnviG7rjs") {
+		t.Fatal("track was not promoted to trackcache")
+	}
+	st := tc.Stats()
+	t.Logf("trackcache stats: count=%d totalBytes=%d (%.2f MiB)", st.Count, st.TotalBytes, float64(st.TotalBytes)/(1024*1024))
+
+	// Second open must hit disk cache with no Upgrade needed.
+	src2, err := p.Open(ctx, "ytm:apvnviG7rjs")
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	if src2.Upgrade != nil {
+		t.Fatal("cached source should not need Upgrade")
+	}
+	dec2, err := src2.Opener(nil)
+	if err != nil {
+		t.Fatalf("cached Opener: %v", err)
+	}
+	if err := dec2.(decode.Seeker).SeekFrame(7200 * ytmSampleRate); err != nil {
+		_ = dec2.Close()
+		t.Fatalf("cached SeekFrame(2h): %v", err)
+	}
+	if n, err := dec2.ReadFrames(buf); err != nil || n == 0 {
+		_ = dec2.Close()
+		t.Fatalf("cached ReadFrames = (%d, %v)", n, err)
+	}
+	_ = dec2.Close()
 }

@@ -4,6 +4,7 @@ package color
 import (
 	"fmt"
 	"image"
+	"math"
 	"sort"
 	"strconv"
 )
@@ -15,9 +16,20 @@ const (
 
 	defaultAlphaMin = 128
 
-	minSaturation = 0.25
+	minSaturation = 0.18
 	minLuma       = 0.10
-	maxLuma       = 0.95
+	maxLuma       = 0.92
+
+	// Adjacent 5-bit bins within mergeDistSq belong to the same shaded/compressed
+	// colour region and are merged so one flat background cannot fill every slot.
+	mergeDistSq     = 28 * 28
+	partnerDistSq   = 45 * 45
+	minPartnerShare = 0.015
+
+	minLumaDiff  = 0.15
+	minLumaStep  = 0.17
+	maxLightLuma = 0.52
+	maxDarkLuma  = 0.35
 )
 
 // Colour is one palette entry and its share of the sampled image.
@@ -88,7 +100,7 @@ func PaletteImage(img image.Image, n int, accent bool) []Colour {
 			v.b += int(bl)
 		}
 	}
-	if total == 0 {
+	if total == 0 || len(bins) == 0 {
 		return nil
 	}
 
@@ -105,25 +117,161 @@ func PaletteImage(img image.Image, n int, accent bool) []Colour {
 		return keys[i] < keys[j]
 	})
 
-	out := make([]Colour, 0, n)
+	if !accent {
+		out := make([]Colour, 0, n)
+		for _, k := range keys {
+			v := bins[k]
+			if v.count == 0 {
+				continue
+			}
+			out = append(out, Colour{
+				R:     uint8((v.r + v.count/2) / v.count),
+				G:     uint8((v.g + v.count/2) / v.count),
+				B:     uint8((v.b + v.count/2) / v.count),
+				Count: v.count,
+				Total: total,
+			})
+			if len(out) == n {
+				break
+			}
+		}
+
+		return out
+	}
+
+	type cluster struct {
+		lead       Colour
+		r, g, b, c int
+	}
+	var groups []cluster
 	for _, k := range keys {
 		v := bins[k]
 		if v.count == 0 {
 			continue
 		}
-		out = append(out, Colour{
+		cand := Colour{
 			R:     uint8((v.r + v.count/2) / v.count),
 			G:     uint8((v.g + v.count/2) / v.count),
 			B:     uint8((v.b + v.count/2) / v.count),
 			Count: v.count,
 			Total: total,
-		})
-		if len(out) == n {
-			break
 		}
+		merged := false
+		for i := range groups {
+			if rgbDistSq(cand, groups[i].lead) <= mergeDistSq {
+				groups[i].r += v.r
+				groups[i].g += v.g
+				groups[i].b += v.b
+				groups[i].c += v.count
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			groups = append(groups, cluster{lead: cand, r: v.r, g: v.g, b: v.b, c: v.count})
+		}
+	}
+	sort.SliceStable(groups, func(i, j int) bool { return groups[i].c > groups[j].c })
+
+	raw := make([]Colour, 0, len(groups))
+	for _, g := range groups {
+		raw = append(raw, Colour{
+			R:     uint8((g.r + g.c/2) / g.c),
+			G:     uint8((g.g + g.c/2) / g.c),
+			B:     uint8((g.b + g.c/2) / g.c),
+			Count: g.c,
+			Total: total,
+		})
+	}
+
+	return normalizeAccents(raw, n)
+}
+
+func rgbDistSq(a, b Colour) int {
+	dr := int(a.R) - int(b.R)
+	dg := int(a.G) - int(b.G)
+	db := int(a.B) - int(b.B)
+
+	return dr*dr + dg*dg + db*db
+}
+
+func clampLuma(c Colour, target float64) Colour {
+	l := c.Luma()
+	if l <= target || l <= 0 {
+		return c
+	}
+	if target <= 0 {
+		target = 0.05
+	}
+	k := target / l
+
+	return Colour{
+		R:     uint8(math.Round(float64(c.R) * k)),
+		G:     uint8(math.Round(float64(c.G) * k)),
+		B:     uint8(math.Round(float64(c.B) * k)),
+		Count: c.Count,
+		Total: c.Total,
+	}
+}
+
+// normalizeAccents bounds accent lightness so light UI text stays readable over
+// the backdrop and synthesizes or darkens a second stop when the cover's top
+// colours all sit at similar brightness.
+func normalizeAccents(raw []Colour, n int) []Colour {
+	if len(raw) == 0 {
+		return nil
+	}
+	if n == 1 {
+		return []Colour{clampLuma(raw[0], maxLightLuma)}
+	}
+
+	primary := raw[0]
+	partnerIdx := pickPartner(raw)
+	second := primary
+	if partnerIdx >= 0 {
+		second = raw[partnerIdx]
+	}
+
+	if primary.Luma() >= second.Luma() {
+		primary = clampLuma(primary, maxLightLuma)
+		second = clampLuma(second, min(maxDarkLuma, primary.Luma()-minLumaStep))
+	} else {
+		second = clampLuma(second, maxLightLuma)
+		primary = clampLuma(primary, min(maxDarkLuma, second.Luma()-minLumaStep))
+	}
+
+	out := []Colour{primary, second}
+	for i := 1; i < len(raw) && len(out) < n; i++ {
+		if i == partnerIdx {
+			continue
+		}
+		out = append(out, clampLuma(raw[i], maxLightLuma))
+	}
+	if len(out) > n {
+		out = out[:n]
 	}
 
 	return out
+}
+
+func pickPartner(raw []Colour) int {
+	primary := raw[0]
+	// First look among regions with meaningful area (>= 1.5%) so tiny line-art
+	// outlines do not beat a major secondary colour field.
+	for _, minShare := range []float64{minPartnerShare, 0} {
+		for i := 1; i < len(raw); i++ {
+			if raw[i].Fraction() >= minShare && math.Abs(raw[i].Luma()-primary.Luma()) >= minLumaDiff {
+				return i
+			}
+		}
+		for i := 1; i < len(raw); i++ {
+			if raw[i].Fraction() >= minShare && rgbDistSq(raw[i], primary) >= partnerDistSq {
+				return i
+			}
+		}
+	}
+
+	return -1
 }
 
 // isAccent is the filter: HSV saturation and Rec. 709 luma in the usable band.

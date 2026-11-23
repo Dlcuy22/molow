@@ -678,6 +678,14 @@ export function SetLiked(libraryID: string, ref: string, liked: boolean): $Cance
 }
 
 /**
+ * SetPaused applies an explicit pause or resume target so rapid UI toggles
+ * cannot invert against a stale pre-command snapshot.
+ */
+export function SetPaused(paused: boolean): $CancellablePromise<void> {
+    return $Call.ByID(1922866033, paused);
+}
+
+/**
  * SetPreviewConfig replaces the preview window settings. The values are
  * normalized, so a UI can send what it has without clamping first.
  */

@@ -139,6 +139,7 @@ export const sessionState = writable<SessionState>({
 // The effect window is the same bundle as the main window, so it is told apart
 // by the route rather than a second build.
 export const isEffectWindow =
+  typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).get("window") === "effects";
 
 /** effectChain is the chain the effect window renders. It is refreshed on the
@@ -270,23 +271,50 @@ function withLayoutBars(cfg: SpectrumConfig, style: string | undefined): Spectru
   return { ...cfg, bars };
 }
 
+const PLAY_SETTLE_MS = 2000;
+let pendingToggles = 0;
+let optimisticPlayState: "playing" | "paused" | null = null;
+let playSettleTimer: ReturnType<typeof setTimeout> | undefined;
+let lastServerSnap: Snapshot | null = null;
+
+function clearOptimisticPlay(): void {
+  clearTimeout(playSettleTimer);
+  playSettleTimer = undefined;
+  optimisticPlayState = null;
+}
+
+/**
+ * applySnapshot applies a server Snapshot to the player store while holding
+ * any in-flight optimistic play/pause state until the engine catches up.
+ */
+export function applySnapshot(snap: Snapshot): void {
+  lastServerSnap = snap;
+  let effective = snap;
+  if (optimisticPlayState !== null) {
+    if (pendingToggles === 0 && snap.state === optimisticPlayState) {
+      clearOptimisticPlay();
+    } else {
+      effective = { ...snap, state: optimisticPlayState };
+    }
+  }
+  player.set(effective);
+  // The volume override reconciles here, on the one place a server value
+  // lands, so the slider and the shortcuts drop it together.
+  syncVolumeFromServer(snap.volume);
+  ready.set(true);
+  // The effect window reads the chain on the same tick, so its meters move
+  // without a subscription of its own.
+  if (isEffectWindow) {
+    void syncEffectChain();
+  }
+}
+
 /**
  * connect subscribes to the Go push stream and loads the static data. It is
  * called once from the root component's onMount and returns the teardown.
  */
 export function connect(): () => void {
-  const apply = (snap: Snapshot) => {
-    player.set(snap);
-    // The volume override reconciles here, on the one place a server value
-    // lands, so the slider and the shortcuts drop it together.
-    syncVolumeFromServer(snap.volume);
-    ready.set(true);
-    // The effect window reads the chain on the same tick, so its meters move
-    // without a subscription of its own.
-    if (isEffectWindow) {
-      void syncEffectChain();
-    }
-  };
+  const apply = applySnapshot;
 
   const offSnapshot = Events.On(EVENT_SNAPSHOT, (ev) => {
     apply(ev.data as Snapshot);
@@ -372,16 +400,65 @@ export function onEffectMeters(
 // invoke, so a rejection is surfaced in the error line and never becomes an
 // unhandled promise.
 export const commands = {
-  togglePause: () => invoke(PlayerService.TogglePause()),
-  next: () => invoke(PlayerService.Next()),
-  prev: () => invoke(PlayerService.Prev()),
+  togglePause: async () => {
+    const cur = get(player);
+    if (cur.queue.length === 0) {
+      return invoke(PlayerService.TogglePause());
+    }
+    const next = cur.state === "playing" ? "paused" : "playing";
+    optimisticPlayState = next;
+    pendingToggles++;
+    clearTimeout(playSettleTimer);
+    playSettleTimer = undefined;
+    player.update((s) => ({ ...s, state: next }));
+    let failed = false;
+    try {
+      await PlayerService.SetPaused(next === "paused");
+    } catch (err) {
+      failed = true;
+      player.update((s) => ({ ...s, error: errorText(err) }));
+    } finally {
+      pendingToggles = Math.max(0, pendingToggles - 1);
+      if (pendingToggles === 0 && optimisticPlayState !== null) {
+        if (failed) {
+          clearOptimisticPlay();
+          if (lastServerSnap) {
+            player.update((s) => ({ ...s, state: lastServerSnap!.state }));
+          }
+        } else if (lastServerSnap && lastServerSnap.state === optimisticPlayState) {
+          clearOptimisticPlay();
+        } else {
+          playSettleTimer = setTimeout(() => {
+            playSettleTimer = undefined;
+            if (pendingToggles === 0 && optimisticPlayState !== null) {
+              optimisticPlayState = null;
+              if (lastServerSnap) {
+                player.update((s) => ({ ...s, state: lastServerSnap!.state }));
+              }
+            }
+          }, PLAY_SETTLE_MS);
+        }
+      }
+    }
+  },
+  next: () => {
+    clearOptimisticPlay();
+    return invoke(PlayerService.Next());
+  },
+  prev: () => {
+    clearOptimisticPlay();
+    return invoke(PlayerService.Prev());
+  },
   moveQueue: (from: number, to: number) => invoke(PlayerService.MoveQueue(from, to)),
   shuffle: (on: boolean) => invoke(PlayerService.SetShuffle(on)),
   // setRepeat replaces the engine's repeat mode. Persisting it is a separate
   // write through the settings document, because repeat is playback state that
   // outlives a restart and the engine holds no file of its own.
   setRepeat: (mode: string) => invoke(PlayerService.SetRepeat(mode)),
-  stop: () => invoke(PlayerService.Stop()),
+  stop: () => {
+    clearOptimisticPlay();
+    return invoke(PlayerService.Stop());
+  },
   seek: (ms: number) => invoke(PlayerService.SeekTo(Math.max(0, Math.round(ms)))),
   setVolume: (v: number) => invoke(PlayerService.SetVolume(v)),
   // setSidebarWidth mirrors the width locally first so the rail tracks the
@@ -391,7 +468,10 @@ export const commands = {
     sessionState.update((s) => ({ ...s, sidebarWidth: px }));
     PlayerService.SetSidebarWidth(px).catch(() => {});
   },
-  playIndex: (i: number) => invoke(PlayerService.PlayIndex(i)),
+  playIndex: (i: number) => {
+    clearOptimisticPlay();
+    return invoke(PlayerService.PlayIndex(i));
+  },
   setCodec: (name: string) => invoke(PlayerService.SetCodec(name)),
   setBackend: (name: string) => invoke(PlayerService.SetBackend(name)),
   configureSpectrum: (cfg: SpectrumConfig) =>

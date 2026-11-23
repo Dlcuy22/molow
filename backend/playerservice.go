@@ -1498,6 +1498,40 @@ func (s *PlayerService) TogglePause() error {
 	})
 }
 
+// SetPaused applies an explicit pause or resume target so rapid UI toggles
+// cannot invert against a stale pre-command snapshot.
+func (s *PlayerService) SetPaused(paused bool) error {
+	if paused {
+		if err := s.player.Pause(); err != nil {
+			s.setError(err.Error())
+			snap := s.Snapshot()
+			s.emit(eventSnapshot, snap)
+			s.syncPresence(snap)
+
+			return err
+		}
+
+		return nil
+	}
+	snap := s.player.Snapshot()
+	var err error
+	if snap.State == molo.Paused || snap.State == molo.Playing {
+		err = s.player.Resume()
+	} else if snap.QueueIndex >= 0 {
+		err = s.player.PlayIndex(snap.QueueIndex)
+	}
+	if err != nil {
+		s.setError(err.Error())
+		out := s.Snapshot()
+		s.emit(eventSnapshot, out)
+		s.syncPresence(out)
+
+		return err
+	}
+
+	return nil
+}
+
 func (s *PlayerService) Next() error { return s.command(func() error { return s.player.Next() }) }
 
 func (s *PlayerService) Prev() error { return s.command(func() error { return s.player.Prev() }) }

@@ -204,6 +204,13 @@
     });
   }
 
+  function setNoLyricsBehaviour(behaviour: string) {
+    commands.setAppSettings({
+      ...$appSettings,
+      playback: { ...$appSettings.playback, noLyricsBehaviour: behaviour },
+    });
+  }
+
   // setLyrics updates one field of the lyric-provider group: a toggle, the
   // save location, or the YouTube Music cache folder.
   function setLyrics(patch: Partial<LyricsSettings>) {
@@ -505,6 +512,27 @@
                         { value: "simple", label: "Simple" },
                       ]}
                       onchange={(v) => setPlayPauseStyle(v)}
+                    />
+                  {/snippet}
+                </SettingRow>
+              </div>
+            </SettingGroup>
+
+            <SettingGroup label="Fullscreen player" description={null}>
+              <div class="divide-y divide-line">
+                <SettingRow
+                  label="Player behaviour when there's no lyric"
+                  description={null}
+                >
+                  {#snippet control()}
+                    <Picker
+                      label={null}
+                      value={$appSettings.playback.noLyricsBehaviour}
+                      options={[
+                        { value: "stay", label: "Stay in place" },
+                        { value: "center", label: "Center" },
+                      ]}
+                      onchange={(v) => setNoLyricsBehaviour(v)}
                     />
                   {/snippet}
                 </SettingRow>

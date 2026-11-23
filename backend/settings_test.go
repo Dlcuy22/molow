@@ -37,6 +37,9 @@ func TestAppSettingsDefaultsAreOffAndReference(t *testing.T) {
 	if got.Playback.PlayPauseStyle != "default" {
 		t.Fatalf("playPauseStyle = %q, want default", got.Playback.PlayPauseStyle)
 	}
+	if got.Playback.NoLyricsBehaviour != "stay" {
+		t.Fatalf("noLyricsBehaviour = %q, want stay", got.Playback.NoLyricsBehaviour)
+	}
 	if !got.General.VisualizerEnabled {
 		t.Fatal("visualizer should default to on")
 	}
@@ -69,9 +72,10 @@ func TestAppSettingsRoundTrips(t *testing.T) {
 
 	want := AppSettings{
 		Playback: PlaybackSettings{
-			Crossfade:      CrossfadeSettings{Enabled: true, DurationMs: 8000, SkipSameAlbum: false},
-			Repeat:         "one",
-			PlayPauseStyle: "simple",
+			Crossfade:         CrossfadeSettings{Enabled: true, DurationMs: 8000, SkipSameAlbum: false},
+			Repeat:            "one",
+			PlayPauseStyle:    "simple",
+			NoLyricsBehaviour: "center",
 		},
 		General: GeneralSettings{
 			VisualizerEnabled: false,
@@ -93,6 +97,9 @@ func TestAppSettingsRoundTrips(t *testing.T) {
 	}
 	if got.Playback.PlayPauseStyle != want.Playback.PlayPauseStyle {
 		t.Fatalf("loaded playPauseStyle = %q, want %q", got.Playback.PlayPauseStyle, want.Playback.PlayPauseStyle)
+	}
+	if got.Playback.NoLyricsBehaviour != want.Playback.NoLyricsBehaviour {
+		t.Fatalf("loaded noLyricsBehaviour = %q, want %q", got.Playback.NoLyricsBehaviour, want.Playback.NoLyricsBehaviour)
 	}
 	if got.General.VisualizerEnabled != want.General.VisualizerEnabled {
 		t.Fatalf("loaded visualizer = %v, want %v", got.General.VisualizerEnabled, want.General.VisualizerEnabled)
@@ -132,6 +139,9 @@ func TestLoadAppSettingsNormalizesAnOldSchemaFile(t *testing.T) {
 	}
 	if got.Playback.PlayPauseStyle != "default" {
 		t.Fatalf("playPauseStyle = %q, want default for an old-schema file", got.Playback.PlayPauseStyle)
+	}
+	if got.Playback.NoLyricsBehaviour != "stay" {
+		t.Fatalf("noLyricsBehaviour = %q, want stay for an old-schema file", got.Playback.NoLyricsBehaviour)
 	}
 	if !got.General.VisualizerEnabled {
 		t.Fatal("visualizer = false, want on for a file that predates the field")
@@ -213,6 +223,28 @@ func TestLoadAppSettingsNormalizesAnUnknownPlayPauseStyle(t *testing.T) {
 
 	if got := loadAppSettings(quietLog, "loaded").Playback.PlayPauseStyle; got != "default" {
 		t.Fatalf("playPauseStyle = %q, want default for an unknown value", got)
+	}
+}
+
+// TestLoadAppSettingsNormalizesAnUnknownNoLyricsBehaviour proves an unknown
+// no-lyrics behaviour falls back to stay, so the panel always has a valid option.
+func TestLoadAppSettingsNormalizesAnUnknownNoLyricsBehaviour(t *testing.T) {
+	isolateConfig(t)
+
+	p, err := settingsPath()
+	if err != nil {
+		t.Fatalf("settingsPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"version":1,"playback":{"crossfade":{"durationMs":6000},"noLyricsBehaviour":"float"}}`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := loadAppSettings(quietLog, "loaded").Playback.NoLyricsBehaviour; got != "stay" {
+		t.Fatalf("noLyricsBehaviour = %q, want stay for an unknown value", got)
 	}
 }
 
@@ -357,7 +389,7 @@ func TestSetAppSettingsReachesTheEngine(t *testing.T) {
 // samePlayback compares the settings document field by field, since the
 // lyric-provider map is not comparable with ==.
 func samePlayback(a, b PlaybackSettings) bool {
-	if a.Crossfade != b.Crossfade || a.Repeat != b.Repeat || a.PlayPauseStyle != b.PlayPauseStyle {
+	if a.Crossfade != b.Crossfade || a.Repeat != b.Repeat || a.PlayPauseStyle != b.PlayPauseStyle || a.NoLyricsBehaviour != b.NoLyricsBehaviour {
 		return false
 	}
 	if a.Lyrics.SaveLocation != b.Lyrics.SaveLocation || a.Lyrics.Folder != b.Lyrics.Folder {

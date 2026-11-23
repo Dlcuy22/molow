@@ -115,7 +115,7 @@
   let lyricsSettledPath = $state("");
   const lyrics = $derived(lyricsDoc.path === snap.path ? lyricsDoc.doc : null);
   const lyricsLoading = $derived(
-    playerMounted && snap.path !== "" && lyricsSettledPath !== snap.path,
+    snap.path !== "" && lyricsSettledPath !== snap.path,
   );
   let accents = $state<string[]>([]);
   let liked = $state(false);
@@ -196,15 +196,6 @@
   };
 
   $effect(() => {
-    if (!playerMounted) {
-      clearTimeout(lyricsProbeTimer);
-      lyricPath = "";
-      lyricsFetchedWithMeta = "";
-      lyricsSettledPath = "";
-      lyricsDoc = { path: "", doc: null };
-      lyricsSeq++;
-      return;
-    }
     const path = snap.path;
     const ready = lyricsMetaReady;
     const newTrack = path !== lyricPath;
@@ -288,11 +279,8 @@
   });
 
   // Pick up a late sidecar write silently without re-triggering the spinner.
-  $effect(() => {
-    if (!playerMounted) {
-      return;
-    }
-    const off = Events.On("molo:lyrics", (ev) => {
+  onMount(() =>
+    Events.On("molo:lyrics", (ev) => {
       const path = ev.data as string;
       if (path !== lyricPath || lyrics !== null) {
         return;
@@ -304,10 +292,8 @@
           lyricsSettledPath = path;
         }
       });
-    });
-
-    return off;
-  });
+    }),
+  );
 
   let accentId = "";
   $effect(() => {

@@ -65,21 +65,45 @@
   const providerCredit = $derived(lyricProviderInfo(lyrics?.provider));
   const syncLabel = $derived(lyrics ? lyricSyncLabel(lines, lyrics.synced) : null);
 
-  // Fade the spinner out before mounting lyrics or the empty state so the two never overlap.
+  // Hold the loading state long enough for the player to park on the left and
+  // the spinner to enter cleanly, then fade the spinner out before mounting
+  // lyrics or moving the player to center.
+  const SPINNER_MIN_MS = 480;
   const SPINNER_FADE_MS = 300;
   let spinnerMounted = false;
+  let spinnerStartedAt = 0;
+  let spinnerHolding = $state(false);
   let spinnerLeaving = $state(false);
+  let spinnerHoldTimer: ReturnType<typeof setTimeout> | undefined;
   let spinnerTimer: ReturnType<typeof setTimeout> | undefined;
-  const showSpinner = $derived(lyricsLoading || spinnerLeaving);
+  const showSpinner = $derived(lyricsLoading || spinnerHolding || spinnerLeaving);
 
   $effect.pre(() => {
+    clearTimeout(spinnerHoldTimer);
     clearTimeout(spinnerTimer);
     if (lyricsLoading) {
+      if (!spinnerMounted) {
+        spinnerStartedAt = performance.now();
+      }
       spinnerMounted = true;
+      spinnerHolding = false;
       spinnerLeaving = false;
       return;
     }
     if (!spinnerMounted) {
+      return;
+    }
+    const hold = Math.max(0, SPINNER_MIN_MS - (performance.now() - spinnerStartedAt));
+    if (hold > 0) {
+      spinnerHolding = true;
+      spinnerHoldTimer = setTimeout(() => {
+        spinnerHolding = false;
+        spinnerLeaving = true;
+        spinnerTimer = setTimeout(() => {
+          spinnerLeaving = false;
+          spinnerMounted = false;
+        }, SPINNER_FADE_MS);
+      }, hold);
       return;
     }
     spinnerLeaving = true;
@@ -275,6 +299,9 @@
 
   const visualizerStyle = $derived($appSettings.general.visualizerStyle ?? "minimal");
   const visualizerFull = $derived($spectrumConfig.enabled && visualizerStyle === "full");
+  const centerPlayer = $derived(
+    $appSettings.playback.noLyricsBehaviour === "center" && !showSpinner && lines.length === 0,
+  );
   // lyricsFade masks the bottom of the lyrics column, transparent under the
   // band and solid above it, so scrolled text dissolves into the visualizer.
   const lyricsFade = [
@@ -384,6 +411,7 @@
   $effect(() => {
     return () => {
       clearTimeout(idleTimer);
+      clearTimeout(spinnerHoldTimer);
       clearTimeout(spinnerTimer);
       stopGlide();
       stopClock();
@@ -465,7 +493,9 @@
     <CaretDown size="18" weight="bold" />
   </button>
 
-  <div class="absolute left-[12%] top-[18%] w-[28.2%] min-w-[240px] max-w-[333px]">
+  <div
+    class="player-stage absolute top-[18%] w-[28.2%] min-w-[240px] max-w-[333px] {centerPlayer ? 'left-1/2 -translate-x-1/2' : 'left-[12%] translate-x-0'}"
+  >
     <Cover id={snap.coverId} alt={snap.album} size={333} radius={16} fill class="w-full" />
 
     <Marquee
@@ -542,7 +572,10 @@
     </div>
   </div>
 
-  <div class="absolute inset-y-0 left-1/2 right-0 pr-9">
+  <div
+    class="absolute inset-y-0 left-1/2 right-0 pr-9 transition-opacity duration-300 ease-out {centerPlayer ? 'pointer-events-none opacity-0' : 'opacity-100'}"
+    aria-hidden={centerPlayer}
+  >
     <!-- A scroll container: the touch and key handlers exist to detect the
          user taking over the scroll, not to change the page. -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -562,17 +595,18 @@
           class="flex h-full items-center justify-center transition-opacity duration-[180ms] ease-in-out"
           class:opacity-0={spinnerLeaving}
           class:opacity-100={!spinnerLeaving}
+          in:fade={{ duration: 240, delay: 120 }}
         >
           <LoadingSpinner label="Fetching the lyrics for you..." />
         </div>
-      {:else if lines.length === 0}
+      {:else if !centerPlayer && lines.length === 0}
         <div
           class="flex h-full items-center pl-2 text-[12px] text-fg/50"
           in:fade={{ duration: SPINNER_FADE_MS }}
         >
           No lyrics for this track.
         </div>
-      {:else}
+      {:else if lines.length > 0}
         <div
           class="flex flex-col gap-[22px] py-[calc(50vh-22px)] pl-2"
           in:fade={{ duration: SPINNER_FADE_MS }}
@@ -670,7 +704,9 @@
         <Spectrum height={72} opacity={0.5} chrome={false} />
       </div>
     {:else}
-      <div class="pointer-events-none absolute bottom-0 left-0 right-1/2 pr-6">
+      <div
+        class="player-stage pointer-events-none absolute bottom-0 w-[calc(50%-1.5rem)] {centerPlayer ? 'left-1/2 -translate-x-1/2' : 'left-0 translate-x-0'}"
+      >
         <Spectrum height={72} opacity={0.5} chrome={false} />
       </div>
     {/if}
@@ -678,6 +714,18 @@
 </div>
 
 <style>
+  .player-stage {
+    transition:
+      left 420ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .player-stage {
+      transition: none;
+    }
+  }
+
   /* Isolate only the active line onto its own layer so word-sweep repaints do
    * not invalidate the entire multi-thousand-pixel lyrics scroll layer. */
   .lyric-line-active {

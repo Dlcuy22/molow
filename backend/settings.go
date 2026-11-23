@@ -52,14 +52,17 @@ type AppSettings struct {
 // is the engine's repeat mode as the "off"/"all"/"one" strings, the same
 // spelling the snapshot publishes. PlayPauseStyle chooses the dock's primary
 // action: "default" is the inverted disc, "simple" is the bare album-player
-// glyph. Lyrics is the lyric-provider group: the toggles (word-synced beats
+// glyph. NoLyricsBehaviour chooses where the fullscreen player sits when a
+// track has no lyrics: "stay" keeps the two-column layout, "center" centers the
+// player. Lyrics is the lyric-provider group: the toggles (word-synced beats
 // line-synced across the board, so there is no order to move), where a fetched
 // sheet is written, and the folder the YouTube Music sidecar files live in.
 type PlaybackSettings struct {
-	Crossfade      CrossfadeSettings `json:"crossfade"`
-	Repeat         string            `json:"repeat"`
-	PlayPauseStyle string            `json:"playPauseStyle"`
-	Lyrics         LyricsSettings    `json:"lyrics"`
+	Crossfade         CrossfadeSettings `json:"crossfade"`
+	Repeat            string            `json:"repeat"`
+	PlayPauseStyle    string            `json:"playPauseStyle"`
+	NoLyricsBehaviour string            `json:"noLyricsBehaviour"`
+	Lyrics            LyricsSettings    `json:"lyrics"`
 }
 
 // LyricsSettings carries the lyric-provider configuration. Providers maps the
@@ -151,9 +154,10 @@ func defaultAppSettings() AppSettings {
 				DurationMs:    molo.DefaultCrossfadeMs,
 				SkipSameAlbum: true,
 			},
-			Repeat:         "off",
-			PlayPauseStyle: "default",
-			Lyrics:         defaultLyricsSettings(),
+			Repeat:            "off",
+			PlayPauseStyle:    "default",
+			NoLyricsBehaviour: "stay",
+			Lyrics:            defaultLyricsSettings(),
 		},
 		Stream: StreamSettings{
 			TrackCacheMaxMB: defaultTrackCacheMaxMB,
@@ -303,6 +307,12 @@ func normalizeAppSettings(s AppSettings, present *settingsFieldPresence) AppSett
 	case "default", "simple":
 	default:
 		s.Playback.PlayPauseStyle = def.Playback.PlayPauseStyle
+	}
+
+	switch s.Playback.NoLyricsBehaviour {
+	case "stay", "center":
+	default:
+		s.Playback.NoLyricsBehaviour = def.Playback.NoLyricsBehaviour
 	}
 
 	s.Playback.Lyrics = normalizeLyricsSettings(s.Playback.Lyrics, def.Playback.Lyrics)

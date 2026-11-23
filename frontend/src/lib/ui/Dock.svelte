@@ -99,7 +99,11 @@
       {#if snap.state === "playing"}
         <Pause size={simplePlay ? 32 : 17} weight="fill" />
       {:else}
-        <Play size={simplePlay ? 32 : 17} weight="fill" />
+        <Play
+          size={simplePlay ? 32 : 17}
+          weight="fill"
+          class={simplePlay ? "-translate-x-[1.5px]" : "-translate-x-[0.5px]"}
+        />
       {/if}
     </button>
     <button

@@ -84,6 +84,9 @@ describe("matchShortcut", () => {
     expect(matchShortcut(key({ key: "s" }))).toBe("shuffle");
     expect(matchShortcut(key({ key: "v" }))).toBe("visualizer");
     expect(matchShortcut(key({ key: "m" }))).toBe("mute");
+    expect(matchShortcut(key({ key: "F11" }))).toBe("fullscreen");
+    expect(matchShortcut(key({ code: "F11" }))).toBe("fullscreen");
+    expect(matchShortcut(key({ key: "F11", shiftKey: true }))).toBeNull();
   });
 
   it("maps space through both its key and its code", () => {
@@ -406,5 +409,18 @@ describe("handleKeydown dispatch", () => {
 
     expect(handleKeydown(e, calls.ctx, focused)).toBe(true);
     expect(calls.settings).toBe(1);
+  });
+
+  it("toggles fullscreen on F11 even over a modal and ignores auto-repeat", () => {
+    const calls = recording({ isModalOpen: () => true, ownsKey: () => true });
+    const first = press({ key: "F11", code: "F11" });
+    expect(handleKeydown(first.e, calls.ctx, focused)).toBe(true);
+    expect(calls.actions).toEqual(["fullscreen"]);
+    expect(first.prevented()).toBe(true);
+
+    const repeated = press({ key: "F11", code: "F11", repeat: true });
+    expect(handleKeydown(repeated.e, calls.ctx, focused)).toBe(true);
+    expect(calls.actions).toEqual(["fullscreen"]);
+    expect(repeated.prevented()).toBe(true);
   });
 });

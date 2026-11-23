@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Events } from "@wailsio/runtime";
+  import { Events, Window } from "@wailsio/runtime";
   import { get } from "svelte/store";
   import SpeakerHigh from "phosphor-svelte/lib/SpeakerHigh";
   import SpeakerSlash from "phosphor-svelte/lib/SpeakerSlash";
@@ -726,6 +726,10 @@
         return;
       case "repeat-one":
         toggleRepeat("one");
+
+        return;
+      case "fullscreen":
+        void Window.ToggleFullscreen();
 
         return;
     }

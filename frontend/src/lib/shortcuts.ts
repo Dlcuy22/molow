@@ -19,7 +19,8 @@ export type ShortcutAction =
   | "repeat-all"
   | "repeat-one"
   | "seek-forward"
-  | "seek-back";
+  | "seek-back"
+  | "fullscreen";
 
 /** ShortcutKeyEvent is the slice of KeyboardEvent the shortcut layer reads. A
  *  plain object works, so a test drives the keymap without constructing an
@@ -85,9 +86,21 @@ export function matchShortcut(e: ShortcutKeyEvent): ShortcutAction | null {
       // Uppercase is the shifted key. It is matched before the lowercase pass
       // below so `L` cannot be read as repeat-all.
       return "repeat-one";
+    case "F11":
+      if (!e.shiftKey) {
+        return "fullscreen";
+      }
+
+      return null;
   }
 
   switch (e.code) {
+    case "F11":
+      if (!e.shiftKey) {
+        return "fullscreen";
+      }
+
+      return null;
     case "Space":
       // e.key is the space character on every layout, but the code fallback
       // keeps the binding independent of what the layout puts on the key.
@@ -220,20 +233,24 @@ export function shortcutFor(
   ctx: ShortcutContext,
   env: FocusEnv,
 ): ShortcutAction | null {
-  if (ctx.isModalOpen()) {
-    return null;
-  }
   if (e.ctrlKey || e.metaKey || e.altKey) {
-    return null;
-  }
-  if (ctx.ownsKey(e.key)) {
     return null;
   }
   if (!env.hasFocus || !env.visible) {
     return null;
   }
+  const action = matchShortcut(e);
+  if (action === "fullscreen") {
+    return action;
+  }
+  if (ctx.isModalOpen()) {
+    return null;
+  }
+  if (ctx.ownsKey(e.key)) {
+    return null;
+  }
 
-  return matchShortcut(e);
+  return action;
 }
 
 /**
@@ -266,11 +283,12 @@ export function handleKeydown(
   if (action === null) {
     return false;
   }
-  // Space is a latch, not a repeater: holding it must not flip the transport
-  // on every OS repeat. The default is still suppressed on the repeats, so a
-  // focused button never receives the activation its own keyup would fire.
+  // Space and F11 are latches, not repeaters: holding them must not flip the
+  // transport or window mode on every OS repeat. The default is still
+  // suppressed on the repeats, so a focused button never receives the
+  // activation its own keyup would fire.
   e.preventDefault();
-  if (action === "play-pause" && e.repeat) {
+  if ((action === "play-pause" || action === "fullscreen") && e.repeat) {
     return true;
   }
   ctx.action(action);

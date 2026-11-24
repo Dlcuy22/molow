@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import type { ReadingKind } from "../../effect-types";
   import { levelMeterFraction, meterFraction, meterText, clamp } from "./effects-helpers";
   import { stepMeterDb, stepMeterWall, type MeterWall } from "./meter-ballistics";
@@ -24,62 +23,155 @@
     live?: boolean;
   } = $props();
 
+  // Throttle numeric dB text updates to ~10 Hz so rapid meter ticks don't force
+  // 60-144 Hz text shaping and layout on every vsync.
+  const TEXT_INTERVAL_MS = 100;
+
   // A null reading means the effect does not meter, which must draw as an inert
   // track, not a zero bar, so silence and "no meter" stay distinguishable.
   const meters = $derived(db !== null && Number.isFinite(db));
 
-  // The displayed level lags the target on the way down only. Audacity's meters
-  // run this decay on a 60 Hz timer; a CSS transition cannot reproduce it,
-  // because the transition restarts on every event and blurs the attack.
-  let shown = $state<number | null>(null);
-  const display = $derived(kind === "level" ? (shown ?? db) : db);
+  const clipping = $derived(
+    kind === "level" && live && db !== null && Number.isFinite(db) && db >= max,
+  );
 
-  // The wall is the line the bar pushes up and then falls back down under its
-  // own slower gravity, so it always leads the bar on the way down.
-  let wall = $state<MeterWall>({ db: null, heldMs: 0 });
+  // Non-level meters (gain-reduction, scalar) have no decay ballistics and
+  // render directly from the latest reading.
+  const scalarFrac = $derived(kind === "level" ? 0 : clamp(meterFraction(db, min, max), 0, 1));
+  const scalarText = $derived(kind === "level" ? "" : meterText(db, unit));
 
-  onMount(() => {
+  let maskEl = $state<HTMLDivElement | null>(null);
+  let wallEl = $state<HTMLDivElement | null>(null);
+  let textEl = $state<HTMLSpanElement | null>(null);
+  let srEl = $state<HTMLSpanElement | null>(null);
+
+  // Ballistics state stays off Svelte $state so 60-144 Hz bar motion writes
+  // compositor transforms directly to the DOM without reactive churn.
+  let shown: number | null = null;
+  let wall: MeterWall = { db: null, heldMs: 0 };
+  let lastText = "";
+  let lastTextAt = 0;
+
+  let targetDb: number | null = null;
+  let curMin = -60;
+  let curMax = 0;
+  let curUnit = "dB";
+  let curLabel = "";
+  let curMeters = false;
+
+  let raf = 0;
+  let lastFrameAt = 0;
+
+  function writeText(value: number | null, now: number, force: boolean) {
+    const next = curMeters ? meterText(value, curUnit) : "";
+    if (!force && now - lastTextAt < TEXT_INTERVAL_MS) {
+      return;
+    }
+    lastTextAt = now;
+    if (next === lastText) {
+      return;
+    }
+    lastText = next;
+    if (textEl) {
+      textEl.textContent = next;
+    }
+    if (srEl) {
+      srEl.textContent = `${curLabel} ${curMeters ? next : "--"}`;
+    }
+  }
+
+  function paint(now: number, forceText: boolean) {
+    const frac = clamp(levelMeterFraction(shown, curMin, curMax), 0, 1);
+    if (maskEl) {
+      maskEl.style.transform = `scaleX(${1 - frac})`;
+    }
+    if (wallEl) {
+      const wallFrac =
+        wall.db === null ? 0 : clamp(levelMeterFraction(wall.db, curMin, curMax), 0, 1);
+      if (wallFrac > 0) {
+        wallEl.style.opacity = "1";
+        wallEl.style.transform = `translateX(${wallFrac * 100}%)`;
+      } else {
+        wallEl.style.opacity = "0";
+      }
+    }
+    writeText(shown, now, forceText);
+  }
+
+  function tick(now: number) {
+    raf = 0;
+    const dt = lastFrameAt === 0 ? 0 : Math.min(0.1, (now - lastFrameAt) / 1000);
+    lastFrameAt = now;
+
+    shown = stepMeterDb(shown, targetDb, dt);
+    wall = stepMeterWall(wall, shown, dt);
+
+    const settled =
+      shown === targetDb &&
+      (wall.db === null || (shown !== null && wall.db <= shown));
+    paint(now, settled);
+
+    if (!settled) {
+      raf = requestAnimationFrame(tick);
+    } else {
+      lastFrameAt = 0;
+    }
+  }
+
+  $effect(() => {
+    curMin = min;
+    curMax = max;
+    curUnit = unit;
+    curLabel = label;
+    curMeters = meters;
+
     if (kind !== "level") {
       return;
     }
 
-    let raf = 0;
-    let last = 0;
-    const tick = (now: number) => {
-      const dt = last === 0 ? 0 : (now - last) / 1000;
-      last = now;
-      // A paused transport stops feeding the meter, so the last value would sit
-      // there forever. No audio is flowing, so the honest target is silence.
-      shown = stepMeterDb(shown, live ? db : min, dt);
-      wall = stepMeterWall(wall, shown, dt);
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
+    if (!meters) {
+      if (raf !== 0) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+      lastFrameAt = 0;
+      shown = null;
+      wall = { db: null, heldMs: 0 };
+      paint(performance.now(), true);
 
-    return () => cancelAnimationFrame(raf);
+      return;
+    }
+
+    targetDb = live ? db : min;
+    if (raf === 0) {
+      // Paint synchronously on first mount/wake so there is no blank frame,
+      // then schedule rAF only if decay or peak-hold still has motion.
+      const now = performance.now();
+      if (shown === null) {
+        shown = targetDb;
+        wall = { db: targetDb, heldMs: 0 };
+        paint(now, true);
+      } else {
+        raf = requestAnimationFrame(tick);
+      }
+    }
   });
 
-  const frac = $derived(
-    kind === "level" ? levelMeterFraction(display, min, max) : meterFraction(display, min, max),
-  );
-  const fillPct = $derived(clamp(frac * 100, 0, 100));
-  const wallPct = $derived(
-    wall.db === null ? 0 : clamp(levelMeterFraction(wall.db, min, max) * 100, 0, 100),
-  );
-  const clipping = $derived(
-    kind === "level" && live && db !== null && Number.isFinite(db) && db >= max,
-  );
+  $effect(() => {
+    return () => {
+      if (raf !== 0) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+    };
+  });
 </script>
 
 <!--
   The fill is a solid accent for a gain reduction or a scalar, and the level
   scale for a level reading. The level gradient spans the whole track and is
-  clipped to the current value, so the colour encodes the absolute level rather
-  than stretching with the bar. The number sits next to it, so the bar is
-  repetition for the eye and the value is still readable without colour.
-  The label cell has a minimum width and can grow, so a longer name such as
-  "Gain Reduction" is printed in full while the short In/Out rows keep their
-  width.
+  masked from the right with a compositor-only scaleX cover, so the colour
+  encodes the absolute level without per-frame clip-path repaints.
 -->
 <div class="flex items-center gap-2">
   <span class="min-w-7 shrink-0 text-[11px] text-muted">{label}</span>
@@ -89,21 +181,39 @@
         <div
           class="absolute inset-0 meter-level"
           class:meter-clipping={clipping}
-          style="clip-path: inset(0 {100 - fillPct}% 0 0)"
         ></div>
-        {#if wallPct > 0}
-          <div
-            class="absolute inset-y-0 w-[2px] bg-fg/80"
-            style="left: calc({wallPct}% - 1px)"
-          ></div>
-        {/if}
+        <div
+          bind:this={maskEl}
+          class="absolute inset-0 origin-right bg-track will-change-transform"
+          style="transform: scaleX(1)"
+        ></div>
+        <div
+          bind:this={wallEl}
+          class="pointer-events-none absolute inset-0 will-change-transform"
+          style="opacity: 0"
+        >
+          <div class="-ml-[1px] h-full w-[2px] bg-fg/80"></div>
+        </div>
       {:else}
-        <div class="h-full rounded-[2px] bg-accent" style="width: {fillPct}%"></div>
+        <div
+          class="h-full origin-left rounded-[2px] bg-accent will-change-transform"
+          style="transform: scaleX({scalarFrac})"
+        ></div>
       {/if}
     {/if}
   </div>
-  <span class="w-14 shrink-0 text-right text-[11px] tabular-nums text-muted">
-    {meters ? meterText(display, unit) : ""}
-  </span>
-  <span class="sr-only">{label} {meterText(display, unit)}</span>
+  {#if kind === "level"}
+    <span
+      bind:this={textEl}
+      class="w-[4.5rem] shrink-0 whitespace-nowrap text-right text-[11px] leading-none tabular-nums text-muted"
+    ></span>
+    <span bind:this={srEl} class="sr-only"></span>
+  {:else}
+    <span
+      class="w-[4.5rem] shrink-0 whitespace-nowrap text-right text-[11px] leading-none tabular-nums text-muted"
+    >
+      {meters ? scalarText : ""}
+    </span>
+    <span class="sr-only">{label} {scalarText}</span>
+  {/if}
 </div>

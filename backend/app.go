@@ -80,6 +80,9 @@ func Run(assets embed.FS) {
 	application.RegisterEvent[string](eventLyrics)
 	application.RegisterEvent[AppSettings](eventSettings)
 
+	profilerBrowserArgs, stopProfiler := startProfiler()
+	defer stopProfiler()
+
 	service := newPlayerService()
 
 	app := application.New(application.Options{
@@ -107,6 +110,9 @@ func Run(assets embed.FS) {
 		},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
+		},
+		Windows: application.WindowsOptions{
+			AdditionalBrowserArgs: profilerBrowserArgs,
 		},
 		Server: application.ServerOptions{
 			Host: "127.0.0.1",

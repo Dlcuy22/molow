@@ -11,7 +11,13 @@
     left = 12,
     onclose = () => {},
     onplay = (_t: Track) => {},
-  }: { left?: number; onclose?: () => void; onplay?: (t: Track) => void } = $props();
+    onopenArtist,
+  }: {
+    left?: number;
+    onclose?: () => void;
+    onplay?: (t: Track) => void;
+    onopenArtist?: (t: Track) => void;
+  } = $props();
 
   let query = $state("");
   let selected = $state(0);
@@ -104,7 +110,30 @@
           <Cover id={row.coverId} size={32} radius={4} class="shrink-0" />
           <span class="flex min-w-0 flex-1 flex-col gap-0.5">
             <span class="truncate text-[12px] font-medium leading-none">{row.title}</span>
-            <span class="truncate text-[10px] leading-none text-muted">{row.artist}</span>
+            {#if onopenArtist && row.ref.startsWith("ytm:") && row.artist}
+              <span
+                role="link"
+                tabindex="0"
+                class="w-fit max-w-full cursor-pointer truncate text-[10px] leading-none text-muted transition-colors hover:text-fg hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onopenArtist(row);
+                  onclose();
+                }}
+                onkeydown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onopenArtist(row);
+                    onclose();
+                  }
+                }}
+              >
+                {row.artist}
+              </span>
+            {:else}
+              <span class="truncate text-[10px] leading-none text-muted">{row.artist}</span>
+            {/if}
           </span>
           <span class="shrink-0 text-[10px] tabular-nums text-muted">{formatTime(row.durationMs)}</span>
         </button>

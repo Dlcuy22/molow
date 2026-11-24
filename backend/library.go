@@ -887,6 +887,19 @@ func (s *PlayerService) LibraryAlbumTracks(id, album, artist string) ([]library.
 	return nil, fmt.Errorf("library: %q cannot list an album", id)
 }
 
+// LibraryArtistTracks reads one artist's tracks in order.
+func (s *PlayerService) LibraryArtistTracks(id, artist string) ([]library.Track, error) {
+	src, ok := s.librarySource(id)
+	if !ok {
+		return nil, fmt.Errorf("library: unknown id %q", id)
+	}
+	if localSrc, ok := src.(*local.Local); ok {
+		return localSrc.ArtistTracks(s.ctx, artist)
+	}
+
+	return nil, fmt.Errorf("library: %q cannot list an artist", id)
+}
+
 // PlayRefs replaces the queue with refs and starts the first. It is the library
 // "play this album" action; playing one row passes a single ref.
 func (s *PlayerService) PlayRefs(refs []string) error {

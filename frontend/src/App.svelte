@@ -28,6 +28,7 @@
     loadLibrary,
     selectLibrary,
     openAlbumView,
+    openArtistView,
     openPlaylist,
     closePlaylist,
     playTrack,
@@ -75,6 +76,24 @@
   import LibraryPage from "./pages/LibraryPage.svelte";
   import AlbumPlayer from "./pages/AlbumPlayer.svelte";
   import PlaylistView from "./lib/ui/PlaylistView.svelte";
+  import YtmArtistView from "./lib/ui/YtmArtistView.svelte";
+  import {
+    activeYtmArtist,
+    activeYtmArtistError,
+    activeYtmArtistLoading,
+    activeYtmArtistOpen,
+    backFromYtmArtist,
+    closeYtmArtist,
+    openYtmAlbumView,
+    openYtmArtistById,
+    openYtmArtistForTrack,
+    playYtmAlbum,
+    restoreYtmArtistFromAlbum,
+    retryYtmArtist,
+    shuffleYtmArtistTracks,
+    ytmArtistReturn,
+    ytmArtistStack,
+  } from "./lib/ytm-artist";
   import CommandPalette from "./lib/components/CommandPalette.svelte";
   import SettingsPanel from "./lib/components/settings/SettingsPanel.svelte";
   import Toaster from "./lib/components/Toaster.svelte";
@@ -95,6 +114,17 @@
   $effect(() => {
     sidebarWidth = $sessionState.sidebarWidth;
   });
+
+  function openYtmArtistFromTrack(ref: string, artistName = "", artistId = "") {
+    if (!ref.startsWith("ytm:")) {
+      return;
+    }
+    if (playerOpen) {
+      closePlayer();
+    }
+    searchOpen = false;
+    void openYtmArtistForTrack(ref, artistName, artistId);
+  }
 
   function commitSidebarWidth(w: number) {
     commands.setSidebarWidth(w);
@@ -798,10 +828,14 @@
         coverId: l.coverId || l.logoCovers[0] || "",
       }))}
       activeLibrary={$libraryId}
-      onswitch={(id) => void selectLibrary(id)}
+      onswitch={(id) => {
+        closeYtmArtist();
+        void selectLibrary(id);
+      }}
       onnewlibrary={openCreateLibrary}
       onwidthcommit={commitSidebarWidth}
       onnav={(next) => {
+        closeYtmArtist();
         closePlaylist();
         if (next === "library") {
           tab = "library";
@@ -819,7 +853,45 @@
     />
 
     <main class="relative min-w-0 flex-1 overflow-hidden">
-      {#if $activePlaylist}
+      {#if $activeYtmArtistOpen}
+        <YtmArtistView
+          artist={$activeYtmArtist}
+          loading={$activeYtmArtistLoading}
+          error={$activeYtmArtistError}
+          currentPath={snap.path}
+          backLabel={$ytmArtistStack.length > 0
+            ? $ytmArtistStack[$ytmArtistStack.length - 1].name
+            : $activePlaylist
+              ? $activePlaylist.name
+              : tab === "home"
+                ? "Home"
+                : "Your Library"}
+          onback={backFromYtmArtist}
+          onretry={() => void retryYtmArtist()}
+          onshuffle={() => {
+            if ($activeYtmArtist) {
+              playlistPlayback = null;
+              void shuffleYtmArtistTracks($activeYtmArtist.topSongs);
+            }
+          }}
+          onplayTrack={(_track, index, tracks) => playPlaylistTracks(tracks, index)}
+          onlike={handleLikeTrack}
+          onopenAlbum={(album) => void openYtmAlbumView(album)}
+          onplayAlbum={(album) => {
+            playlistPlayback = null;
+            void playYtmAlbum(album);
+          }}
+          onplayVideo={(video) => {
+            playlistPlayback = null;
+            if (video.track) {
+              void playTrack(video.track);
+            } else if (video.id) {
+              void playRefs([`ytm:${video.id}`]);
+            }
+          }}
+          onopenArtist={(artist) => void openYtmArtistById(artist.id)}
+        />
+      {:else if $activePlaylist}
         <PlaylistView
           playlist={$activePlaylist}
           tracks={$activePlaylistTracks}
@@ -828,10 +900,19 @@
           currentPath={snap.path}
           isActiveQueue={playlistQueueActive}
           isPlaying={playlistQueuePlaying}
-          backLabel={tab === "home" ? "Home" : "Your Library"}
-          onback={closePlaylist}
+          backLabel={$ytmArtistReturn
+            ? $ytmArtistReturn.name
+            : tab === "home"
+              ? "Home"
+              : "Your Library"}
+          onback={() => {
+            closePlaylist();
+            restoreYtmArtistFromAlbum();
+          }}
           onretry={() => {
-            if ($activePlaylist) {
+            if ($activePlaylist?.libraryId === "ytm" && $activePlaylist.album) {
+              void openYtmAlbumView($activePlaylist.album);
+            } else if ($activePlaylist) {
               void openPlaylist($activePlaylist);
             }
           }}
@@ -840,6 +921,7 @@
           onplayTrack={(_track, index, ordered) => playPlaylistTracks(ordered, index)}
           onlike={handleLikeTrack}
           onrename={(list) => (renaming = list)}
+          onopenTrackArtist={(t) => openYtmArtistFromTrack(t.ref, t.artist)}
         />
       {:else if tab === "home"}
         <HomePage
@@ -848,6 +930,7 @@
           {greeting}
           onplay={playLibraryTrack}
           onopenAlbum={openAlbum}
+          onopenTrackArtist={(t) => openYtmArtistFromTrack(t.ref, t.artist)}
           onplayAlbum={(a) => {
             playlistPlayback = null;
             void playAlbum(a);
@@ -874,6 +957,8 @@
           onimportFolder={() => void addLibrary()}
           onimportYTM={() => openPalette("ytm", false, "import")}
           onopenAlbum={openAlbum}
+          onopenArtist={(a) => void openArtistView(a)}
+          onopenTrackArtist={(t) => openYtmArtistFromTrack(t.ref, t.artist)}
           onplayAlbum={(a) => {
             playlistPlayback = null;
             void playAlbum(a);
@@ -907,6 +992,7 @@
             void playTrack(t);
             searchOpen = false;
           }}
+          onopenArtist={(t) => openYtmArtistFromTrack(t.ref, t.artist)}
         />
       {/if}
 
@@ -917,6 +1003,7 @@
           onpin={() => (queuePinned = !queuePinned)}
           onplay={(i) => commands.playIndex(i)}
           onmove={(from, to) => commands.moveQueue(from, to)}
+          onopenArtist={(path, artist) => openYtmArtistFromTrack(path, artist)}
         />
       {/if}
     </main>
@@ -932,6 +1019,7 @@
     onqueue={toggleQueue}
     onlyrics={openPlayer}
     onlike={toggleLike}
+    onopenArtist={openYtmArtistFromTrack}
   />
 
   {#if addOpen}
@@ -958,6 +1046,7 @@
     open={playerOpen}
     onclose={closePlayer}
     onseek={(ms) => commands.seek(ms)}
+    onopenArtist={openYtmArtistFromTrack}
   />
 {/if}
 

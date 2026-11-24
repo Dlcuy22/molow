@@ -2,10 +2,10 @@
   import { fade } from "svelte/transition";
   import CaretDown from "phosphor-svelte/lib/CaretDown";
   import Plus from "phosphor-svelte/lib/Plus";
-  import type { Album, LibraryInfo, Playlist, Shelf, Track } from "../lib/types";
+  import type { Album, Artist, LibraryInfo, Playlist, Shelf, Track } from "../lib/types";
   import AlbumCard from "../lib/ui/AlbumCard.svelte";
+  import BigArtistCard from "../lib/ui/BigArtistCard.svelte";
   import Chip from "../lib/ui/Chip.svelte";
-  import Cover from "../lib/ui/Cover.svelte";
   import LoadingSpinner from "../lib/ui/LoadingSpinner.svelte";
   import PlaylistCard from "../lib/ui/PlaylistCard.svelte";
   import PlaylistView from "../lib/ui/PlaylistView.svelte";
@@ -30,6 +30,8 @@
     onimportYTM = () => {},
     onopenAlbum = (_a: Album) => {},
     onplayAlbum = (_a: Album) => {},
+    onopenArtist = (_a: Artist) => {},
+    onopenTrackArtist,
     onplay = (_t: Track) => {},
     onopenPlaylist = (_list: Playlist) => {},
     onplayPlaylistCard = (_list: Playlist) => {},
@@ -59,6 +61,8 @@
     onimportYTM?: () => void;
     onopenAlbum?: (a: Album) => void;
     onplayAlbum?: (a: Album) => void;
+    onopenArtist?: (a: Artist) => void;
+    onopenTrackArtist?: (t: Track) => void;
     onplay?: (t: Track) => void;
     onopenPlaylist?: (list: Playlist) => void;
     onplayPlaylistCard?: (list: Playlist) => void;
@@ -159,6 +163,7 @@
     onplayTrack={onplayPlaylistTrack}
     onlike={onlikeTrack}
     onrename={onrenamePlaylist}
+    {onopenTrackArtist}
   />
 {:else}
 <div class="flex h-full flex-col overflow-hidden pl-[50px] pr-9 pt-[41px]">
@@ -262,13 +267,11 @@
             {:else}
               <div class="flex flex-wrap gap-x-4 gap-y-5">
                 {#each artists as artist (artist.id)}
-                  <div class="w-[166px]">
-                    <Cover id={artist.coverId} size={166} radius={8} />
-                    <p class="mt-1.5 truncate font-display text-[15px] font-bold">{artist.name}</p>
-                    <p class="text-[11px] text-muted">
-                      Artist · {artist.songCount} {artist.songCount === 1 ? "song" : "songs"}
-                    </p>
-                  </div>
+                  <BigArtistCard
+                    {artist}
+                    subtitle="{artist.songCount} {artist.songCount === 1 ? 'song' : 'songs'}"
+                    onopen={onopenArtist}
+                  />
                 {/each}
               </div>
             {/if}
@@ -317,7 +320,7 @@
                   />
                 {/each}
                 {#each tracks.slice(0, 5) as track (track.ref)}
-                  <TrackTile {track} onplay={onplay} />
+                  <TrackTile {track} onplay={onplay} onopenArtist={onopenTrackArtist} />
                 {/each}
               </div>
             {/if}

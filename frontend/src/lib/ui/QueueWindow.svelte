@@ -12,12 +12,14 @@
     onpin = () => {},
     onplay = (_i: number) => {},
     onmove = (_from: number, _to: number) => {},
+    onopenArtist,
   }: {
     rows?: QueueRow[];
     pinned?: boolean;
     onpin?: () => void;
     onplay?: (index: number) => void;
     onmove?: (from: number, to: number) => void;
+    onopenArtist?: (path: string, artist: string) => void;
   } = $props();
 
   const ROW = 50;
@@ -160,7 +162,29 @@
               >
                 {row.title}
               </span>
-              <span class="truncate text-[10px] leading-none text-muted">{row.artist}</span>
+              {#if onopenArtist && row.path.startsWith("ytm:") && row.artist}
+                <span
+                  role="link"
+                  tabindex="0"
+                  class="w-fit max-w-full cursor-pointer truncate text-[10px] leading-none text-muted transition-colors hover:text-fg hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+                  onpointerdown={(e) => e.stopPropagation()}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    onopenArtist(row.path, row.artist);
+                  }}
+                  onkeydown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onopenArtist(row.path, row.artist);
+                    }
+                  }}
+                >
+                  {row.artist}
+                </span>
+              {:else}
+                <span class="truncate text-[10px] leading-none text-muted">{row.artist}</span>
+              {/if}
             </span>
           </button>
           {#if separator(i)}

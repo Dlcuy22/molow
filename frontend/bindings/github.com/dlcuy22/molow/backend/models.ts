@@ -501,6 +501,70 @@ export interface TrackCacheClear {
 }
 
 /**
+ * YTMArtistAlbum is one album or single card on a YouTube Music artist page.
+ */
+export interface YTMArtistAlbum {
+    "id": string;
+    "name": string;
+    "artist": string;
+    "imageUrl": string;
+    "year": number;
+}
+
+/**
+ * YTMArtistRef is one related artist entry on a YouTube Music artist page.
+ */
+export interface YTMArtistRef {
+    "id": string;
+    "name": string;
+    "imageUrl": string;
+    "subtitle": string;
+}
+
+/**
+ * YTMArtistTrack is one playable YouTube Music song returned on an artist page
+ * or album/playlist listing.
+ */
+export interface YTMArtistTrack {
+    "ref": string;
+    "nativeId": string;
+    "title": string;
+    "artist": string;
+    "album": string;
+    "durationMs": number;
+    "imageUrl": string;
+}
+
+/**
+ * YTMArtistVideo is one video card on a YouTube Music artist page.
+ */
+export interface YTMArtistVideo {
+    "id": string;
+    "ref": string;
+    "title": string;
+    "subtitle": string;
+    "durationMs": number;
+    "thumbnailUrl": string;
+}
+
+/**
+ * YTMArtistViewData is the frontend payload for YtmArtistView.
+ */
+export interface YTMArtistViewData {
+    "id": string;
+    "name": string;
+    "description": string;
+    "bannerUrl": string;
+    "subscriberText": string;
+    "shufflePlaylistId": string;
+    "topSongs": YTMArtistTrack[] | null;
+    "albums": YTMArtistAlbum[] | null;
+    "singles": YTMArtistAlbum[] | null;
+    "videos": YTMArtistVideo[] | null;
+    "relatedArtists": YTMArtistRef[] | null;
+}
+
+/**
  * YTMImport is the outcome of one YouTube Music import: how many tracks landed
  * in the library, and the playlist row when the hit was a playlist.
  */

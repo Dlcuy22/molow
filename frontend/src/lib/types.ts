@@ -11,6 +11,7 @@ export interface Track {
   album: string;
   durationMs: number;
   coverId: string;
+  imageUrl?: string;
   liked: boolean;
   flags: number;
   /** Track number in its album, when the tags carry one. */
@@ -24,6 +25,7 @@ export interface Album {
   name: string;
   artist: string;
   coverId: string;
+  imageUrl?: string;
   songCount: number;
   durationMs: number;
   year: number;
@@ -34,8 +36,35 @@ export interface Artist {
   libraryId: string;
   name: string;
   coverId: string;
+  imageUrl?: string;
+  subtitle?: string;
   songCount: number;
   albumCount: number;
+}
+
+export interface YtmVideo {
+  id: string;
+  title: string;
+  subtitle?: string;
+  durationMs?: number;
+  coverId?: string;
+  thumbnailUrl?: string;
+  track?: Track;
+}
+
+export interface YtmArtist {
+  id: string;
+  name: string;
+  description?: string;
+  bannerUrl?: string;
+  coverId?: string;
+  subscriberText?: string;
+  subscribed?: boolean;
+  topSongs: Track[];
+  albums: Album[];
+  singles: Album[];
+  videos: YtmVideo[];
+  relatedArtists: Artist[];
 }
 
 export interface Playlist {
@@ -49,6 +78,7 @@ export interface Playlist {
   coverId?: string;
   customCover?: boolean;
   album?: Album;
+  artist?: Artist;
 }
 
 export type ShelfLayout = "list" | "grid";

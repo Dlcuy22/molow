@@ -40,6 +40,7 @@
     open = true,
     onclose = () => {},
     onseek = (_ms: number) => {},
+    onopenArtist,
   }: {
     snap: Snapshot;
     lyrics?: Lyrics | null;
@@ -48,6 +49,7 @@
     open?: boolean;
     onclose?: () => void;
     onseek?: (ms: number) => void;
+    onopenArtist?: (path: string, artist: string, artistId: string) => void;
   } = $props();
 
   const queue = $derived(snap.queue ?? []);
@@ -515,7 +517,17 @@
       text={snap.title || "Nothing playing"}
       class="mt-[11px] font-display text-[20px] font-[600] leading-tight"
     />
-    <p class="truncate text-[12px] leading-tight text-fg/56">{snap.artist}</p>
+    {#if onopenArtist && snap.path.startsWith("ytm:") && snap.artist}
+      <button
+        type="button"
+        class="max-w-full cursor-pointer truncate rounded-sm text-left text-[12px] leading-tight text-fg/56 transition-colors hover:text-fg hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+        onclick={() => onopenArtist(snap.path, snap.artist, snap.artistId)}
+      >
+        {snap.artist}
+      </button>
+    {:else}
+      <p class="truncate text-[12px] leading-tight text-fg/56">{snap.artist}</p>
+    {/if}
 
     <div class="mt-[16px] flex items-center justify-between text-[10px] tabular-nums">
       <span>{formatTime(position)}</span>

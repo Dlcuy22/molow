@@ -219,6 +219,10 @@ func (l *Local) AlbumTracks(_ context.Context, album, artist string) ([]library.
 	return l.store.AlbumTracks(l.lib.ID, album, artist)
 }
 
+func (l *Local) ArtistTracks(_ context.Context, artist string) ([]library.Track, error) {
+	return l.store.ArtistTracks(l.lib.ID, artist)
+}
+
 // Search runs the catalogue's FTS index.
 func (l *Local) Search(_ context.Context, query string, limit int) (library.Page, error) {
 	if limit <= 0 {

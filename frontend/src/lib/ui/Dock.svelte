@@ -30,6 +30,7 @@
     onqueue = () => {},
     onlyrics = () => {},
     onlike = () => {},
+    onopenArtist,
   }: {
     snap: Snapshot;
     mode?: "docked" | "top" | "floating";
@@ -40,6 +41,7 @@
     onqueue?: () => void;
     onlyrics?: () => void;
     onlike?: () => void;
+    onopenArtist?: (path: string, artist: string, artistId: string) => void;
   } = $props();
 
   const floating = $derived(mode === "floating");
@@ -167,7 +169,17 @@
         text={snap.title || "Nothing playing"}
         class="font-display text-[15px] font-bold leading-none"
       />
-      <span class="truncate text-[11px] text-muted">{snap.artist}</span>
+      {#if onopenArtist && snap.path.startsWith("ytm:") && snap.artist}
+        <button
+          type="button"
+          class="w-fit max-w-full cursor-pointer truncate rounded-sm text-left text-[11px] text-muted transition-colors hover:text-fg hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          onclick={() => onopenArtist(snap.path, snap.artist, snap.artistId)}
+        >
+          {snap.artist}
+        </button>
+      {:else}
+        <span class="truncate text-[11px] text-muted">{snap.artist}</span>
+      {/if}
     </div>
     <button
       class="dock-btn grid size-8 shrink-0 place-items-center rounded-md text-fg transition-colors hover:bg-hover"

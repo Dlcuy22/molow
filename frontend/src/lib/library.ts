@@ -224,10 +224,58 @@ export async function openAlbumView(album: Album): Promise<void> {
   }
 }
 
+/** openArtistView loads a local artist's tracks into the dedicated playlist/artist view. */
+export async function openArtistView(artist: Artist): Promise<void> {
+  const libId = artist.libraryId || get(libraryId);
+  if (libId === "" || artist.name === "") {
+    return;
+  }
+
+  const meta: Playlist = {
+    id: artist.id,
+    libraryId: libId,
+    name: artist.name,
+    description: "",
+    trackCount: artist.songCount,
+    coverId: artist.coverId,
+    artist,
+  };
+
+  const seq = ++playlistSeq;
+  activePlaylist.set(meta);
+  activePlaylistTracks.set([]);
+  activePlaylistError.set("");
+  activePlaylistLoading.set(true);
+
+  try {
+    const rows = (await PlayerService.LibraryArtistTracks(libId, artist.name)) ?? [];
+    if (seq !== playlistSeq) {
+      return;
+    }
+    const collected = rows.map(toTrack);
+    activePlaylistTracks.set(collected);
+    activePlaylist.update((cur) =>
+      cur && cur.id === artist.id ? { ...cur, trackCount: collected.length } : cur,
+    );
+  } catch (err) {
+    if (seq !== playlistSeq) {
+      return;
+    }
+    activePlaylistError.set(libraryErrorText(err, "Could not load this artist"));
+  } finally {
+    if (seq === playlistSeq) {
+      activePlaylistLoading.set(false);
+    }
+  }
+}
+
 /** openPlaylist loads a playlist's metadata and all of its tracks into the dedicated view. */
 export async function openPlaylist(target: Playlist | string): Promise<void> {
   if (typeof target !== "string" && target.album) {
     return openAlbumView(target.album);
+  }
+  if (typeof target !== "string" && target.artist) {
+    return openArtistView(target.artist);
   }
   const id = typeof target === "string" ? target : target.id;
   const libId = typeof target === "string" ? get(libraryId) : target.libraryId || get(libraryId);

@@ -17,9 +17,19 @@
   } = $props();
 
   const home = $derived(variant === "home");
-  const meta = $derived(
-    home ? album.artist : `Album · ${album.songCount} ${album.songCount === 1 ? "song" : "songs"}`,
-  );
+  const meta = $derived.by(() => {
+    if (home) {
+      return album.artist;
+    }
+    if (album.songCount > 0) {
+      return `Album · ${album.songCount} ${album.songCount === 1 ? "song" : "songs"}`;
+    }
+    if (album.year > 0) {
+      return String(album.year);
+    }
+
+    return album.artist || "Album";
+  });
 
   function menu(e: MouseEvent) {
     openContextMenu(e, {
@@ -40,7 +50,14 @@
     onclick={() => onopen(album)}
     oncontextmenu={menu}
   >
-    <Cover id={album.coverId} alt="" size={166} radius={8} class="transition-opacity group-hover:opacity-90" />
+    <Cover
+      id={album.coverId}
+      src={album.imageUrl ?? ""}
+      alt=""
+      size={166}
+      radius={8}
+      class="transition-opacity group-hover:opacity-90"
+    />
     <CardPlayButton onplay={() => onplay(album)} />
   </button>
   <div class="pt-1.5">

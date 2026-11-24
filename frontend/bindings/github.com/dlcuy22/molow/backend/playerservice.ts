@@ -324,6 +324,13 @@ export function LibraryAlbumTracks(id: string, album: string, artist: string): $
 }
 
 /**
+ * LibraryArtistTracks reads one artist's tracks in order.
+ */
+export function LibraryArtistTracks(id: string, artist: string): $CancellablePromise<library$0.Track[] | null> {
+    return $Call.ByID(1191055087, id, artist);
+}
+
+/**
  * LibraryFeed answers one tab of a library.
  */
 export function LibraryFeed(id: string, tab: string, cursor: string, limit: number): $CancellablePromise<library$0.Page> {
@@ -819,4 +826,27 @@ export function TogglePause(): $CancellablePromise<void> {
  */
 export function UpdateLibrary(id: string, name: string, description: string): $CancellablePromise<library$0.Library> {
     return $Call.ByID(2641423699, id, name, description);
+}
+
+/**
+ * YTMArtist loads a YouTube Music artist page by its browse/channel ID.
+ */
+export function YTMArtist(artistID: string): $CancellablePromise<$models.YTMArtistViewData> {
+    return $Call.ByID(3174191564, artistID);
+}
+
+/**
+ * YTMArtistForTrack resolves the primary artist ID for a ytm:<videoId> track
+ * and loads that artist's page.
+ */
+export function YTMArtistForTrack(ref: string, artistName: string): $CancellablePromise<$models.YTMArtistViewData> {
+    return $Call.ByID(1503673954, ref, artistName);
+}
+
+/**
+ * YTMPlaylistTracks loads the tracks of a YouTube Music album or playlist so
+ * YtmArtistView album/single cards can open in PlaylistView or play directly.
+ */
+export function YTMPlaylistTracks(playlistID: string): $CancellablePromise<$models.YTMArtistTrack[] | null> {
+    return $Call.ByID(746755357, playlistID);
 }

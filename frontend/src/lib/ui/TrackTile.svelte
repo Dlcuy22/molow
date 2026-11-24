@@ -6,7 +6,12 @@
   let {
     track,
     onplay = (_t: Track) => {},
-  }: { track: Track; onplay?: (t: Track) => void } = $props();
+    onopenArtist,
+  }: {
+    track: Track;
+    onplay?: (t: Track) => void;
+    onopenArtist?: (t: Track) => void;
+  } = $props();
 
   function menu(e: MouseEvent) {
     openContextMenu(e, {
@@ -28,6 +33,27 @@
   <Cover id={track.coverId} size={40} radius={8} class="shrink-0" />
   <span class="flex min-w-0 flex-col gap-[3px]">
     <span class="truncate font-display text-[12px] font-bold leading-none">{track.title}</span>
-    <span class="truncate text-[10px] leading-none text-muted">{track.artist}</span>
+    {#if onopenArtist && track.ref.startsWith("ytm:") && track.artist}
+      <span
+        role="link"
+        tabindex="0"
+        class="w-fit max-w-full cursor-pointer truncate text-[10px] leading-none text-muted transition-colors hover:text-fg hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+        onclick={(e) => {
+          e.stopPropagation();
+          onopenArtist(track);
+        }}
+        onkeydown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            e.stopPropagation();
+            onopenArtist(track);
+          }
+        }}
+      >
+        {track.artist}
+      </span>
+    {:else}
+      <span class="truncate text-[10px] leading-none text-muted">{track.artist}</span>
+    {/if}
   </span>
 </button>

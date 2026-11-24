@@ -170,6 +170,26 @@ func (s *Store) AlbumTracks(libraryID, album, artist string) ([]library.Track, e
 	return out, err
 }
 
+// ArtistTracks returns every track by one artist in album and track order.
+func (s *Store) ArtistTracks(libraryID, artist string) ([]library.Track, error) {
+	rows, err := s.db.Query(
+		`SELECT`+trackColumns+trackFrom+
+			` WHERE t.library_id = ? AND t.artist = ?
+			 ORDER BY t.album COLLATE NOCASE,
+			          COALESCE(NULLIF(t.disc_no, 0), 1),
+			          CASE WHEN t.track_no > 0 THEN 0 ELSE 1 END,
+			          t.track_no, t.title COLLATE NOCASE`,
+		libraryID, artist,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out, _, err := collectTracks(rows, 0)
+
+	return out, err
+}
+
 // Artists groups the catalogue by artist name.
 func (s *Store) Artists(libraryID string, limit, offset int) ([]library.Artist, int, error) {
 	total, err := s.count(

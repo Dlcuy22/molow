@@ -9,6 +9,7 @@
   import Play from "phosphor-svelte/lib/Play";
   import SortAscending from "phosphor-svelte/lib/SortAscending";
   import ThumbsDown from "phosphor-svelte/lib/ThumbsDown";
+  import User from "phosphor-svelte/lib/User";
   import type { Playlist, Track } from "../types";
   import { displayArtist, formatTime, subtitle } from "../format";
   import {
@@ -41,6 +42,7 @@
     onlike = (_track: Track, _liked: boolean) => {},
     ondislike = (_track: Track) => {},
     onrename = (_playlist: Playlist) => {},
+    onopenTrackArtist,
   }: {
     playlist: Playlist;
     tracks?: Track[];
@@ -59,15 +61,17 @@
     onlike?: (track: Track, liked: boolean) => void;
     ondislike?: (track: Track) => void;
     onrename?: (playlist: Playlist) => void;
+    onopenTrackArtist?: (track: Track) => void;
   } = $props();
 
   let sortBy = $state<PlaylistSort>("order");
   let sortOpen = $state(false);
 
   const isAlbum = $derived(playlist.album !== undefined);
-  const kindNoun = $derived(isAlbum ? "album" : "playlist");
+  const isArtist = $derived(playlist.artist !== undefined);
+  const kindNoun = $derived(isArtist ? "artist" : isAlbum ? "album" : "playlist");
   const sortLabel = (id: PlaylistSort, fallback: string) =>
-    isAlbum && id === "order" ? "Track order" : fallback;
+    isArtist && id === "order" ? "Album order" : isAlbum && id === "order" ? "Track order" : fallback;
 
   const activeSortLabel = $derived(
     sortLabel(
@@ -160,14 +164,20 @@
     <!-- Left rail: square playlist artwork, title, optional creator, stats and actions. -->
     <aside class="flex w-[240px] shrink-0 flex-col items-center pt-1 @max-[680px]:w-full">
       <div
-        class="relative size-[220px] shrink-0 overflow-hidden rounded-lg bg-surface @max-[680px]:size-[180px]"
+        class="relative size-[220px] shrink-0 overflow-hidden bg-surface @max-[680px]:size-[180px] {isArtist
+          ? 'rounded-full'
+          : 'rounded-lg'}"
         aria-hidden="true"
       >
-        {#if coverId}
-          <Cover id={coverId} fill radius={0} class="block h-full w-full" />
+        {#if coverId || playlist.album?.imageUrl}
+          <Cover id={coverId} src={playlist.album?.imageUrl ?? ""} fill radius={0} class="block h-full w-full" />
         {:else}
           <div class="grid h-full w-full place-items-center text-muted">
-            <MusicNotes size="48" />
+            {#if isArtist}
+              <User size="56" />
+            {:else}
+              <MusicNotes size="48" />
+            {/if}
           </div>
         {/if}
       </div>
@@ -194,7 +204,7 @@
       </p>
 
       <div class="mt-5 flex items-center justify-center gap-3">
-        {#if !isAlbum}
+        {#if !isAlbum && !isArtist}
           <button
             class="grid size-9 place-items-center rounded-full bg-surface text-fg transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-focus"
             aria-label="Rename playlist"
@@ -220,15 +230,17 @@
           {/if}
         </button>
 
-        <button
-          class="grid size-9 place-items-center rounded-full bg-surface text-fg transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-focus"
-          aria-label={isAlbum ? "Album options" : "Playlist options"}
-          title={isAlbum ? "Album options" : "Playlist options"}
-          aria-haspopup="menu"
-          onclick={openPlaylistMenu}
-        >
-          <DotsThreeVertical size="18" weight="bold" />
-        </button>
+        {#if !isArtist}
+          <button
+            class="grid size-9 place-items-center rounded-full bg-surface text-fg transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-focus"
+            aria-label={isAlbum ? "Album options" : "Playlist options"}
+            title={isAlbum ? "Album options" : "Playlist options"}
+            aria-haspopup="menu"
+            onclick={openPlaylistMenu}
+          >
+            <DotsThreeVertical size="18" weight="bold" />
+          </button>
+        {/if}
       </div>
     </aside>
 
@@ -288,9 +300,11 @@
         {:else if sortedTracks.length === 0}
           <div class="max-w-[380px] px-2 py-4">
             <p class="text-[12px] text-muted">
-              {isAlbum
-                ? "No songs found in this album."
-                : "This playlist has no songs yet. Right-click any track in your library to add it here."}
+              {isArtist
+                ? "No songs found for this artist."
+                : isAlbum
+                  ? "No songs found in this album."
+                  : "This playlist has no songs yet. Right-click any track in your library to add it here."}
             </p>
             <button
               class="mt-3 h-8 rounded-md bg-surface px-3 text-[12px] font-medium text-fg transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-focus"
@@ -303,7 +317,9 @@
           <ul class="flex flex-col gap-0.5" role="list">
             {#each sortedTracks as track, i (track.ref + ":" + i)}
               {@const active = currentPath !== "" && track.ref === currentPath}
-              {@const meta = subtitle(displayArtist(track.artist), track.album)}
+              {@const artistLabel = displayArtist(track.artist)}
+              {@const meta = subtitle(artistLabel, track.album)}
+              {@const ytmArtistClickable = Boolean(onopenTrackArtist && track.ref.startsWith("ytm:") && artistLabel)}
               <li
                 class="group flex items-center gap-3 rounded-md px-2 py-1.5 transition-colors {active
                   ? 'bg-selected'
@@ -315,7 +331,7 @@
                   onclick={() => onplayTrack(track, i, sortedTracks)}
                 >
                   <span class="group/cover relative size-10 shrink-0 overflow-hidden rounded-[4px]">
-                    <Cover id={track.coverId} size={40} radius={0} class="block" />
+                    <Cover id={track.coverId} src={track.imageUrl ?? ""} size={40} radius={0} class="block" />
                     <span
                       class="pointer-events-none absolute inset-0 grid place-items-center bg-black/50 text-fg opacity-0 transition-opacity group-hover/cover:opacity-100"
                       aria-hidden="true"
@@ -331,7 +347,31 @@
                     >
                       {track.title}
                     </span>
-                    {#if meta !== ""}
+                    {#if ytmArtistClickable}
+                      <span class="flex min-w-0 items-center truncate text-[11px] leading-snug text-muted">
+                        <span
+                          role="link"
+                          tabindex="0"
+                          class="max-w-full cursor-pointer truncate transition-colors hover:text-fg hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+                          onclick={(e) => {
+                            e.stopPropagation();
+                            onopenTrackArtist?.(track);
+                          }}
+                          onkeydown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              onopenTrackArtist?.(track);
+                            }
+                          }}
+                        >
+                          {artistLabel}
+                        </span>
+                        {#if track.album}
+                          <span class="truncate">&nbsp;· {track.album}</span>
+                        {/if}
+                      </span>
+                    {:else if meta !== ""}
                       <span class="truncate text-[11px] leading-snug text-muted">
                         {meta}
                       </span>

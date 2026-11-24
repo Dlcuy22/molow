@@ -11,6 +11,7 @@
     onplay = (_t: Track) => {},
     onopenAlbum = (_a: Album) => {},
     onplayAlbum = (_a: Album) => {},
+    onopenTrackArtist,
     onadd = () => {},
     oncreateLibrary = () => {},
   }: {
@@ -20,6 +21,7 @@
     onplay?: (t: Track) => void;
     onopenAlbum?: (a: Album) => void;
     onplayAlbum?: (a: Album) => void;
+    onopenTrackArtist?: (t: Track) => void;
     onadd?: () => void;
     oncreateLibrary?: () => void;
   } = $props();
@@ -118,7 +120,7 @@
 
       <div class="grid max-w-[526px] shrink-0 grid-cols-3 gap-2">
         {#each recent as track (track.ref)}
-          <TrackTile {track} onplay={onplay} />
+          <TrackTile {track} onplay={onplay} onopenArtist={onopenTrackArtist} />
         {/each}
       </div>
     </div>

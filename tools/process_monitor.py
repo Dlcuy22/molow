@@ -16,13 +16,19 @@ are primed once so their first reported CPU reading reflects a real interval.
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import math
 import os
 import shutil
 import signal
+import socket
+import struct
 import sys
 import time
+import urllib.error
+import urllib.request
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -547,6 +553,42 @@ def _read_recent_dev_server_url(log_path: Path, min_ts: float | None) -> str | N
     return found_url
 
 
+def _read_recent_profiler_endpoints(log_path: Path, min_ts: float | None) -> tuple[str | None, str | None]:
+    if not log_path.is_file():
+        return None, None
+    try:
+        size = log_path.stat().st_size
+        with log_path.open("rb") as fh:
+            if size > 262144:
+                fh.seek(size - 262144)
+                fh.readline()
+            tail = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None, None
+
+    pprof_url: str | None = None
+    cdp_url: str | None = None
+    for line in tail.splitlines():
+        if "profiler:" not in line:
+            continue
+        rec = parse_logfmt_line(line)
+        if rec is None:
+            continue
+        if min_ts is not None and rec["dt"].timestamp() < min_ts - 5.0:
+            continue
+        msg = rec["msg"]
+        attrs = rec["attrs"]
+        if msg == "profiler: pprof listening" and isinstance(attrs.get("addr"), str):
+            addr = attrs["addr"].strip()
+            pprof_url = addr if addr.startswith("http") else f"http://{addr}"
+        elif msg == "profiler: cdp enabled":
+            if isinstance(attrs.get("url"), str) and attrs["url"].strip():
+                cdp_url = attrs["url"].strip().rstrip("/")
+            elif isinstance(attrs.get("port"), int):
+                cdp_url = f"http://127.0.0.1:{attrs['port']}"
+    return pprof_url, cdp_url
+
+
 def _repo_root_from_exe(root_exe: str | None) -> Path | None:
     if not root_exe:
         return None
@@ -1053,6 +1095,23 @@ class ProfileTracker:
         elif msg in {"lyrics: chain missed", "lyrics: no sheet, session remembers the miss"}:
             self._cache_events["lyrics"]["misses"] += 1
 
+    def discovered_endpoints(self) -> tuple[str | None, str | None]:
+        """Return (pprof_url, cdp_url) if logged by the running app."""
+        pprof_url = None
+        cdp_url = None
+        for ev in self.events:
+            msg = ev.get("msg")
+            attrs = ev.get("attrs") or {}
+            if msg == "profiler: pprof listening" and isinstance(attrs.get("addr"), str):
+                addr = attrs["addr"].strip()
+                pprof_url = addr if addr.startswith("http") else f"http://{addr}"
+            elif msg == "profiler: cdp enabled":
+                if isinstance(attrs.get("url"), str) and attrs["url"].strip():
+                    cdp_url = attrs["url"].strip().rstrip("/")
+                elif isinstance(attrs.get("port"), int):
+                    cdp_url = f"http://127.0.0.1:{attrs['port']}"
+        return pprof_url, cdp_url
+
     def status_line(self) -> str:
         mode = self.build_info["mode"]
         if not self.events:
@@ -1141,6 +1200,9 @@ class SummaryAccumulator:
         self.cpu_max = 0.0
         self.rss_sum = 0.0
         self.rss_max = 0.0
+        self.uss_sum = 0.0
+        self.uss_max = 0.0
+        self.uss_count = 0
         self.peak_procs = 0
         self._per_proc: dict[tuple[int, str], dict] = {}
         self._io_bounds: dict[tuple[int, str], list[int | None]] = {}
@@ -1152,6 +1214,11 @@ class SummaryAccumulator:
         self.cpu_max = max(self.cpu_max, totals["cpu_percent"])
         self.rss_sum += totals["rss_mb"]
         self.rss_max = max(self.rss_max, totals["rss_mb"])
+        uss_total = totals.get("uss_mb")
+        if uss_total is not None:
+            self.uss_sum += uss_total
+            self.uss_max = max(self.uss_max, uss_total)
+            self.uss_count += 1
         self.peak_procs = max(self.peak_procs, sample["process_count"])
 
         for rec in sample["processes"]:
@@ -1169,6 +1236,9 @@ class SummaryAccumulator:
                     "rss_sum": 0.0,
                     "rss_count": 0,
                     "rss_max_mb": 0.0,
+                    "uss_sum": 0.0,
+                    "uss_count": 0,
+                    "uss_max_mb": None,
                     "private_max_mb": None,
                     "pss_max_mb": None,
                     "threads_max": 0,
@@ -1188,6 +1258,12 @@ class SummaryAccumulator:
                 entry["rss_sum"] += rss
                 entry["rss_count"] += 1
                 entry["rss_max_mb"] = max(entry["rss_max_mb"], rss)
+
+            uss = rec.get("uss_mb")
+            if uss is not None:
+                entry["uss_sum"] += uss
+                entry["uss_count"] += 1
+                entry["uss_max_mb"] = max(entry["uss_max_mb"] or 0.0, uss)
 
             if rec["private_mb"] is not None:
                 entry["private_max_mb"] = max(entry["private_max_mb"] or 0.0, rec["private_mb"])
@@ -1226,6 +1302,8 @@ class SummaryAccumulator:
                 "cpu_max": round(entry["cpu_max"], 2),
                 "rss_avg_mb": round(entry["rss_sum"] / entry["rss_count"], 2) if entry["rss_count"] else 0.0,
                 "rss_max_mb": round(entry["rss_max_mb"], 2),
+                "uss_avg_mb": round(entry["uss_sum"] / entry["uss_count"], 2) if entry["uss_count"] else None,
+                "uss_max_mb": round(entry["uss_max_mb"], 2) if entry["uss_max_mb"] is not None else None,
                 "private_max_mb": entry["private_max_mb"],
                 "pss_max_mb": entry["pss_max_mb"],
                 "threads_max": entry["threads_max"],
@@ -1237,17 +1315,478 @@ class SummaryAccumulator:
         processes.sort(key=lambda item: (-item["cpu_max"], -item["rss_max_mb"], item["pid"]))
 
         if self.sample_count == 0:
-            totals = {"cpu_avg": 0.0, "cpu_max": 0.0, "rss_avg_mb": 0.0, "rss_max_mb": 0.0, "peak_procs": 0}
+            totals = {"cpu_avg": 0.0, "cpu_max": 0.0, "rss_avg_mb": 0.0, "rss_max_mb": 0.0, "uss_avg_mb": None, "uss_max_mb": None, "peak_procs": 0}
         else:
             totals = {
                 "cpu_avg": round(self.cpu_sum / self.sample_count, 2),
                 "cpu_max": round(self.cpu_max, 2),
                 "rss_avg_mb": round(self.rss_sum / self.sample_count, 2),
                 "rss_max_mb": round(self.rss_max, 2),
+                "uss_avg_mb": round(self.uss_sum / self.uss_count, 2) if self.uss_count else None,
+                "uss_max_mb": round(self.uss_max, 2) if self.uss_count else None,
                 "peak_procs": self.peak_procs,
             }
 
         return {"totals": totals, "processes": processes}
+
+
+class CDPClient:
+    """Minimal stdlib RFC 6455 WebSocket client for loopback Chrome DevTools Protocol."""
+
+    def __init__(self, ws_url: str, timeout: float = 5.0) -> None:
+        parsed = urlparse(ws_url)
+        if parsed.scheme != "ws" or not parsed.hostname:
+            raise ValueError(f"unsupported CDP WebSocket URL: {ws_url!r}")
+        host = parsed.hostname
+        port = parsed.port or 80
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+
+        self._sock = socket.create_connection((host, port), timeout=timeout)
+        self._sock.settimeout(timeout)
+        self._next_id = 1
+        self._closed = False
+
+        key = base64.b64encode(os.urandom(16)).decode("ascii")
+        expected_accept = base64.b64encode(
+            hashlib.sha1(f"{key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11".encode("ascii")).digest()
+        ).decode("ascii")
+
+        req = (
+            f"GET {path} HTTP/1.1\r\n"
+            f"Host: {host}:{port}\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            "Sec-WebSocket-Version: 13\r\n\r\n"
+        )
+        self._sock.sendall(req.encode("ascii"))
+
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            chunk = self._sock.recv(4096)
+            if not chunk:
+                raise ConnectionError("CDP WebSocket handshake closed early")
+            buf += chunk
+
+        header_raw, extra = buf.split(b"\r\n\r\n", 1)
+        lines = header_raw.decode("latin1").split("\r\n")
+        if not lines or "101" not in lines[0]:
+            raise ConnectionError(f"CDP WebSocket handshake rejected: {lines[0] if lines else ''}")
+
+        headers = {}
+        for line in lines[1:]:
+            if ":" in line:
+                k, v = line.split(":", 1)
+                headers[k.strip().lower()] = v.strip()
+        if headers.get("sec-websocket-accept") != expected_accept:
+            raise ConnectionError("CDP WebSocket Sec-WebSocket-Accept mismatch")
+
+        self._recv_buf = bytearray(extra)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._send_frame(0x8, b"")
+        except OSError:
+            pass
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+
+    def _recv_exact(self, n: int) -> bytes:
+        while len(self._recv_buf) < n:
+            chunk = self._sock.recv(max(4096, n - len(self._recv_buf)))
+            if not chunk:
+                raise ConnectionError("CDP WebSocket connection closed")
+            self._recv_buf.extend(chunk)
+        out = bytes(self._recv_buf[:n])
+        del self._recv_buf[:n]
+        return out
+
+    def _send_frame(self, opcode: int, payload: bytes) -> None:
+        mask = os.urandom(4)
+        length = len(payload)
+        header = bytearray([0x80 | (opcode & 0x0F)])
+        if length < 126:
+            header.append(0x80 | length)
+        elif length < 65536:
+            header.append(0x80 | 126)
+            header.extend(struct.pack("!H", length))
+        else:
+            header.append(0x80 | 127)
+            header.extend(struct.pack("!Q", length))
+        header.extend(mask)
+        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        self._sock.sendall(bytes(header) + masked)
+
+    def _recv_message(self) -> str | None:
+        fragments: list[bytes] = []
+        while True:
+            b1, b2 = self._recv_exact(2)
+            fin = bool(b1 & 0x80)
+            opcode = b1 & 0x0F
+            masked = bool(b2 & 0x80)
+            length = b2 & 0x7F
+            if length == 126:
+                (length,) = struct.unpack("!H", self._recv_exact(2))
+            elif length == 127:
+                (length,) = struct.unpack("!Q", self._recv_exact(8))
+            mask = self._recv_exact(4) if masked else None
+            payload = self._recv_exact(length)
+            if mask is not None:
+                payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+
+            if opcode == 0x8:
+                self._closed = True
+                return None
+            if opcode == 0x9:
+                self._send_frame(0xA, payload)
+                continue
+            if opcode == 0xA:
+                continue
+            if opcode in (0x1, 0x2, 0x0):
+                fragments.append(payload)
+                if fin:
+                    return b"".join(fragments).decode("utf-8", errors="replace")
+
+    def call(
+        self,
+        method: str,
+        params: dict | None = None,
+        *,
+        timeout: float = 10.0,
+        on_event=None,
+    ) -> dict:
+        if self._closed:
+            raise ConnectionError("CDP WebSocket is closed")
+        self._sock.settimeout(timeout)
+        req_id = self._next_id
+        self._next_id += 1
+        req = {"id": req_id, "method": method, "params": params or {}}
+        self._send_frame(0x1, json.dumps(req).encode("utf-8"))
+
+        while True:
+            raw = self._recv_message()
+            if raw is None:
+                raise ConnectionError("CDP WebSocket closed while waiting for response")
+            msg = json.loads(raw)
+            if "id" not in msg:
+                if on_event is not None:
+                    on_event(msg)
+                continue
+            if msg["id"] != req_id:
+                continue
+            if "error" in msg:
+                err = msg["error"]
+                raise RuntimeError(f"CDP {method} failed: {err.get('message', err)}")
+            return msg.get("result") or {}
+
+
+def _http_get_bytes(url: str, timeout: float = 5.0) -> bytes:
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        return resp.read()
+
+
+def _http_get_json(url: str, timeout: float = 3.0):
+    return json.loads(_http_get_bytes(url, timeout=timeout).decode("utf-8"))
+
+
+def discover_cdp_targets(cdp_url: str, timeout: float = 2.0) -> list[dict]:
+    base = cdp_url.rstrip("/")
+    data = _http_get_json(f"{base}/json/list", timeout=timeout)
+    if not isinstance(data, list):
+        return []
+    return [
+        t for t in data
+        if isinstance(t, dict)
+        and t.get("type") == "page"
+        and isinstance(t.get("webSocketDebuggerUrl"), str)
+    ]
+
+
+def extract_endpoints_from_env(env: dict[str, str]) -> tuple[str | None, str | None]:
+    pprof_url = None
+    cdp_url = None
+    pprof_addr = env.get("MOLOW_PPROF_ADDR", "").strip()
+    if pprof_addr and not pprof_addr.endswith(":0"):
+        pprof_url = pprof_addr if pprof_addr.startswith("http") else f"http://{pprof_addr}"
+    wv_args = env.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
+    for token in wv_args.split():
+        if token.startswith("--remote-debugging-port="):
+            port_txt = token.split("=", 1)[1].strip()
+            if port_txt.isdigit():
+                cdp_url = f"http://127.0.0.1:{port_txt}"
+    return pprof_url, cdp_url
+
+
+class RuntimeProbe:
+    """Collect Go runtime/pprof data and WebView2 DevTools metrics & snapshots."""
+
+    def __init__(
+        self,
+        *,
+        pprof_url: str | None = None,
+        cdp_url: str | None = None,
+        artifacts_dir: Path | None = None,
+        cpu_spike_pct: float | None = None,
+    ) -> None:
+        self.pprof_url = pprof_url.rstrip("/") if pprof_url else None
+        self.cdp_url = cdp_url.rstrip("/") if cdp_url else None
+        self.artifacts_dir = artifacts_dir
+        self.cpu_spike_pct = cpu_spike_pct
+        self._cdp_clients: dict[str, CDPClient] = {}
+        self._cdp_labels: dict[str, str] = {}
+        self.captures: list[dict] = []
+        self.errors: list[str] = []
+        self._go_spike_streak = 0
+        self._wv_spike_streak = 0
+        self._spike_captured = False
+
+    def update_endpoints(self, pprof_url: str | None, cdp_url: str | None) -> None:
+        if not self.pprof_url and pprof_url:
+            self.pprof_url = pprof_url.rstrip("/")
+        if not self.cdp_url and cdp_url:
+            self.cdp_url = cdp_url.rstrip("/")
+
+    def close(self) -> None:
+        for client in self._cdp_clients.values():
+            client.close()
+        self._cdp_clients.clear()
+
+    def _ensure_cdp_clients(self) -> None:
+        if not self.cdp_url:
+            return
+        try:
+            targets = discover_cdp_targets(self.cdp_url, timeout=1.5)
+        except Exception:
+            return
+
+        active_ids: set[str] = set()
+        for idx, target in enumerate(targets):
+            tid = str(target.get("id") or idx)
+            active_ids.add(tid)
+            if tid in self._cdp_clients:
+                continue
+            ws_url = target["webSocketDebuggerUrl"]
+            try:
+                client = CDPClient(ws_url, timeout=3.0)
+                client.call("Performance.enable", timeout=3.0)
+                self._cdp_clients[tid] = client
+                self._cdp_labels[tid] = self._target_label(target, idx)
+            except Exception as exc:
+                self.errors.append(f"cdp connect ({tid}): {exc}")
+
+        for tid in list(self._cdp_clients):
+            if tid not in active_ids:
+                self._cdp_clients.pop(tid).close()
+                self._cdp_labels.pop(tid, None)
+
+    @staticmethod
+    def _target_label(target: dict, idx: int) -> str:
+        url = str(target.get("url") or "")
+        if "window=effects" in url:
+            return "effects"
+        title = str(target.get("title") or "").strip().lower()
+        if "effect" in title:
+            return "effects"
+        return "main" if idx == 0 else f"page-{idx}"
+
+    def sample(self) -> tuple[dict | None, dict | None]:
+        go_runtime = self._sample_go_runtime()
+        webview_metrics = self._sample_webview_metrics()
+        return go_runtime, webview_metrics
+
+    def _sample_go_runtime(self) -> dict | None:
+        if not self.pprof_url:
+            return None
+        try:
+            raw = _http_get_json(f"{self.pprof_url}/debug/runtime", timeout=1.5)
+            return {
+                "goroutines": raw.get("goroutines"),
+                "heap_alloc_mb": to_mb(raw.get("heap_alloc_bytes")),
+                "heap_inuse_mb": to_mb(raw.get("heap_inuse_bytes")),
+                "stack_inuse_mb": to_mb(raw.get("stack_inuse_bytes")),
+                "num_gc": raw.get("num_gc"),
+                "pause_total_ms": round(raw["pause_total_ns"] / 1_000_000, 2)
+                if isinstance(raw.get("pause_total_ns"), int) else None,
+            }
+        except Exception as exc:
+            self.errors.append(f"go runtime poll: {exc}")
+            return None
+
+    def _sample_webview_metrics(self) -> dict | None:
+        if not self.cdp_url:
+            return None
+        self._ensure_cdp_clients()
+        if not self._cdp_clients:
+            return None
+
+        out: dict[str, dict] = {}
+        for tid, client in list(self._cdp_clients.items()):
+            label = self._cdp_labels.get(tid, tid)
+            try:
+                res = client.call("Performance.getMetrics", timeout=2.0)
+                metrics = {
+                    m["name"]: m["value"]
+                    for m in res.get("metrics", [])
+                    if isinstance(m, dict) and "name" in m and "value" in m
+                }
+                heap = client.call("Runtime.getHeapUsage", timeout=2.0)
+                out[label] = {
+                    "js_heap_used_mb": to_mb(heap.get("usedSize")),
+                    "js_heap_total_mb": to_mb(heap.get("totalSize")),
+                    "dom_nodes": int(metrics["Nodes"]) if "Nodes" in metrics else None,
+                    "js_event_listeners": int(metrics["JSEventListeners"]) if "JSEventListeners" in metrics else None,
+                    "script_duration_ms": round(metrics["ScriptDuration"] * 1000, 2) if "ScriptDuration" in metrics else None,
+                    "layout_duration_ms": round(metrics["LayoutDuration"] * 1000, 2) if "LayoutDuration" in metrics else None,
+                    "task_duration_ms": round(metrics["TaskDuration"] * 1000, 2) if "TaskDuration" in metrics else None,
+                }
+            except Exception as exc:
+                self.errors.append(f"cdp metrics ({label}): {exc}")
+                self._cdp_clients.pop(tid, None)
+                client.close()
+        return out or None
+
+    def _ensure_artifacts_dir(self) -> Path:
+        if self.artifacts_dir is None:
+            self.artifacts_dir = Path(f"molow-profile-artifacts-{now_dt().strftime('%Y%m%d-%H%M%S')}")
+        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        return self.artifacts_dir
+
+    def capture_go_pprof(self, kind: str, *, tag: str, seconds: int = 10) -> dict | None:
+        if not self.pprof_url:
+            return None
+        out_dir = self._ensure_artifacts_dir()
+        if kind == "profile":
+            url = f"{self.pprof_url}/debug/pprof/profile?seconds={seconds}"
+            timeout = seconds + 10.0
+            filename = f"go-cpu-{tag}.pb.gz"
+        elif kind == "heap":
+            url = f"{self.pprof_url}/debug/pprof/heap"
+            timeout = 10.0
+            filename = f"go-heap-{tag}.pb.gz"
+        else:
+            url = f"{self.pprof_url}/debug/pprof/{kind}"
+            timeout = 10.0
+            filename = f"go-{kind}-{tag}.pb.gz"
+
+        try:
+            data = _http_get_bytes(url, timeout=timeout)
+            path = out_dir / filename
+            path.write_bytes(data)
+            rec = {"kind": f"go-{kind}", "tag": tag, "path": str(path.resolve()), "bytes": len(data)}
+            self.captures.append(rec)
+            return rec
+        except Exception as exc:
+            self.errors.append(f"go pprof ({kind}): {exc}")
+            return None
+
+    def capture_webview_heap_snapshots(self, *, tag: str) -> list[dict]:
+        self._ensure_cdp_clients()
+        if not self._cdp_clients:
+            return []
+        out_dir = self._ensure_artifacts_dir()
+        saved: list[dict] = []
+        for tid, client in list(self._cdp_clients.items()):
+            label = self._cdp_labels.get(tid, tid)
+            chunks: list[str] = []
+
+            def on_ev(ev: dict) -> None:
+                if ev.get("method") == "HeapProfiler.addHeapSnapshotChunk":
+                    chunk = (ev.get("params") or {}).get("chunk")
+                    if isinstance(chunk, str):
+                        chunks.append(chunk)
+
+            try:
+                client.call("HeapProfiler.enable", timeout=5.0)
+                client.call(
+                    "HeapProfiler.takeHeapSnapshot",
+                    {"reportProgress": False},
+                    timeout=60.0,
+                    on_event=on_ev,
+                )
+                path = out_dir / f"webview-{label}-{tag}.heapsnapshot"
+                content = "".join(chunks)
+                path.write_text(content, encoding="utf-8")
+                rec = {
+                    "kind": "webview-heapsnapshot",
+                    "target": label,
+                    "tag": tag,
+                    "path": str(path.resolve()),
+                    "bytes": len(content.encode("utf-8")),
+                }
+                self.captures.append(rec)
+                saved.append(rec)
+            except Exception as exc:
+                self.errors.append(f"cdp heapsnapshot ({label}): {exc}")
+        return saved
+
+    def capture_webview_cpu_profile(self, *, tag: str, seconds: int = 5) -> list[dict]:
+        self._ensure_cdp_clients()
+        if not self._cdp_clients:
+            return []
+        out_dir = self._ensure_artifacts_dir()
+        started: list[tuple[str, CDPClient]] = []
+        for tid, client in list(self._cdp_clients.items()):
+            label = self._cdp_labels.get(tid, tid)
+            try:
+                client.call("Profiler.enable", timeout=5.0)
+                client.call("Profiler.start", timeout=5.0)
+                started.append((label, client))
+            except Exception as exc:
+                self.errors.append(f"cdp cpu start ({label}): {exc}")
+
+        if not started:
+            return []
+        time.sleep(max(1, seconds))
+
+        saved: list[dict] = []
+        for label, client in started:
+            try:
+                res = client.call("Profiler.stop", timeout=15.0)
+                profile = res.get("profile")
+                path = out_dir / f"webview-{label}-{tag}.cpuprofile"
+                payload = json.dumps(profile)
+                path.write_text(payload, encoding="utf-8")
+                rec = {
+                    "kind": "webview-cpuprofile",
+                    "target": label,
+                    "tag": tag,
+                    "path": str(path.resolve()),
+                    "bytes": len(payload.encode("utf-8")),
+                }
+                self.captures.append(rec)
+                saved.append(rec)
+            except Exception as exc:
+                self.errors.append(f"cdp cpu stop ({label}): {exc}")
+        return saved
+
+    def maybe_capture_on_spike(self, sample: dict) -> None:
+        if self.cpu_spike_pct is None or self._spike_captured:
+            return
+        go_cpu = 0.0
+        wv_cpu = 0.0
+        for proc in sample.get("processes", []):
+            cpu = proc.get("cpu_percent") or 0.0
+            if proc.get("is_target"):
+                go_cpu = max(go_cpu, cpu)
+            elif proc.get("role") == "renderer":
+                wv_cpu = max(wv_cpu, cpu)
+
+        self._go_spike_streak = self._go_spike_streak + 1 if go_cpu >= self.cpu_spike_pct else 0
+        self._wv_spike_streak = self._wv_spike_streak + 1 if wv_cpu >= self.cpu_spike_pct else 0
+
+        if self._go_spike_streak >= 3 and self.pprof_url:
+            self._spike_captured = True
+            self.capture_go_pprof("profile", tag="spike", seconds=5)
+        elif self._wv_spike_streak >= 3 and self.cdp_url:
+            self._spike_captured = True
+            self.capture_webview_cpu_profile(tag="spike", seconds=5)
 
 
 def build_summary(samples: list[dict]) -> dict:
@@ -1266,10 +1805,11 @@ def format_sample(sample: dict, footer: str | None = None) -> list[str]:
     extra_col = "PRIV MB" if IS_WINDOWS else "PSS MB"
     extra_key = "private_mb" if IS_WINDOWS else "pss_mb"
 
-    header = f"{'PID':>7} {'NAME':<22} {'ROLE':<14} {'CPU%':>6} {'RSS MB':>8} {extra_col:>8} {'THR':>4}"
+    header = f"{'PID':>7} {'NAME':<22} {'ROLE':<14} {'CPU%':>6} {'USS MB':>8} {'RSS MB':>8} {extra_col:>8} {'THR':>4}"
+    uss_part = f"  uss {totals['uss_mb']:.1f} MB" if totals.get("uss_mb") is not None else ""
     lines = [
         f"[{sample['elapsed_s']:6.1f}s] {sample['process_count']} procs  "
-        f"cpu {totals['cpu_percent']:.1f}%  rss {totals['rss_mb']:.1f} MB",
+        f"cpu {totals['cpu_percent']:.1f}%{uss_part}  rss {totals['rss_mb']:.1f} MB",
         header,
         "-" * len(header),
     ]
@@ -1278,9 +1818,25 @@ def format_sample(sample: dict, footer: str | None = None) -> list[str]:
         thr = str(rec["threads"]) if rec["threads"] is not None else "-"
         lines.append(
             f"{rec['pid']:>7} {rec['name'][:22]:<22} {role[:14]:<14} "
-            f"{fmt_num(rec['cpu_percent']):>6} {fmt_num(rec['rss_mb']):>8} "
+            f"{fmt_num(rec['cpu_percent']):>6} {fmt_num(rec.get('uss_mb')):>8} {fmt_num(rec['rss_mb']):>8} "
             f"{fmt_num(rec[extra_key]):>8} {thr:>4}"
         )
+    go_rt = sample.get("go_runtime")
+    if isinstance(go_rt, dict):
+        lines.append(
+            f"Go runtime: heap_alloc={fmt_num(go_rt.get('heap_alloc_mb'))} MB  "
+            f"heap_inuse={fmt_num(go_rt.get('heap_inuse_mb'))} MB  "
+            f"goroutines={go_rt.get('goroutines', '-')}  gc={go_rt.get('num_gc', '-')}"
+        )
+    wv = sample.get("webview_metrics")
+    if isinstance(wv, dict):
+        parts = []
+        for label, m in sorted(wv.items()):
+            parts.append(
+                f"{label}(js_heap={fmt_num(m.get('js_heap_used_mb'))}MB, "
+                f"nodes={m.get('dom_nodes', '-')}, listeners={m.get('js_event_listeners', '-')})"
+            )
+        lines.append("WebView CDP: " + "  ".join(parts))
     if footer:
         lines.append(footer)
     return lines
@@ -1348,13 +1904,18 @@ class LiveDisplay:
 
 def print_summary(summary: dict, sample_count: int, stream) -> None:
     totals = summary["totals"]
+    uss_txt = (
+        f", uss avg {totals['uss_avg_mb']:.1f} MB / max {totals['uss_max_mb']:.1f} MB"
+        if totals.get("uss_avg_mb") is not None
+        else ""
+    )
     print(
         f"\nSummary ({sample_count} samples, peak {totals['peak_procs']} procs): "
-        f"cpu avg {totals['cpu_avg']:.1f}% / max {totals['cpu_max']:.1f}%, "
-        f"rss avg {totals['rss_avg_mb']:.1f} MB / max {totals['rss_max_mb']:.1f} MB",
+        f"cpu avg {totals['cpu_avg']:.1f}% / max {totals['cpu_max']:.1f}%"
+        f"{uss_txt}, rss avg {totals['rss_avg_mb']:.1f} MB / max {totals['rss_max_mb']:.1f} MB",
         file=stream,
     )
-    header = f"{'PID':>7} {'NAME':<22} {'ROLE':<14} {'AVG%':>6} {'MAX%':>6} {'RSS MAX':>8} {'THR':>4}"
+    header = f"{'PID':>7} {'NAME':<22} {'ROLE':<14} {'AVG%':>6} {'MAX%':>6} {'USS MAX':>8} {'RSS MAX':>8} {'THR':>4}"
     print(header, file=stream)
     print("-" * len(header), file=stream)
     for item in summary["processes"]:
@@ -1362,7 +1923,7 @@ def print_summary(summary: dict, sample_count: int, stream) -> None:
         print(
             f"{item['pid']:>7} {item['name'][:22]:<22} {role[:14]:<14} "
             f"{item['cpu_avg']:>6.1f} {item['cpu_max']:>6.1f} "
-            f"{item['rss_max_mb']:>8.1f} {item['threads_max']:>4}",
+            f"{fmt_num(item.get('uss_max_mb')):>8} {item['rss_max_mb']:>8.1f} {item['threads_max']:>4}",
             file=stream,
         )
 
@@ -1404,6 +1965,11 @@ def print_profiler_summary(report: dict, stream) -> None:
         print("  Recent highlights:", file=stream)
         for ev in report["highlights"][-6:]:
             print(f"    [{ev['elapsed_s']:6.1f}s] {ev['level']:<5} {ev['msg']}", file=stream)
+    captures = report.get("captures") or []
+    if captures:
+        print(f"  Captures ({len(captures)}):", file=stream)
+        for cap in captures:
+            print(f"    {cap['kind']} ({cap.get('tag', '-')}) -> {cap['path']} ({cap['bytes']} bytes)", file=stream)
 
 
 def positive_float(value: str) -> float:
@@ -1463,6 +2029,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--detached", action="store_true", help="include detached WebView processes for this binary")
     parser.add_argument("--wait", action="store_true", help="wait for a --name process on startup and after restarts")
     parser.add_argument("--wait-timeout", type=positive_float, default=30.0, metavar="SEC", help="max seconds to wait (default: 30)")
+    parser.add_argument("--pprof-url", default=None, help="Go pprof base URL (e.g. http://127.0.0.1:6060; auto-discovered if omitted)")
+    parser.add_argument("--cdp-url", default=None, help="WebView2 CDP base URL (e.g. http://127.0.0.1:9222; auto-discovered if omitted)")
+    parser.add_argument("--artifacts-dir", type=Path, default=None, help="directory for pprof/heapsnapshot/cpuprofile captures")
+    parser.add_argument(
+        "--heap-snapshot",
+        choices=("none", "start", "end", "both"),
+        default="none",
+        help="capture WebView2 .heapsnapshot via CDP at start, end, or both",
+    )
+    parser.add_argument("--capture-go-heap", action="store_true", help="capture Go pprof heap profiles at start and end")
+    parser.add_argument("--capture-go-cpu", type=int, default=0, metavar="SEC", help="capture a Go pprof CPU profile for SEC seconds")
+    parser.add_argument("--capture-js-cpu", type=int, default=0, metavar="SEC", help="capture a WebView2 JS CPU profile for SEC seconds")
+    parser.add_argument("--cpu-spike-pct", type=positive_float, default=None, metavar="PCT", help="auto-capture CPU profile when Go or renderer exceeds PCT%% for 3 ticks")
     parser.add_argument("-nn", "--no-newline", action="store_true", help="update the live table in place instead of scrolling")
     parser.add_argument("-q", "--quiet", action="store_true", help="suppress live table and summary output")
     return parser.parse_args(argv)
@@ -1539,6 +2118,7 @@ def main(argv: list[str] | None = None) -> int:
 
     cache: dict[int, TrackedProcess] = {}
     profiler: ProfileTracker | None = None
+    target_env: dict[str, str] = {}
     if args.profiler:
         config_dir = (args.config_dir or default_config_dir()).expanduser().resolve()
         cache_dir = (args.cache_dir or default_cache_dir()).expanduser().resolve()
@@ -1562,6 +2142,30 @@ def main(argv: list[str] | None = None) -> int:
         )
         for warning in profiler.warnings:
             print(f"warning: {warning}", file=sys.stderr)
+    else:
+        try:
+            target_env = safe_call(lambda: psutil.Process(root_pid).environ(), {}) or {}
+        except psutil.NoSuchProcess:
+            target_env = {}
+
+    env_pprof, env_cdp = extract_endpoints_from_env(target_env)
+    root_ctime = safe_call(lambda: psutil.Process(root_pid).create_time())
+    hist_pprof, hist_cdp = (
+        _read_recent_profiler_endpoints(profiler.log_path, root_ctime)
+        if profiler is not None
+        else (None, None)
+    )
+    log_pprof, log_cdp = profiler.discovered_endpoints() if profiler is not None else (None, None)
+    artifacts_dir = args.artifacts_dir
+    if artifacts_dir is None and out_target and out_target != "-":
+        out_p = Path(out_target)
+        artifacts_dir = out_p.parent / f"{out_p.stem}-artifacts"
+    probe = RuntimeProbe(
+        pprof_url=args.pprof_url or log_pprof or hist_pprof or env_pprof,
+        cdp_url=args.cdp_url or log_cdp or hist_cdp or env_cdp,
+        artifacts_dir=artifacts_dir,
+        cpu_spike_pct=args.cpu_spike_pct,
+    )
 
     cores = psutil.cpu_count() or 1
     if not args.quiet:
@@ -1578,6 +2182,20 @@ def main(argv: list[str] | None = None) -> int:
                 f"Profiler: build={build_label}  config={profiler.config_dir}  log={profiler.log_path}",
                 file=stream,
             )
+        if probe.pprof_url or probe.cdp_url:
+            print(
+                f"Endpoints: pprof={probe.pprof_url or '-'}  cdp={probe.cdp_url or '-'}",
+                file=stream,
+            )
+
+    if args.capture_go_heap:
+        probe.capture_go_pprof("heap", tag="start")
+    if args.heap_snapshot in ("start", "both"):
+        probe.capture_webview_heap_snapshots(tag="start")
+    if args.capture_go_cpu > 0:
+        probe.capture_go_pprof("profile", tag="start", seconds=args.capture_go_cpu)
+    if args.capture_js_cpu > 0:
+        probe.capture_webview_cpu_profile(tag="start", seconds=args.capture_js_cpu)
 
     samples: list[dict] = []
     acc = SummaryAccumulator()
@@ -1643,9 +2261,15 @@ def main(argv: list[str] | None = None) -> int:
             records.sort(key=lambda r: (r["depth"], r["pid"]))
             total_cpu = round(sum(r["cpu_percent"] or 0.0 for r in records), 2)
             total_rss = round(sum(r["rss_mb"] or 0.0 for r in records), 2)
+            uss_vals = [r["uss_mb"] for r in records if r.get("uss_mb") is not None]
+            total_uss = round(sum(uss_vals), 2) if uss_vals else None
 
             if profiler is not None:
                 profiler.poll()
+                log_pprof, log_cdp = profiler.discovered_endpoints()
+                probe.update_endpoints(log_pprof, log_cdp)
+
+            go_runtime, webview_metrics = probe.sample()
 
             sample = {
                 "timestamp": now_iso(),
@@ -1653,12 +2277,18 @@ def main(argv: list[str] | None = None) -> int:
                 "process_count": len(records),
                 "totals": {
                     "cpu_percent": total_cpu,
+                    "uss_mb": total_uss,
                     "rss_mb": total_rss,
                     "threads": sum(r["threads"] or 0 for r in records),
                     "handles": sum(r["handles"] or 0 for r in records) if IS_WINDOWS else None,
                 },
                 "processes": records,
             }
+            if go_runtime is not None:
+                sample["go_runtime"] = go_runtime
+            if webview_metrics is not None:
+                sample["webview_metrics"] = webview_metrics
+            probe.maybe_capture_on_spike(sample)
             if started_at is None:
                 started_at = sample["timestamp"]
             acc.add(sample)
@@ -1669,8 +2299,19 @@ def main(argv: list[str] | None = None) -> int:
                 footer = profiler.status_line() if profiler is not None else None
                 display.draw(format_sample(sample, footer=footer))
 
+    if args.capture_go_heap:
+        probe.capture_go_pprof("heap", tag="end")
+    if args.heap_snapshot in ("end", "both"):
+        probe.capture_webview_heap_snapshots(tag="end")
+    probe.close()
+
     summary = acc.build()
     profiler_report = profiler.finalize() if profiler is not None else None
+    if profiler_report is not None:
+        profiler_report["endpoints"] = {"pprof_url": probe.pprof_url, "cdp_url": probe.cdp_url}
+        profiler_report["captures"] = probe.captures
+        if probe.errors:
+            profiler_report["probe_errors"] = probe.errors[-20:]
 
     if not args.quiet and acc.sample_count > 0:
         print_summary(summary, acc.sample_count, stream)
@@ -1702,6 +2343,10 @@ def main(argv: list[str] | None = None) -> int:
         }
         if profiler_report is not None:
             doc["profiler"] = profiler_report
+        elif probe.captures or probe.pprof_url or probe.cdp_url:
+            doc["endpoints"] = {"pprof_url": probe.pprof_url, "cdp_url": probe.cdp_url}
+            if probe.captures:
+                doc["captures"] = probe.captures
         payload = json.dumps(doc, indent=2)
         if out_target == "-":
             print(payload)

@@ -35,6 +35,7 @@ import { visualizerBars } from "./visualizer";
 const EVENT_SNAPSHOT = "molo:snapshot";
 const EVENT_FRAME = "molo:spectrum";
 const EVENT_EFFECT_METERS = "molo:effect-meters";
+const EVENT_SETTINGS = "molo:settings";
 
 /** Empty is the honest initial state: nothing is playing and nothing is queued. */
 export const EMPTY: Snapshot = {
@@ -110,6 +111,7 @@ export const appSettings = writable<AppSettings>({
     repeat: "off",
     playPauseStyle: "default",
     noLyricsBehaviour: "stay",
+    disableEffectsLevelMeter: false,
     lyrics: {
       providers: { petitlyrics: true, betterlyrics: true, lyricsplus: true, kugou: true, lrclib: true },
       petitLyricsDelayMs: 0,
@@ -326,6 +328,11 @@ export function connect(): () => void {
   const offMeters = Events.On(EVENT_EFFECT_METERS, (ev) => {
     applyEffectMeters(ev.data as EffectMetersInfo[]);
   });
+  const offSettings = Events.On(EVENT_SETTINGS, (ev) => {
+    if (ev.data) {
+      appSettings.set(ev.data as AppSettings);
+    }
+  });
 
   // The first read catches up on anything the engine did before the listener
   // was attached.
@@ -366,6 +373,7 @@ export function connect(): () => void {
   return () => {
     offSnapshot();
     offMeters();
+    offSettings();
   };
 }
 

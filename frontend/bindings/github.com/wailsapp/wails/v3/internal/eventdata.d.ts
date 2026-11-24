@@ -15,6 +15,7 @@ declare module "@wailsio/runtime" {
             "molo:effect-meters": backend$0.EffectMetersInfo[] | null;
             "molo:library": backend$0.LibraryProgress;
             "molo:lyrics": string;
+            "molo:settings": backend$0.AppSettings;
             "molo:snapshot": backend$0.Snapshot;
             "molo:spectrum": number[] | null;
         }

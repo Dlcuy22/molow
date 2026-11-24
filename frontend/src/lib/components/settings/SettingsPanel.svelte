@@ -211,6 +211,13 @@
     });
   }
 
+  function setDisableEffectsLevelMeter(disabled: boolean) {
+    commands.setAppSettings({
+      ...$appSettings,
+      playback: { ...$appSettings.playback, disableEffectsLevelMeter: disabled },
+    });
+  }
+
   // setLyrics updates one field of the lyric-provider group: a toggle, the
   // save location, or the YouTube Music cache folder.
   function setLyrics(patch: Partial<LyricsSettings>) {
@@ -533,6 +540,23 @@
                         { value: "center", label: "Center" },
                       ]}
                       onchange={(v) => setNoLyricsBehaviour(v)}
+                    />
+                  {/snippet}
+                </SettingRow>
+              </div>
+            </SettingGroup>
+
+            <SettingGroup label="Effects" description={null}>
+              <div class="divide-y divide-line">
+                <SettingRow
+                  label="Disable level meter in Effects window"
+                  description={null}
+                >
+                  {#snippet control()}
+                    <Switch
+                      checked={$appSettings.playback.disableEffectsLevelMeter}
+                      label="Disable level meter in Effects window"
+                      onchange={(on) => setDisableEffectsLevelMeter(on)}
                     />
                   {/snippet}
                 </SettingRow>

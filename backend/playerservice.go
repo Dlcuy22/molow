@@ -42,6 +42,9 @@ const (
 	// eventEffectMeters carries the lean effect meters on their own faster tick,
 	// so a gain-reduction needle moves without the full chain snapshot.
 	eventEffectMeters = "molo:effect-meters"
+	// eventSettings broadcasts saved AppSettings so secondary windows mirror
+	// setting changes live.
+	eventSettings = "molo:settings"
 )
 
 // positionInterval is the snapshot refresh period. The engine reports discrete
@@ -469,6 +472,12 @@ func (s *PlayerService) pumpEffectMeters() {
 // draws the meters.
 func (s *PlayerService) publishEffectMeters() {
 	if !s.effectWindowPresent() {
+		return
+	}
+	s.appSettingsMu.Lock()
+	disabled := s.appSettings.Playback.DisableEffectsLevelMeter
+	s.appSettingsMu.Unlock()
+	if disabled {
 		return
 	}
 	fx, err := s.effects()

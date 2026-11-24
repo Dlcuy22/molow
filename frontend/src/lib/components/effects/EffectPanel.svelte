@@ -1,5 +1,6 @@
 <script lang="ts">
   import { effectiveReadings, type EffectStage } from "../../effect-types";
+  import { appSettings } from "../../store";
   import { commonParam, effectGroups, isKnobBank, numericValue, paramValue } from "./effects-helpers";
   import DynamicsGraph from "./DynamicsGraph.svelte";
   import EqualizerPanel from "./EqualizerPanel.svelte";
@@ -101,9 +102,11 @@
       {/if}
     </div>
 
-    <div class="flex flex-col gap-2 rounded-[4px] bg-bg/40 p-2">
-      <Readings {readings} meters={stage.meters} {live} />
-    </div>
+    {#if !$appSettings.playback.disableEffectsLevelMeter}
+      <div class="flex flex-col gap-2 rounded-[4px] bg-bg/40 p-2">
+        <Readings {readings} meters={stage.meters} {live} />
+      </div>
+    {/if}
 
     <div class="grid grid-cols-2 gap-x-3 gap-y-2">
       {#each gains as gain (gain.key)}

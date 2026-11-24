@@ -24,6 +24,11 @@ export const MoloLibrary = "molo:library";
 export const MoloLyrics = "molo:lyrics";
 
 /**
+ * Name of the custom event "molo:settings".
+ */
+export const MoloSettings = "molo:settings";
+
+/**
  * Name of the custom event "molo:snapshot".
  */
 export const MoloSnapshot = "molo:snapshot";

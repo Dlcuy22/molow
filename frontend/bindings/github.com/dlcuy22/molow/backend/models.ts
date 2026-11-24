@@ -291,6 +291,7 @@ export interface PlaybackSettings {
     "repeat": string;
     "playPauseStyle": string;
     "noLyricsBehaviour": string;
+    "disableEffectsLevelMeter": boolean;
     "lyrics": LyricsSettings;
 }
 

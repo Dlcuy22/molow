@@ -50,3 +50,31 @@ func TestEffectMetersDefaultKeepsFeeding(t *testing.T) {
 		t.Fatal("no application must keep the meter pump feeding")
 	}
 }
+
+// TestEffectMetersSettingStopsTheEngineRead pins the playback setting gate:
+// when DisableEffectsLevelMeter is enabled, the pump skips engine meter reads
+// even while the effects window is open.
+func TestEffectMetersSettingStopsTheEngineRead(t *testing.T) {
+	svc := spectrumService(t)
+	p := &meteringPlayer{fakePlayer: newFakePlayer()}
+	svc.player = p
+	svc.effectWindowPresent = func() bool { return true }
+
+	svc.appSettingsMu.Lock()
+	svc.appSettings.Playback.DisableEffectsLevelMeter = true
+	svc.appSettingsMu.Unlock()
+
+	svc.publishEffectMeters()
+	if p.reads != 0 {
+		t.Fatalf("disabled level meter read the engine %d times, want 0", p.reads)
+	}
+
+	svc.appSettingsMu.Lock()
+	svc.appSettings.Playback.DisableEffectsLevelMeter = false
+	svc.appSettingsMu.Unlock()
+
+	svc.publishEffectMeters()
+	if p.reads == 0 {
+		t.Fatal("re-enabled level meter never read the engine")
+	}
+}

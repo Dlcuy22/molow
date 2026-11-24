@@ -58,11 +58,12 @@ type AppSettings struct {
 // line-synced across the board, so there is no order to move), where a fetched
 // sheet is written, and the folder the YouTube Music sidecar files live in.
 type PlaybackSettings struct {
-	Crossfade         CrossfadeSettings `json:"crossfade"`
-	Repeat            string            `json:"repeat"`
-	PlayPauseStyle    string            `json:"playPauseStyle"`
-	NoLyricsBehaviour string            `json:"noLyricsBehaviour"`
-	Lyrics            LyricsSettings    `json:"lyrics"`
+	Crossfade                CrossfadeSettings `json:"crossfade"`
+	Repeat                   string            `json:"repeat"`
+	PlayPauseStyle           string            `json:"playPauseStyle"`
+	NoLyricsBehaviour        string            `json:"noLyricsBehaviour"`
+	DisableEffectsLevelMeter bool              `json:"disableEffectsLevelMeter"`
+	Lyrics                   LyricsSettings    `json:"lyrics"`
 }
 
 // LyricsSettings carries the lyric-provider configuration. Providers maps the
@@ -154,10 +155,11 @@ func defaultAppSettings() AppSettings {
 				DurationMs:    molo.DefaultCrossfadeMs,
 				SkipSameAlbum: true,
 			},
-			Repeat:            "off",
-			PlayPauseStyle:    "default",
-			NoLyricsBehaviour: "stay",
-			Lyrics:            defaultLyricsSettings(),
+			Repeat:                   "off",
+			PlayPauseStyle:           "default",
+			NoLyricsBehaviour:        "stay",
+			DisableEffectsLevelMeter: false,
+			Lyrics:                   defaultLyricsSettings(),
 		},
 		Stream: StreamSettings{
 			TrackCacheMaxMB: defaultTrackCacheMaxMB,
@@ -587,6 +589,7 @@ func (s *PlayerService) SetAppSettings(next AppSettings) (AppSettings, error) {
 	// do, so a toggle, a level or a new path takes effect on the save itself.
 	s.applyLogSettings()
 	s.applyTrackCacheSettings()
+	s.emit(eventSettings, next)
 
 	if err := saveAppSettings(s.log, next); err != nil {
 		s.log.Warn("settings: could not persist", "error", err)

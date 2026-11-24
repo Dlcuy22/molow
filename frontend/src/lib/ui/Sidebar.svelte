@@ -171,7 +171,6 @@
   </div>
 
   <div class="px-3 pb-3">
-    <div class="mx-1 mb-2 h-px bg-line"></div>
     <div class="flex flex-col gap-1">
       <button
         class="flex h-8 w-full items-center gap-4 rounded-md px-2.5 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"

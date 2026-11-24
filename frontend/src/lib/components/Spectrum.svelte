@@ -53,6 +53,14 @@
     // force a reflow 30 times a second interleaved with Svelte's DOM writes.
     let cssW = 0;
     let cssH = 0;
+    let raf = 0;
+    let lastStats = 0;
+    const schedule = () => {
+      if (raf === 0) {
+        raf = requestAnimationFrame(draw);
+      }
+    };
+
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
@@ -62,13 +70,16 @@
       canvas.height = Math.max(1, Math.round(rect.height * dpr));
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       drawnSeq = -1; // a new size must redraw even with no new frame
+      if (latest !== null) {
+        schedule();
+      }
     };
 
     // Frames arrive over the bridge at up to 60 Hz on the IPC task queue, at
     // arbitrary phase to the display. Drawing each arrival immediately would
     // judder whenever events bunch up, so arrivals only publish the latest
-    // frame and one rAF loop below draws it at most once per vsync. A hidden
-    // tab draws nothing at all: rAF does not fire there.
+    // frame and schedule one rAF callback to paint on the next vsync. When
+    // paused or silent, no rAF loop spins in the background.
     let latest: Float64Array | null = null;
     let seq = 0;
     let drawnSeq = -1;
@@ -82,50 +93,48 @@
     // back.
     let renders = 0;
     let rafs = 0;
-    let arrivals = 0;
     let gapSum = 0;
     let gapCount = 0;
     let lastArrival = 0;
 
     const unsubFrames = onSpectrum((bands) => {
-      const now = performance.now();
-      if (lastArrival > 0) {
-        gapSum += now - lastArrival;
-        gapCount++;
+      if (showDebug) {
+        const now = performance.now();
+        if (lastArrival > 0) {
+          gapSum += now - lastArrival;
+          gapCount++;
+        }
+        lastArrival = now;
       }
-      lastArrival = now;
-      arrivals++;
       latest = bands;
       seq++;
+      schedule();
     });
 
-    resize();
-    const observer = new ResizeObserver(resize);
-    observer.observe(canvas);
-
-    let raf = 0;
-    let lastStats = 0;
     const draw = () => {
-      raf = requestAnimationFrame(draw);
-
-      const now = performance.now();
-      rafs++;
-      if (now - lastStats >= 1000) {
-        rafFps = Math.round((rafs * 1000) / (now - lastStats));
-        drawFps = Math.round((renders * 1000) / (now - lastStats));
-        // Retain the last measured gap when nothing arrived this second
-        // (paused, stopped), so the number stays meaningful instead of
-        // collapsing to zero.
-        if (gapCount > 0) {
-          gapMs = Math.round(gapSum / gapCount);
+      raf = 0;
+      if (showDebug) {
+        schedule();
+        const now = performance.now();
+        rafs++;
+        if (lastStats === 0) {
+          lastStats = now;
+        } else if (now - lastStats >= 1000) {
+          rafFps = Math.round((rafs * 1000) / (now - lastStats));
+          drawFps = Math.round((renders * 1000) / (now - lastStats));
+          // Retain the last measured gap when nothing arrived this second
+          // (paused, stopped), so the number stays meaningful instead of
+          // collapsing to zero.
+          if (gapCount > 0) {
+            gapMs = Math.round(gapSum / gapCount);
+          }
+          measured = true;
+          renders = 0;
+          rafs = 0;
+          gapSum = 0;
+          gapCount = 0;
+          lastStats = now;
         }
-        measured = true;
-        renders = 0;
-        rafs = 0;
-        arrivals = 0;
-        gapSum = 0;
-        gapCount = 0;
-        lastStats = now;
       }
 
       // The backend suppresses repeats (a held pause frame, drained silence),
@@ -135,7 +144,9 @@
         return;
       }
       drawnSeq = seq;
-      renders++;
+      if (showDebug) {
+        renders++;
+      }
 
       const bands = latest;
       const w = cssW;
@@ -159,29 +170,33 @@
       ctx.lineJoin = "round";
       ctx.lineWidth = width;
       ctx.strokeStyle = barColor;
+      ctx.globalAlpha = opacity;
 
       // The 200px band is the drawing area. A bar is at least the line width
       // tall so a silent band still draws a visible floor dot rather than
       // vanishing, which is what makes an idle player look running.
       const base = width / 2;
 
+      ctx.beginPath();
       for (let i = 0; i < n; i++) {
         const level = Math.min(1, Math.max(0, bands[i]));
         const x = slot * (i + 0.5);
         const barH = Math.max(width, level * (h - width));
         const y = h - base - barH + width / 2;
 
-        // The bar is one flat tone at the caller's opacity: the graph reads as
-        // a single signal, and the level is carried by height alone.
-        ctx.globalAlpha = opacity;
-        ctx.beginPath();
         ctx.moveTo(x, h - base);
         ctx.lineTo(x, y);
-        ctx.stroke();
       }
+      ctx.stroke();
       ctx.globalAlpha = 1;
     };
-    raf = requestAnimationFrame(draw);
+
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvas);
+    if (showDebug) {
+      schedule();
+    }
 
     // The D key toggles the overlay, which stays out of the way of every
     // other key the app uses. A caller that did not ask for the overlay keeps
@@ -189,6 +204,15 @@
     const onKey = (e: KeyboardEvent) => {
       if (debug && (e.key === "d" || e.key === "D")) {
         showDebug = !showDebug;
+        if (showDebug) {
+          lastStats = 0;
+          lastArrival = 0;
+          renders = 0;
+          rafs = 0;
+          gapSum = 0;
+          gapCount = 0;
+          schedule();
+        }
       }
     };
     window.addEventListener("keydown", onKey);

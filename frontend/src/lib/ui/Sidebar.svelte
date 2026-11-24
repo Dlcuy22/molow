@@ -173,9 +173,10 @@
   <div class="px-3 pb-3">
     <div class="flex flex-col gap-1">
       <button
-        class="flex h-8 w-full items-center gap-4 rounded-md px-2.5 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
+        class="flex h-8 w-full items-center gap-4 rounded-md text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
         class:justify-center={collapsed}
         class:px-2={collapsed}
+        class:px-2.5={!collapsed}
         title="Effects"
         aria-label="Effects"
         onclick={oneffects}
@@ -184,10 +185,12 @@
         {#if !collapsed}<span>Effects</span>{/if}
       </button>
       <button
-        class="flex h-8 w-full items-center gap-4 rounded-md px-2.5 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
+        class="flex h-8 w-full items-center gap-4 rounded-md text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
         class:justify-center={collapsed}
         class:px-2={collapsed}
+        class:px-2.5={!collapsed}
         title="Settings"
+        aria-label="Settings"
         onclick={onsettings}
       >
         <GearSix size="18" />

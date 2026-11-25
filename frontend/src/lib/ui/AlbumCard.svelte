@@ -11,7 +11,7 @@
     onplay = (_a: Album) => {},
   }: {
     album: Album;
-    variant?: "home" | "library";
+    variant?: "home" | "library" | "artist";
     onopen?: (a: Album) => void;
     onplay?: (a: Album) => void;
   } = $props();
@@ -20,6 +20,9 @@
   const meta = $derived.by(() => {
     if (home) {
       return album.artist;
+    }
+    if (variant === "artist") {
+      return album.year > 0 ? String(album.year) : "";
     }
     if (album.songCount > 0) {
       return `Album · ${album.songCount} ${album.songCount === 1 ? "song" : "songs"}`;
@@ -70,12 +73,14 @@
     >
       {album.name}
     </button>
-    <p
-      class="truncate text-muted"
-      class:text-[12px]={home}
-      class:text-[11px]={!home}
-    >
-      {meta}
-    </p>
+    {#if meta}
+      <p
+        class="truncate text-muted"
+        class:text-[12px]={home}
+        class:text-[11px]={!home}
+      >
+        {meta}
+      </p>
+    {/if}
   </div>
 </div>

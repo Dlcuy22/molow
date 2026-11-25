@@ -305,7 +305,7 @@
           {#each artist.albums as album (album.id)}
             <AlbumCard
               {album}
-              variant="library"
+              variant="artist"
               onopen={onopenAlbum}
               onplay={onplayAlbum}
             />
@@ -318,7 +318,7 @@
           {#each artist.singles as single (single.id)}
             <AlbumCard
               album={single}
-              variant="library"
+              variant="artist"
               onopen={onopenAlbum}
               onplay={onplayAlbum}
             />

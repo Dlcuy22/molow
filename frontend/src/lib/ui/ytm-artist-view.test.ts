@@ -126,6 +126,9 @@ describe("YtmArtistView", () => {
     // Shelves
     expect(body).toContain("Top albums");
     expect(body).toContain("Life Size Note");
+    expect(body).toContain("2024");
+    expect(body).not.toContain("Album · 10 songs");
+    expect(body).toContain("scroll-none");
     expect(body).toContain("Singles");
     expect(body).toContain("Torinoko City");
     expect(body).toContain("Videos");

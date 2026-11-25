@@ -1,5 +1,6 @@
 <script lang="ts">
   import ArrowLeft from "phosphor-svelte/lib/ArrowLeft";
+  import CaretLeft from "phosphor-svelte/lib/CaretLeft";
   import Heart from "phosphor-svelte/lib/Heart";
   import Play from "phosphor-svelte/lib/Play";
   import Shuffle from "phosphor-svelte/lib/Shuffle";
@@ -130,13 +131,13 @@
     </div>
   {:else if artist}
     <!-- Hero banner with bottom blur + gradient feathering into bg-dark. -->
-    <header class="relative h-[280px] w-full shrink-0 overflow-hidden bg-bg">
+    <header class="relative min-h-[240px] w-full shrink-0 overflow-hidden bg-bg">
       {#if bannerSrc && !bannerFailed}
         <img
           src={bannerSrc}
           alt=""
           draggable="false"
-          class="absolute inset-0 size-full object-cover object-center"
+          class="absolute inset-0 size-full scale-105 object-cover object-center blur-md"
           onerror={() => {
             bannerFailed = true;
           }}
@@ -148,71 +149,101 @@
         ></div>
       {/if}
 
-      <!-- Bottom blur strip masked upward so the banner edge melts into bg-dark. -->
       <div
         class="pointer-events-none absolute inset-x-0 bottom-0 h-32 backdrop-blur-md"
         style="mask-image: linear-gradient(to top, black 0%, black 35%, transparent 100%); -webkit-mask-image: linear-gradient(to top, black 0%, black 35%, transparent 100%);"
         aria-hidden="true"
       ></div>
       <div
-        class="pointer-events-none absolute inset-0 bg-gradient-to-t from-bg-dark via-bg-dark/65 to-bg-dark/20"
+        class="pointer-events-none absolute inset-0 bg-gradient-to-t from-bg-dark via-bg-dark/70 to-bg-dark/30"
         aria-hidden="true"
       ></div>
 
-      <div class="relative z-10 flex h-full flex-col justify-between pl-[50px] pr-9 pb-5 pt-6">
+      <div class="relative z-10 flex h-full min-h-[240px] flex-col justify-between gap-6 pl-[50px] pr-9 pb-6 pt-6">
         <div>
           <button
             type="button"
-            class="inline-flex h-8 items-center gap-2 rounded-md bg-bg-dark/60 px-2.5 text-[12px] font-medium text-fg transition-colors hover:bg-bg-dark/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+            class="grid size-9 cursor-pointer place-items-center rounded-full bg-bg-dark/60 text-fg transition-colors hover:bg-bg-dark/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+            aria-label={backLabel}
+            title={backLabel}
             onclick={onback}
           >
-            <ArrowLeft size="15" weight="bold" />
-            <span>{backLabel}</span>
+            <CaretLeft size="16" weight="bold" />
           </button>
         </div>
 
-        <div class="min-w-0">
-          <h1
-            class="truncate font-display text-[40px] font-bold leading-none tracking-tight text-fg"
-            title={artist.name}
-          >
-            {artist.name}
-          </h1>
-          {#if artist.subscriberText}
-            <p class="mt-2 text-[12px] text-muted">
-              {artist.subscriberText}
-            </p>
-          {/if}
+        <div class="flex flex-wrap items-center justify-between gap-6">
+          <div class="flex min-w-0 flex-1 items-center gap-5">
+            <div class="size-24 shrink-0 overflow-hidden rounded-full bg-surface sm:size-28">
+              <Cover
+                id={artist.coverId}
+                src={artist.bannerUrl ?? ""}
+                alt={artist.name}
+                fill
+                radius={9999}
+                class="size-full"
+              />
+            </div>
+
+            <div class="min-w-0">
+              <p class="text-[12px] font-medium text-muted">Artist</p>
+              <h1
+                class="mt-1 truncate font-display text-[34px] font-bold leading-none tracking-tight text-fg sm:text-[42px]"
+                title={artist.name}
+              >
+                {artist.name}
+              </h1>
+              {#if artist.subscriberText}
+                <p class="mt-2 text-[12px] text-muted">
+                  {artist.subscriberText}
+                </p>
+              {/if}
+            </div>
+          </div>
+
+          <div class="flex shrink-0 flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              class="inline-flex h-10 cursor-pointer items-center gap-2 rounded-full bg-fg px-5 text-[13px] font-semibold text-bg-dark transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:cursor-default disabled:bg-disabled disabled:opacity-60"
+              disabled={topSongs.length === 0}
+              onclick={() => {
+                if (topSongs.length > 0) {
+                  onplayTrack(topSongs[0], 0, topSongs);
+                }
+              }}
+            >
+              <Play size="15" weight="fill" />
+              <span>Play</span>
+            </button>
+
+            <button
+              type="button"
+              class="inline-flex h-10 cursor-pointer items-center gap-2 rounded-full border border-line bg-bg-dark/60 px-4 text-[13px] font-medium text-fg transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:cursor-default disabled:opacity-50"
+              disabled={!shuffleEnabled}
+              onclick={onshuffle}
+            >
+              <Shuffle size="15" weight="bold" />
+              <span>Shuffle</span>
+            </button>
+
+            {#if showSubscribe}
+              <button
+                type="button"
+                class="inline-flex h-10 cursor-pointer items-center rounded-full border px-4 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus {isSubscribed
+                  ? 'border-line bg-surface text-fg hover:bg-hover'
+                  : 'border-line bg-bg-dark/60 text-fg hover:bg-hover'}"
+                aria-pressed={isSubscribed}
+                onclick={() => onsubscribe(!isSubscribed)}
+              >
+                {isSubscribed ? "Subscribed" : "Subscribe"}
+              </button>
+            {/if}
+          </div>
         </div>
       </div>
     </header>
 
     <div class="flex flex-col gap-9 pl-[50px] pr-9 pt-4">
-      <!-- Action bar: rectangular Shuffle button + optional Subscribe button. -->
-      <div class="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          class="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md bg-fg px-4 text-[12px] font-semibold text-bg-dark transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:cursor-default disabled:bg-disabled disabled:opacity-60"
-          disabled={!shuffleEnabled}
-          onclick={onshuffle}
-        >
-          <Shuffle size="16" weight="bold" />
-          <span>Shuffle</span>
-        </button>
-
-        {#if showSubscribe}
-          <button
-            type="button"
-            class="inline-flex h-9 cursor-pointer items-center rounded-md border px-4 text-[12px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus {isSubscribed
-              ? 'border-line bg-surface text-fg hover:bg-hover'
-              : 'border-line bg-transparent text-fg hover:bg-hover'}"
-            aria-pressed={isSubscribed}
-            onclick={() => onsubscribe(!isSubscribed)}
-          >
-            {isSubscribed ? "Subscribed" : "Subscribe"}
-          </button>
-        {/if}
-      </div>
 
       {#if topSongs.length > 0}
         <section class="flex flex-col gap-3" aria-label="Top songs">

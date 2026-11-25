@@ -112,8 +112,10 @@ describe("YtmArtistView", () => {
     });
 
     expect(body).toContain("https://example.com/banner.jpg");
+    expect(body).toContain("Artist");
     expect(body).toContain("40mP");
     expect(body).toContain("1.43M subscribers");
+    expect(body).toContain("Play");
     expect(body).toContain("Shuffle");
     expect(body).not.toContain(">Subscribe<");
 

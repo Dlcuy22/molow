@@ -95,16 +95,13 @@
     }
 
     const styles = getComputedStyle(document.documentElement);
-    const token = (name: string, fallback: string) =>
-      styles.getPropertyValue(name).trim() || fallback;
-    // Colours come from the design tokens so the graph cannot drift from the
-    // palette; the literals only cover an empty token.
+    const token = (name: string) => styles.getPropertyValue(name).trim();
     const colors = {
-      fg: token("--color-fg", "#f2f0ea"),
-      muted: token("--color-muted", "#b0aca2"),
-      accent: token("--color-accent", "#3584e4"),
-      line: token("--color-line", "#454548"),
-      danger: token("--color-danger", "#c44536"),
+      fg: token("--color-fg"),
+      muted: token("--color-muted"),
+      accent: token("--color-accent"),
+      line: token("--color-line"),
+      danger: token("--color-danger"),
     };
 
     const rings = new Map<string, Ring>();

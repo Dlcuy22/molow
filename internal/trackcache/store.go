@@ -22,9 +22,8 @@ const (
 	// DefaultMaxBytes is the default disk budget for cached tracks (512 MiB).
 	DefaultMaxBytes int64 = 512 << 20
 
-	fallbackSubdir = "molow-tracks"
-	trackExt       = ".webm"
-	mtimeThrottle  = time.Minute
+	trackExt      = ".webm"
+	mtimeThrottle = time.Minute
 )
 
 // Stats reports the current size and capacity of a [Store].
@@ -58,28 +57,19 @@ type Store struct {
 	now func() time.Time
 }
 
-// DefaultDir returns the platform track cache directory, creating it on first
-// use. Every platform uses <UserCacheDir>/molow/tracks and falls back to the
-// temp directory only when the cache root is unavailable.
+// DefaultDir returns the platform track cache directory
+// (<UserCacheDir>/molow/tracks), creating it on first use.
 func DefaultDir() (string, error) {
-	dir := fallbackDir()
-	if base, err := os.UserCacheDir(); err == nil && base != "" {
-		dir = filepath.Join(base, "molow", "tracks")
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
 	}
+	dir := filepath.Join(base, "molow", "tracks")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
 
 	return dir, nil
-}
-
-func fallbackDir() string {
-	base := os.TempDir()
-	if base == "" {
-		base = "."
-	}
-
-	return filepath.Join(base, fallbackSubdir)
 }
 
 // Open returns a [Store] rooted at dir with budget maxBytes, creating dir when

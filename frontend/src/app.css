@@ -285,10 +285,10 @@ body {
  * instead of a column. Each cell is a fixed knob width, so columns line up
  * across rows; --knob-cols is derived from the panel width, which is where the
  * effect window's size lands once the 224px chain sidebar and the padding are
- * taken off. The fallback keeps a bank readable if the property is ever absent. */
+ * taken off. */
 .knob-grid {
   display: grid;
-  grid-template-columns: repeat(var(--knob-cols, 10), 4rem);
+  grid-template-columns: repeat(var(--knob-cols), 4rem);
   gap: 0.5rem 0.75rem;
 }
 

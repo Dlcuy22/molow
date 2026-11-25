@@ -27,34 +27,27 @@ const (
 	staleTempMaxAge = 5 * time.Minute
 )
 
-// DefaultDir returns the platform artwork cache directory, creating it on first
-// use. Every platform uses <UserCacheDir>/molow/art and falls back to the temp
-// directory only when the cache root is unavailable.
+// DefaultDir returns the platform artwork cache directory
+// (<UserCacheDir>/molow/art), creating it on first use.
 func DefaultDir() (string, error) {
-	dir := fallbackDir()
-	if base, err := os.UserCacheDir(); err == nil && base != "" {
-		dir = filepath.Join(base, "molow", "art")
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
 	}
+	dir := filepath.Join(base, "molow", "art")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
 	if runtime.GOOS == "windows" {
-		legacy := fallbackDir()
-		if !strings.EqualFold(filepath.Clean(legacy), filepath.Clean(dir)) {
-			migrateDir(legacy, dir)
+		if tmp := os.TempDir(); tmp != "" {
+			legacy := filepath.Join(tmp, subdir)
+			if !strings.EqualFold(filepath.Clean(legacy), filepath.Clean(dir)) {
+				migrateDir(legacy, dir)
+			}
 		}
 	}
 
 	return dir, nil
-}
-
-func fallbackDir() string {
-	base := os.TempDir()
-	if base == "" {
-		base = "."
-	}
-
-	return filepath.Join(base, subdir)
 }
 
 // migrateDir moves cached .jpg and .png files from a legacy temp directory into

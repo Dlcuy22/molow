@@ -41,12 +41,7 @@ type Transform interface {
 // power of two.
 func NewTransform(size int) (Transform, error) {
 	if useSIMD() {
-		if a, err := newSIMDAnalyzer(size); err == nil {
-			return a, nil
-		}
-		// A size the plan rejects (it should not, given the same power-of-two
-		// contract) falls through to the scalar path rather than failing the
-		// display.
+		return newSIMDAnalyzer(size)
 	}
 
 	return NewAnalyzer(size)

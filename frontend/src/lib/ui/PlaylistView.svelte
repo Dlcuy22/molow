@@ -76,7 +76,7 @@
   const activeSortLabel = $derived(
     sortLabel(
       sortBy,
-      PLAYLIST_SORTS.find((opt) => opt.id === sortBy)?.label ?? "Playlist order",
+      PLAYLIST_SORTS.find((opt) => opt.id === sortBy)!.label,
     ),
   );
   const sortedTracks = $derived(sortPlaylistTracks(tracks, sortBy));

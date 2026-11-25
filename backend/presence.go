@@ -400,8 +400,6 @@ func (s *PlayerService) resolvePresenceArt(snap Snapshot) {
 				snap.Album = t.Album
 			}
 			small = s.ytmProv.artistArtFor(ctx, snap.Path)
-		} else {
-			large = s.coverURL(ctx, snap)
 		}
 		if large == "" {
 			large = ytmFallbackThumbURL(snap.Path)

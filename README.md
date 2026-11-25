@@ -47,11 +47,11 @@ perfect, and I am working on it.
 ## Screenshots
 
 <p align="center">
-  <img src=".github/assets/screenshot-2.webp" width="880" alt="Now playing view with cover art, controls, synced lyrics and the visualizer">
+  <img src=".github/assets/screenshot-1.webp" width="880" alt="Now playing view with cover art, controls, synced lyrics and the visualizer">
 </p>
 
 <p align="center">
-  <img src=".github/assets/screenshot-1.webp" width="880" alt="Library view with the album grid, filter tabs and the player bar">
+  <img src=".github/assets/screenshot-2.webp" width="880" alt="Library view with the album grid, filter tabs and the player bar">
 </p>
 
 ## Codec and container support
@@ -62,9 +62,9 @@ perfect, and I am working on it.
 | FLAC | Yes | Lossless, 16 and 24-bit |
 | WAV | Yes | Integer PCM 8/16/24/32-bit and IEEE float 32/64-bit |
 | Opus (`.opus`, `.ogg`) | Yes | Pure Go; the optional `libopusfile` path seeks faster |
-| Ogg Vorbis | No | Only Ogg Opus is read |
 | AAC (`.aac`) | Yes | AAC-LC in ADTS |
 | M4A / MP4 | Yes | AAC-LC only |
+| Ogg Vorbis | No | Only Ogg Opus is read |
 | ALAC | No | Not implemented |
 | WebM / Matroska | Yes | Opus audio only |
 | AIFF | No | Not implemented |

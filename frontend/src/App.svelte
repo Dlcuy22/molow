@@ -815,14 +815,25 @@
       active={tab}
       libraries={$libraries.map((l) => ({
         id: l.id,
+        kind: l.kind,
         name: l.name,
         description: l.description,
         coverId: l.coverId || l.logoCovers[0] || "",
+        trackCount: l.trackCount,
       }))}
       activeLibrary={$libraryId}
+      playlists={$libraryPlaylists}
+      playlistsLoading={$libraryLoading}
+      activePlaylistId={$activePlaylist?.id ?? ""}
       onswitch={(id) => {
         closeYtmArtist();
+        closePlaylist();
         void selectLibrary(id);
+      }}
+      onopenplaylist={(list) => {
+        closeYtmArtist();
+        searchOpen = false;
+        void openPlaylist(list);
       }}
       onnewlibrary={openCreateLibrary}
       onwidthcommit={commitSidebarWidth}

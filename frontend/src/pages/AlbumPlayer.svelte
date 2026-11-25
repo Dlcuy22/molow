@@ -33,6 +33,7 @@
   import SeekBar from "../lib/ui/SeekBar.svelte";
   import Marquee from "../lib/ui/Marquee.svelte";
   import Spectrum from "../lib/components/Spectrum.svelte";
+  import PlayerBackdrop from "../lib/components/PlayerBackdrop.svelte";
   import Cover from "../lib/ui/Cover.svelte";
   import LoadingSpinner from "../lib/ui/LoadingSpinner.svelte";
 
@@ -79,6 +80,10 @@
       ? `linear-gradient(180deg, ${stops[0]} 11.66%, ${stops[1]} 75.95%)`
       : "linear-gradient(180deg, #3a3a3e 11.66%, #1d1d20 75.95%)",
   );
+  const bgGenerator = $derived(
+    $appSettings.general.bgGenerator === "gradient" ? "gradient" : "image",
+  );
+  const bgShader = $derived($appSettings.general.bgShader ?? false);
 
   const lines = $derived(lyrics?.lines ?? []);
   const providerCredit = $derived(lyricProviderInfo(lyrics?.provider));
@@ -553,11 +558,24 @@
 {/snippet}
 
 <div
-  class="album-sheet h-full w-full overflow-hidden text-fg"
+  class="album-sheet relative h-full w-full overflow-hidden text-fg"
   class:open
   class:cursor-idle={cursorIdle}
   style="background:{background}"
 >
+  {#if bgGenerator === "image" && heldCoverId !== ""}
+    <PlayerBackdrop
+      src={`/art/bg/${heldCoverId}`}
+      active={open && snap.state === "playing"}
+      useShader={bgShader}
+    />
+    <div
+      class="pointer-events-none absolute inset-0"
+      style="background: linear-gradient(180deg, rgba(0, 0, 0, 0.18) 0%, rgba(0, 0, 0, 0.62) 100%);"
+      aria-hidden="true"
+    ></div>
+  {/if}
+
   <button
     class="dock-btn dock-chip absolute right-[13px] top-[13px] z-20 grid size-8 place-items-center rounded-md text-fg transition-colors"
     aria-label="Close the full player"
@@ -869,6 +887,17 @@
     );
     -webkit-mask-position: 0% 0;
     mask-position: 0% 0;
+  }
+
+  /* CSS mask-image clips each span to its border box, slicing off the right
+   * overhang of italic glyphs (romaji). Expanding the mask box with matching
+   * negative inline margins preserves glyph overhang with zero layout shift. */
+  .italic .lyric-word-quality {
+    padding-block: 0.04em;
+    padding-inline: 0.08em 0.22em;
+    margin-inline: -0.08em -0.22em;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
   }
 
   /* Isolate only the active line onto its own layer so word-sweep repaints do

@@ -13,6 +13,7 @@ import (
 const (
 	artRoutePrefix       = "/art/"
 	artAvatarPrefix      = "avatar/"
+	artBackdropPrefix    = "bg/"
 	artYTMSearchPrefix   = "ytm-search/"
 	artImmutableCacheHdr = "public, max-age=31536000, immutable"
 	artVolatileCacheHdr  = "public, max-age=3600"
@@ -88,6 +89,12 @@ func (s *PlayerService) serveArtwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.HasPrefix(rest, artBackdropPrefix) {
+		s.serveBackdrop(w, r, strings.TrimPrefix(rest, artBackdropPrefix))
+
+		return
+	}
+
 	// Content-addressed artwork id from artwork.Store. Reject path separators
 	// and dots before touching disk.
 	id := rest
@@ -135,6 +142,39 @@ func (s *PlayerService) serveArtwork(w http.ResponseWriter, r *http.Request) {
 			http.ServeFile(w, r, path)
 
 			return
+		}
+	}
+
+	s.logger().Debug("artwork: miss", "path", r.URL.Path)
+	http.NotFound(w, r)
+}
+
+func (s *PlayerService) serveBackdrop(w http.ResponseWriter, r *http.Request, id string) {
+	if id == "" || strings.ContainsAny(id, `/\.`) || s.art == nil {
+		s.logger().Debug("artwork: miss", "path", r.URL.Path)
+		http.NotFound(w, r)
+
+		return
+	}
+
+	if path, err := s.art.BackdropPath(id); err == nil && path != "" {
+		w.Header().Set("Cache-Control", artImmutableCacheHdr)
+		http.ServeFile(w, r, path)
+
+		return
+	}
+
+	if s.player != nil {
+		data := s.player.Snapshot().Meta.Tags.Cover
+		if artwork.ID(data) == id {
+			if _, err := s.art.Put(data); err == nil {
+				if path, err := s.art.BackdropPath(id); err == nil && path != "" {
+					w.Header().Set("Cache-Control", artImmutableCacheHdr)
+					http.ServeFile(w, r, path)
+
+					return
+				}
+			}
 		}
 	}
 

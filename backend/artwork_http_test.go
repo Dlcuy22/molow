@@ -172,3 +172,67 @@ func TestYTMSearchThumbnailStaysInMemoryOnly(t *testing.T) {
 		t.Fatalf("second request = (status=%d, fetches=%d), want (200, 1)", rec2.Code, fetches.Load())
 	}
 }
+
+func TestArtworkMiddlewareServesBackdrops(t *testing.T) {
+	art, err := artwork.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := newPlayerService()
+	svc.art = art
+	fp := newFakePlayer()
+	svc.player = fp
+
+	raw := testPNGBytes(t, 0xb8, 0x3b, 0x4b)
+	id, err := art.Put(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	handler := svc.artworkMiddleware()(http.NotFoundHandler())
+
+	// Cached cover generates and serves a 64x64 PNG backdrop with immutable cache headers.
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/art/bg/"+id, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /art/bg/%s status = %d, want 200", id, rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/png") {
+		t.Fatalf("Content-Type = %q, want image/png", ct)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != artImmutableCacheHdr {
+		t.Fatalf("Cache-Control = %q, want %q", cc, artImmutableCacheHdr)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatal("empty backdrop body")
+	}
+
+	// HEAD returns headers with no body.
+	head := httptest.NewRecorder()
+	handler.ServeHTTP(head, httptest.NewRequest(http.MethodHead, "/art/bg/"+id, nil))
+	if head.Code != http.StatusOK || head.Body.Len() != 0 {
+		t.Fatalf("HEAD /art/bg/%s = (%d, len=%d), want (200, 0)", id, head.Code, head.Body.Len())
+	}
+	if ct := head.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/png") {
+		t.Fatalf("HEAD Content-Type = %q, want image/png", ct)
+	}
+
+	// Active-track fallback caches and generates the backdrop on demand.
+	liveRaw := testPNGBytes(t, 0x2a, 0x72, 0xc8)
+	liveID := artwork.ID(liveRaw)
+	fp.meta = meta.Meta{Tags: meta.Tags{Cover: liveRaw}}
+	live := httptest.NewRecorder()
+	handler.ServeHTTP(live, httptest.NewRequest(http.MethodGet, "/art/bg/"+liveID, nil))
+	if live.Code != http.StatusOK || live.Body.Len() == 0 {
+		t.Fatalf("active backdrop fallback = (%d, len=%d), want 200 non-empty", live.Code, live.Body.Len())
+	}
+
+	// Unknown or unsafe IDs return 404.
+	for _, bad := range []string{"/art/bg/", "/art/bg/../etc", "/art/bg/a.png", "/art/bg/missing"} {
+		rec = httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, bad, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("GET %s status = %d, want 404", bad, rec.Code)
+		}
+	}
+}

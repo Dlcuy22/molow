@@ -345,6 +345,30 @@
   const karaokeStyle = $derived(
     $appSettings.playback.lyrics.karaokeStyle === "quality" ? "quality" : "performance",
   );
+  const bgGenerator = $derived(
+    $appSettings.general.bgGenerator === "gradient" ? "gradient" : "image",
+  );
+  const bgShader = $derived($appSettings.general.bgShader ?? false);
+
+  function setBgGenerator(mode: string) {
+    commands.setAppSettings({
+      ...$appSettings,
+      general: {
+        ...$appSettings.general,
+        bgGenerator: mode === "image" ? "image" : "gradient",
+      },
+    });
+  }
+
+  function setBgShader(enabled: boolean) {
+    commands.setAppSettings({
+      ...$appSettings,
+      general: {
+        ...$appSettings.general,
+        bgShader: enabled,
+      },
+    });
+  }
 
   function formatLyricDelay(ms: number): string {
     return ms > 0 ? `+${ms} ms` : `${ms} ms`;
@@ -828,6 +852,43 @@
           </div>
         {:else}
           <div class="scrub-groups divide-y divide-line">
+            <SettingGroup label="Album player" description={null}>
+              <div class="divide-y divide-line">
+                <SettingRow
+                  label="Background"
+                  description="Choose between a two-stop colour gradient or a blurred cover backdrop."
+                >
+                  {#snippet control()}
+                    <Picker
+                      label={null}
+                      ariaLabel="Album player background"
+                      value={bgGenerator}
+                      options={[
+                        { value: "gradient", label: "Gradient" },
+                        { value: "image", label: "Image" },
+                      ]}
+                      onchange={setBgGenerator}
+                    />
+                  {/snippet}
+                </SettingRow>
+
+                {#if bgGenerator === "image"}
+                  <SettingRow
+                    label="Use shader"
+                    description="Animate the blurred cover with a warp shader. Turn off to use a static image."
+                  >
+                    {#snippet control()}
+                      <Switch
+                        checked={bgShader}
+                        label="Use shader"
+                        onchange={setBgShader}
+                      />
+                    {/snippet}
+                  </SettingRow>
+                {/if}
+              </div>
+            </SettingGroup>
+
             <SettingGroup label="Visualizer" description={null}>
               <!-- The rows keep their own labels and dividers inside the
                    group; the shell only names the block, so a later knob is

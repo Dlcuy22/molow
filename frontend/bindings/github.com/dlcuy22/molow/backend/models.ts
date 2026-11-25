@@ -196,6 +196,8 @@ export interface EffectVisualInfo {
  * default molow.log in the config folder.
  */
 export interface GeneralSettings {
+    "bgGenerator": string;
+    "bgShader": boolean;
     "visualizerEnabled": boolean;
     "visualizerStyle": string;
     "visualizerDelayMs": number;

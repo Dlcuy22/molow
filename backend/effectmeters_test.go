@@ -23,6 +23,7 @@ func (m *meteringPlayer) EffectMeters() []molo.EffectMeters {
 // nothing drawing the meters the pump does not reach the engine at all, and
 // with the window present it does.
 func TestEffectMetersGateStopsTheEngineRead(t *testing.T) {
+	isolateConfig(t)
 	svc := spectrumService(t)
 	p := &meteringPlayer{fakePlayer: newFakePlayer()}
 	svc.player = p

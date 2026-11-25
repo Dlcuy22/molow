@@ -133,6 +133,9 @@ type Store struct {
 	putMu       sync.Mutex
 	putInflight map[string]*putCall
 
+	backdropMu       sync.Mutex
+	backdropInflight map[string]*backdropCall
+
 	accentMu       sync.Mutex
 	accentLRU      *lruCache[accentKey, []color.Colour]
 	accentInflight map[accentKey]*accentCall
@@ -140,6 +143,12 @@ type Store struct {
 
 type putCall struct {
 	done chan struct{}
+	err  error
+}
+
+type backdropCall struct {
+	done chan struct{}
+	path string
 	err  error
 }
 
@@ -168,10 +177,11 @@ func Open(dir string) (*Store, error) {
 	}
 
 	return &Store{
-		dir:            dir,
-		putInflight:    make(map[string]*putCall),
-		accentLRU:      newLRU[accentKey, []color.Colour](cacheMax),
-		accentInflight: make(map[accentKey]*accentCall),
+		dir:              dir,
+		putInflight:      make(map[string]*putCall),
+		backdropInflight: make(map[string]*backdropCall),
+		accentLRU:        newLRU[accentKey, []color.Colour](cacheMax),
+		accentInflight:   make(map[accentKey]*accentCall),
 	}, nil
 }
 
@@ -320,6 +330,99 @@ func (s *Store) FilePath(id string) (string, bool) {
 	return p, ok
 }
 
+func (s *Store) backdropFileFor(id string) (string, bool) {
+	if s == nil || !safeID(id) {
+		return "", false
+	}
+	p := filepath.Join(s.dir, backdropSubdir, id+".png")
+	if info, err := os.Stat(p); err == nil && info.Size() > 0 {
+		return p, true
+	}
+
+	return "", false
+}
+
+// BackdropPath returns the on-disk path of the 64x64 blurred PNG backdrop for
+// id, generating and persisting it under <dir>/bg/<id>.png on first request.
+// Unknown or unsafe IDs return ("", nil).
+func (s *Store) BackdropPath(id string) (string, error) {
+	if s == nil || !safeID(id) {
+		return "", nil
+	}
+	if p, ok := s.backdropFileFor(id); ok {
+		return p, nil
+	}
+	if !s.Has(id) {
+		return "", nil
+	}
+
+	s.backdropMu.Lock()
+	if call, ok := s.backdropInflight[id]; ok {
+		s.backdropMu.Unlock()
+		<-call.done
+
+		return call.path, call.err
+	}
+	call := &backdropCall{done: make(chan struct{})}
+	s.backdropInflight[id] = call
+	s.backdropMu.Unlock()
+
+	p, err := s.backdropOnce(id)
+
+	s.backdropMu.Lock()
+	call.path = p
+	call.err = err
+	delete(s.backdropInflight, id)
+	s.backdropMu.Unlock()
+	close(call.done)
+
+	return p, err
+}
+
+func (s *Store) backdropOnce(id string) (string, error) {
+	if p, ok := s.backdropFileFor(id); ok {
+		return p, nil
+	}
+	data, _, ok := s.Bytes(id)
+	if !ok {
+		return "", nil
+	}
+	img, err := Decode(data)
+	if err != nil {
+		return "", err
+	}
+	encoded, _, err := EncodeBackdrop(img)
+	if err != nil {
+		return "", err
+	}
+
+	bgDir := filepath.Join(s.dir, backdropSubdir)
+	if err := os.MkdirAll(bgDir, 0o755); err != nil {
+		return "", fmt.Errorf("artwork: backdrop dir: %w", err)
+	}
+	dst := filepath.Join(bgDir, id+".png")
+	tmp, err := os.CreateTemp(bgDir, id+".tmp*")
+	if err != nil {
+		return "", fmt.Errorf("artwork: backdrop temp: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if _, err := tmp.Write(encoded); err != nil {
+		_ = tmp.Close()
+
+		return "", fmt.Errorf("artwork: backdrop write: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("artwork: backdrop close: %w", err)
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		return "", fmt.Errorf("artwork: backdrop commit: %w", err)
+	}
+
+	return dst, nil
+}
+
 // DataURL returns id as an inline base64 data URL read directly from disk.
 func (s *Store) DataURL(id string) (string, bool) {
 	data, mime, ok := s.Bytes(id)
@@ -357,37 +460,43 @@ func (s *Store) Prune(protected map[string]struct{}, maxBytes int64) (int, error
 	now := time.Now()
 	var orphans []orphan
 	var orphanBytes int64
-	for _, de := range entries {
-		if de.IsDir() {
-			continue
-		}
-		name := de.Name()
-		full := filepath.Join(s.dir, name)
-		info, err := de.Info()
-		if err != nil {
-			continue
-		}
-		if strings.Contains(name, ".tmp") {
-			if now.Sub(info.ModTime()) >= staleTempMaxAge {
-				_ = os.Remove(full)
+	scanDir := func(dir string, entries []os.DirEntry) {
+		for _, de := range entries {
+			if de.IsDir() {
+				continue
 			}
-			continue
+			name := de.Name()
+			full := filepath.Join(dir, name)
+			info, err := de.Info()
+			if err != nil {
+				continue
+			}
+			if strings.Contains(name, ".tmp") {
+				if now.Sub(info.ModTime()) >= staleTempMaxAge {
+					_ = os.Remove(full)
+				}
+				continue
+			}
+			ext := strings.ToLower(filepath.Ext(name))
+			if ext != ".jpg" && ext != ".png" {
+				continue
+			}
+			id := strings.TrimSuffix(name, filepath.Ext(name))
+			if _, keep := protected[id]; keep {
+				continue
+			}
+			orphans = append(orphans, orphan{
+				path:  full,
+				name:  name,
+				size:  info.Size(),
+				mtime: info.ModTime(),
+			})
+			orphanBytes += info.Size()
 		}
-		ext := strings.ToLower(filepath.Ext(name))
-		if ext != ".jpg" && ext != ".png" {
-			continue
-		}
-		id := strings.TrimSuffix(name, filepath.Ext(name))
-		if _, keep := protected[id]; keep {
-			continue
-		}
-		orphans = append(orphans, orphan{
-			path:  full,
-			name:  name,
-			size:  info.Size(),
-			mtime: info.ModTime(),
-		})
-		orphanBytes += info.Size()
+	}
+	scanDir(s.dir, entries)
+	if bgEntries, err := os.ReadDir(filepath.Join(s.dir, backdropSubdir)); err == nil {
+		scanDir(filepath.Join(s.dir, backdropSubdir), bgEntries)
 	}
 
 	if orphanBytes <= maxBytes {

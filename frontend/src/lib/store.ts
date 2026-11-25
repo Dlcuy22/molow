@@ -125,7 +125,7 @@ export const appSettings = writable<AppSettings>({
     },
   },
   stream: { trackCacheMaxMb: 512 },
-  general: { visualizerEnabled: true, visualizerStyle: "minimal", visualizerDelayMs: 25, logLevel: "info", logFileEnabled: false, logFile: "" },
+  general: { bgGenerator: "image", bgShader: false, visualizerEnabled: true, visualizerStyle: "minimal", visualizerDelayMs: 25, logLevel: "info", logFileEnabled: false, logFile: "" },
   discord: { enabled: false },
 });
 

@@ -181,6 +181,53 @@ func TestLoadAppSettingsNormalizesTheVisualizerStyle(t *testing.T) {
 	}
 }
 
+func TestLoadAppSettingsNormalizesBgGeneratorAndShader(t *testing.T) {
+	isolateConfig(t)
+
+	p, err := settingsPath()
+	if err != nil {
+		t.Fatalf("settingsPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name       string
+		body       string
+		wantGen    string
+		wantShader bool
+	}{
+		{"known image shader on", `{"version":1,"general":{"bgGenerator":"image","bgShader":true}}`, "image", true},
+		{"known image shader omitted", `{"version":1,"general":{"bgGenerator":"image"}}`, "image", false},
+		{"known gradient", `{"version":1,"general":{"bgGenerator":"gradient","bgShader":false}}`, "gradient", false},
+		{"unknown generator", `{"version":1,"general":{"bgGenerator":"mesh","bgShader":true}}`, "image", true},
+		{"missing fields", `{"version":1,"general":{}}`, "image", false},
+	}
+	for _, c := range cases {
+		if err := os.WriteFile(p, []byte(c.body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got := loadAppSettings(quietLog, "loaded").General
+		if got.BgGenerator != c.wantGen || got.BgShader != c.wantShader {
+			t.Fatalf("%s: got (%q, %v), want (%q, %v)", c.name, got.BgGenerator, got.BgShader, c.wantGen, c.wantShader)
+		}
+	}
+
+	// Save path preserves explicit gradient and shader-on values.
+	svc := newPlayerService()
+	s := svc.AppSettings()
+	s.General.BgGenerator = "gradient"
+	s.General.BgShader = true
+	if _, err := svc.SetAppSettings(s); err != nil {
+		t.Fatalf("SetAppSettings: %v", err)
+	}
+	reloaded := loadAppSettings(quietLog, "loaded").General
+	if reloaded.BgGenerator != "gradient" || !reloaded.BgShader {
+		t.Fatalf("reloaded = (%q, %v), want (\"gradient\", true)", reloaded.BgGenerator, reloaded.BgShader)
+	}
+}
+
 // TestLoadAppSettingsNormalizesAnUnknownRepeat proves a hand-edited repeat
 // string is corrected on read, so the panel and the engine never see a value
 // the engine would reject.

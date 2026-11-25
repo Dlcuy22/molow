@@ -120,6 +120,8 @@ type StreamSettings struct {
 // app's log to a file, and LogFile is where it lives; an empty value keeps the
 // default molow.log in the config folder.
 type GeneralSettings struct {
+	BgGenerator       string `json:"bgGenerator"`
+	BgShader          bool   `json:"bgShader"`
 	VisualizerEnabled bool   `json:"visualizerEnabled"`
 	VisualizerStyle   string `json:"visualizerStyle"`
 	VisualizerDelayMs int    `json:"visualizerDelayMs"`
@@ -169,6 +171,8 @@ func defaultAppSettings() AppSettings {
 			TrackCacheMaxMB: defaultTrackCacheMaxMB,
 		},
 		General: GeneralSettings{
+			BgGenerator:       "image",
+			BgShader:          false,
 			VisualizerEnabled: true,
 			VisualizerStyle:   "minimal",
 			LogLevel:          "info",
@@ -328,6 +332,15 @@ func normalizeAppSettings(s AppSettings, present *settingsFieldPresence) AppSett
 		s.Stream.TrackCacheMaxMB = def.Stream.TrackCacheMaxMB
 	}
 	s.Stream.TrackCacheMaxMB = clampTrackCacheMaxMB(s.Stream.TrackCacheMaxMB)
+
+	switch s.General.BgGenerator {
+	case "gradient", "image":
+	default:
+		s.General.BgGenerator = def.General.BgGenerator
+	}
+	if present != nil && !present.general["bgShader"] {
+		s.General.BgShader = def.General.BgShader
+	}
 
 	// An install that predates the field keeps its visualizer on; only an
 	// explicit false turns it off. On the save path present is nil and the value
@@ -626,8 +639,9 @@ func (s *PlayerService) persistRepeatMode(mode string) {
 	s.appSettingsMu.Unlock()
 
 	s.emit(eventSettings, next)
-	if err := saveAppSettings(s.log, next); err != nil {
-		s.log.Warn("settings: could not persist repeat", "error", err)
+	log := s.logger()
+	if err := saveAppSettings(log, next); err != nil {
+		log.Warn("settings: could not persist repeat", "error", err)
 	}
 }
 

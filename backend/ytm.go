@@ -556,7 +556,8 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 		var infoMu sync.Mutex
 		var openedInfo core.StreamInfo
 		recordInfo := func(info core.StreamInfo) {
-			if info.TotalFrames <= 0 {
+			info = ytmWithDuration(info, track.DurationMs)
+			if info.Duration() <= 0 {
 				return
 			}
 			infoMu.Lock()
@@ -574,7 +575,7 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 		src.Opener = func(stop <-chan struct{}) (decode.Decoder, error) {
 			if rc, _, ok := p.tracks.Get(id); ok {
 				p.setOpenCached(ref, true)
-				dec, err := decode.NewWebMOpusFactory().OpenReader(rc)
+				dec, err := openSeekableContainer(rc)
 				if err != nil {
 					_ = rc.Close()
 
@@ -603,16 +604,16 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 			infoMu.Lock()
 			info := openedInfo
 			infoMu.Unlock()
-			if info.TotalFrames > 0 {
+			if info.Duration() > 0 {
 				return info, nil
 			}
 			if rc, _, ok := p.tracks.Get(id); ok {
 				defer rc.Close()
-				if dec, err := decode.NewWebMOpusFactory().OpenReader(rc); err == nil {
+				if dec, err := openSeekableContainer(rc); err == nil {
 					info = dec.Info()
 					_ = dec.Close()
 					recordInfo(info)
-					if info.TotalFrames > 0 {
+					if info.Duration() > 0 {
 						return info, nil
 					}
 				}
@@ -712,7 +713,7 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 			if err != nil {
 				return core.StreamInfo{Format: core.CanonicalFormat, TotalFrames: -1}, err
 			}
-			info := dec.Info()
+			info := ytmWithDuration(dec.Info(), track.DurationMs)
 			_ = dec.Close()
 			if ms := info.Duration().Milliseconds(); ms > 0 {
 				t, _ := p.index.lookup(ref)
@@ -727,11 +728,15 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 		}
 	}
 
-	if p.seamless {
+	if p.seamless && best.Codec == ytm.CodecOpus {
 		// Fast start: the body downloads once to disk, in the background, while
 		// the forward-only decoder reads from the front of the file, so audio
 		// begins before the whole track is here. Upgrade waits for completion
 		// and swaps in a seekable local file decoder with no second fetch.
+		//
+		// Only the WebM/Opus reader consumes a forward-only stream. A track
+		// YouTube offers as AAC waits for the finished file instead, because the
+		// AAC reader needs to seek.
 		src.Opener = func(stop <-chan struct{}) (decode.Decoder, error) {
 			start(stop)
 			r, err := buf.reader()
@@ -860,6 +865,34 @@ func (p *ytmProvider) fetchRemoteDecoder(ctx context.Context, stop <-chan struct
 	}
 
 	return buf.openSeekableDecoder()
+}
+
+// openSeekableContainer opens the local file behind rc through the decode
+// registry, so the container is chosen from the bytes. A fixed WebM reader
+// rejects the AAC in MP4 that YouTube serves when a track has no Opus rendition,
+// and the rejection outlives the attempt because the file gets cached.
+func openSeekableContainer(rc io.ReadSeekCloser) (decode.Decoder, error) {
+	named, ok := rc.(interface{ Name() string })
+	if !ok {
+		return decode.NewWebMOpusFactory().OpenReader(rc)
+	}
+
+	return decode.Default.Open(named.Name())
+}
+
+// ytmWithDuration fills an unknown stream length from the catalogue duration.
+// The AAC renditions are 44.1 kHz, and the M4A reader reports those as an
+// unknown frame count because their duration is not a whole number of canonical
+// frames; a stream that already states a duration is left alone.
+func ytmWithDuration(info core.StreamInfo, durationMs int64) core.StreamInfo {
+	if info.Duration() <= 0 && durationMs > 0 {
+		if info.Format.Rate <= 0 {
+			info.Format = core.CanonicalFormat
+		}
+		info.TotalFrames = ytmFrames(durationMs)
+	}
+
+	return info
 }
 
 type closingDecoder struct {
@@ -1402,6 +1435,7 @@ type ytmStreamBuffer struct {
 	written     int64
 	done        bool
 	err         error
+	verified    bool
 	committed   bool
 	cleaned     bool
 	hadSeekable bool
@@ -1510,7 +1544,7 @@ func (b *ytmStreamBuffer) maybeFinalizeLocked() (bool, int64) {
 	if !b.done || b.readers > 0 || b.cleaned || b.committed || b.path == "" {
 		return false, 0
 	}
-	if b.err == nil && b.tracks != nil && b.written > 0 {
+	if b.err == nil && b.verified && b.tracks != nil && b.written > 0 {
 		promoted, err := b.tracks.CommitFile(b.id, b.path)
 		if err != nil {
 			if b.log != nil {
@@ -1679,12 +1713,17 @@ func (b *ytmStreamBuffer) openSeekableDecoder() (decode.Decoder, error) {
 	if err != nil {
 		return nil, err
 	}
-	dec, err := decode.NewWebMOpusFactory().OpenReader(rc)
+	dec, err := openSeekableContainer(rc)
 	if err != nil {
 		_ = rc.Close()
 
 		return nil, err
 	}
+	// A file no decoder accepted must not enter trackcache: the bytes would be
+	// replayed on every later open, and the failure would outlive a restart.
+	b.mu.Lock()
+	b.verified = true
+	b.mu.Unlock()
 
 	return wrapClosingDecoder(dec, rc), nil
 }

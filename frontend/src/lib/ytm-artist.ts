@@ -14,7 +14,7 @@ import {
   activePlaylistTracks,
   playRefs,
 } from "./library";
-import type { Album, Artist, Playlist, Track, YtmArtist, YtmVideo } from "./types";
+import { FLAG_PLAYABLE, type Album, type Artist, type Playlist, type Track, type YtmArtist, type YtmVideo } from "./types";
 
 export const activeYtmArtistOpen = writable(false);
 export const activeYtmArtist = writable<YtmArtist | null>(null);
@@ -46,7 +46,7 @@ function mapTrack(t: YTMArtistTrack): Track {
     coverId: "",
     imageUrl: t.imageUrl || undefined,
     liked: false,
-    flags: 0,
+    flags: t.ref !== "" ? FLAG_PLAYABLE : 0,
     trackNo: 0,
   };
 }
@@ -83,7 +83,7 @@ function mapVideo(v: YTMArtistVideo): YtmVideo {
       coverId: "",
       imageUrl: v.thumbnailUrl || undefined,
       liked: false,
-      flags: 0,
+      flags: v.ref !== "" ? FLAG_PLAYABLE : 0,
       trackNo: 0,
     },
   };

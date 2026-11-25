@@ -87,6 +87,9 @@ type PlaybackSettings struct {
 //
 // PetitLyricsDelayMs shifts PetitLyrics timing in milliseconds (-2000 to 2000,
 // default 0): negative moves late lyrics earlier, positive delays early ones.
+// KaraokeStyle picks how word-synced lyrics highlight each word: "performance"
+// fades word opacity on the compositor, while "quality" sweeps a left-to-right
+// gradient across the word and animates instrumental note progress.
 type LyricsSettings struct {
 	Providers            map[string]bool `json:"providers"`
 	PetitLyricsDelayMs   int             `json:"petitLyricsDelayMs"`
@@ -96,6 +99,7 @@ type LyricsSettings struct {
 	RomanizationLanguage string          `json:"romanizationLanguage"`
 	AutoSpacing          bool            `json:"autoSpacing"`
 	WordSweep            string          `json:"wordSweep"`
+	KaraokeStyle         string          `json:"karaokeStyle"`
 }
 
 // StreamSettings is the Stream tab. TrackCacheMaxMB sets the on-disk budget in
@@ -195,6 +199,7 @@ func defaultLyricsSettings() LyricsSettings {
 		RomanizationLanguage: lyricRomanizationJP,
 		AutoSpacing:          false,
 		WordSweep:            lyricWordSweepBoth,
+		KaraokeStyle:         "quality",
 	}
 }
 
@@ -457,6 +462,12 @@ func normalizeLyricsSettings(s LyricsSettings, def LyricsSettings) LyricsSetting
 	default:
 		out.WordSweep = def.WordSweep
 	}
+	switch s.KaraokeStyle {
+	case "performance", "quality":
+		out.KaraokeStyle = s.KaraokeStyle
+	default:
+		out.KaraokeStyle = def.KaraokeStyle
+	}
 	out.Folder = s.Folder
 
 	return out
@@ -598,6 +609,26 @@ func (s *PlayerService) SetAppSettings(next AppSettings) (AppSettings, error) {
 	}
 
 	return next, nil
+}
+
+// persistRepeatMode updates the persisted repeat setting, broadcasts it to all
+// windows, and saves settings.json on a best-effort basis so UI buttons,
+// shortcuts, and OS media controls cannot drift from disk.
+func (s *PlayerService) persistRepeatMode(mode string) {
+	s.appSettingsMu.Lock()
+	if s.appSettings.Playback.Repeat == mode {
+		s.appSettingsMu.Unlock()
+
+		return
+	}
+	s.appSettings.Playback.Repeat = mode
+	next := s.appSettings
+	s.appSettingsMu.Unlock()
+
+	s.emit(eventSettings, next)
+	if err := saveAppSettings(s.log, next); err != nil {
+		s.log.Warn("settings: could not persist repeat", "error", err)
+	}
 }
 
 // applyAppSettingsLocked pushes the persisted playback settings onto the

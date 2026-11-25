@@ -121,6 +121,7 @@ export const appSettings = writable<AppSettings>({
       romanizationLanguage: "jp",
       autoSpacing: false,
       wordSweep: "both",
+      karaokeStyle: "quality",
     },
   },
   stream: { trackCacheMaxMb: 512 },
@@ -459,9 +460,8 @@ export const commands = {
   },
   moveQueue: (from: number, to: number) => invoke(PlayerService.MoveQueue(from, to)),
   shuffle: (on: boolean) => invoke(PlayerService.SetShuffle(on)),
-  // setRepeat replaces the engine's repeat mode. Persisting it is a separate
-  // write through the settings document, because repeat is playback state that
-  // outlives a restart and the engine holds no file of its own.
+  // setRepeat updates the engine's repeat mode and persists it to settings.json
+  // on the backend so Dock, AlbumPlayer, shortcuts, and OS media controls stay in sync.
   setRepeat: (mode: string) => invoke(PlayerService.SetRepeat(mode)),
   stop: () => {
     clearOptimisticPlay();

@@ -342,6 +342,9 @@
   const romanizationLanguage = $derived($appSettings.playback.lyrics.romanizationLanguage);
   const autoSpacing = $derived($appSettings.playback.lyrics.autoSpacing);
   const wordSweep = $derived($appSettings.playback.lyrics.wordSweep);
+  const karaokeStyle = $derived(
+    $appSettings.playback.lyrics.karaokeStyle === "quality" ? "quality" : "performance",
+  );
 
   function formatLyricDelay(ms: number): string {
     return ms > 0 ? `+${ms} ms` : `${ms} ms`;
@@ -753,6 +756,24 @@
                     {/snippet}
                   </SettingRow>
                 </div>
+
+                <SettingRow
+                  label="Karaoke style"
+                  description="Performance fades words by opacity, Quality sweeps a left-to-right gradient across each word."
+                >
+                  {#snippet control()}
+                    <Picker
+                      label={null}
+                      ariaLabel="Karaoke style"
+                      value={karaokeStyle}
+                      options={[
+                        { value: "performance", label: "Performance" },
+                        { value: "quality", label: "Quality" },
+                      ]}
+                      onchange={(v) => setLyrics({ karaokeStyle: v })}
+                    />
+                  {/snippet}
+                </SettingRow>
               </div>
             </SettingGroup>
           </div>

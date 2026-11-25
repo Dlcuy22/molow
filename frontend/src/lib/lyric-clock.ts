@@ -1,4 +1,25 @@
 export const JITTER_HOLD_MS = 80;
+export const CLOCK_JITTER_HOLD_MS = 250;
+
+/**
+ * reanchorClock picks the new clockBase when a backend snapshot arrives.
+ * During continuous playback on the same track, a snapshot that lands slightly
+ * behind the free-running clock (IPC / audio-buffer latency) holds prevNow
+ * instead of rewinding the sweep backward and flashing short syllables. A real
+ * backward seek (> CLOCK_JITTER_HOLD_MS) or track/state change snaps directly.
+ */
+export function reanchorClock(
+  prevNow: number,
+  snapPos: number,
+  sameTrack: boolean,
+  playing: boolean,
+): number {
+  if (sameTrack && playing && snapPos < prevNow && prevNow - snapPos <= CLOCK_JITTER_HOLD_MS) {
+    return prevNow;
+  }
+
+  return snapPos;
+}
 
 /**
  * lyricOffsetFor returns the active timing offset in milliseconds for a lyric
@@ -62,6 +83,69 @@ export function wordOpacity(t: number, startMs: number, endMs: number): string {
   const op = 0.3 + ((t - startMs) * 0.7) / (endMs - startMs);
 
   return op >= 0.995 ? "1" : op.toFixed(2);
+}
+
+const RTL_RE = /[\u0591-\u07FF\u200F\u202B\u202E\uFB1D-\uFDFD\uFE70-\uFEFC]/;
+
+/** isRTLText reports whether a word contains right-to-left script characters. */
+export function isRTLText(text: string): boolean {
+  return RTL_RE.test(text);
+}
+
+/**
+ * wordSweepBackgroundPosition maps lyric clock t onto a CSS background-position
+ * for a 225%-wide active-to-inactive text-clip gradient. LTR sweeps 100% -> 0%;
+ * RTL reverses to 0% -> 100%.
+ */
+export function wordSweepBackgroundPosition(
+  t: number,
+  startMs: number,
+  endMs: number,
+  rtl = false,
+): string {
+  let progress = 0;
+  if (t >= endMs || (endMs <= startMs && t > startMs)) {
+    progress = 1;
+  } else if (t > startMs && endMs > startMs) {
+    progress = (t - startMs) / (endMs - startMs);
+  }
+  const pct = rtl ? progress * 100 : (1 - progress) * 100;
+
+  return `${pct.toFixed(1)}% 0`;
+}
+
+/**
+ * instrumentalNoteProgress returns 0..1 progress across an instrumental gap
+ * starting at lines[active] until the next non-instrumental timed line.
+ */
+export function instrumentalNoteProgress(
+  lines: readonly { timeMs: number; text: string }[],
+  active: number,
+  t: number,
+  mark = "♪",
+): number {
+  const cur = lines[active];
+  if (!cur || cur.timeMs < 0) {
+    return 0;
+  }
+  let nextStart = -1;
+  for (let i = active + 1; i < lines.length; i++) {
+    if (lines[i].timeMs >= 0 && lines[i].text.trim() !== mark && lines[i].text.trim() !== "") {
+      nextStart = lines[i].timeMs;
+      break;
+    }
+  }
+  if (nextStart <= cur.timeMs) {
+    return 1;
+  }
+  if (t <= cur.timeMs) {
+    return 0;
+  }
+  if (t >= nextStart) {
+    return 1;
+  }
+
+  return (t - cur.timeMs) / (nextStart - cur.timeMs);
 }
 
 /**

@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   activeLineAt,
+  CLOCK_JITTER_HOLD_MS,
+  instrumentalNoteProgress,
+  isRTLText,
   JITTER_HOLD_MS,
   lyricOffsetFor,
   lyricProviderInfo,
   lyricSyncLabel,
   nextClockWakeMs,
+  reanchorClock,
   seekTargetMs,
   wordOpacity,
+  wordSweepBackgroundPosition,
 } from "./lyric-clock";
 
 const lines = [
@@ -118,5 +123,53 @@ describe("nextClockWakeMs", () => {
 
   it("returns null once no further words or timed lines remain", () => {
     expect(nextClockWakeMs(sheet, 1, 3500)).toBeNull();
+  });
+});
+
+describe("wordSweepBackgroundPosition", () => {
+  it("sweeps LTR 100% -> 0% and RTL 0% -> 100%", () => {
+    expect(wordSweepBackgroundPosition(900, 1000, 1200)).toBe("100.0% 0");
+    expect(wordSweepBackgroundPosition(1100, 1000, 1200)).toBe("50.0% 0");
+    expect(wordSweepBackgroundPosition(1200, 1000, 1200)).toBe("0.0% 0");
+
+    expect(wordSweepBackgroundPosition(900, 1000, 1200, true)).toBe("0.0% 0");
+    expect(wordSweepBackgroundPosition(1100, 1000, 1200, true)).toBe("50.0% 0");
+    expect(wordSweepBackgroundPosition(1200, 1000, 1200, true)).toBe("100.0% 0");
+  });
+});
+
+describe("isRTLText", () => {
+  it("detects RTL scripts and leaves Latin/CJK false", () => {
+    expect(isRTLText("שלום")).toBe(true);
+    expect(isRTLText("مرحبا")).toBe(true);
+    expect(isRTLText("hello")).toBe(false);
+    expect(isRTLText("残夢")).toBe(false);
+  });
+});
+
+describe("instrumentalNoteProgress", () => {
+  const sheet = [
+    { timeMs: 1000, text: "♪" },
+    { timeMs: 11000, text: "Next line" },
+  ];
+
+  it("computes normalized progress across an instrumental gap", () => {
+    expect(instrumentalNoteProgress(sheet, 0, 1000)).toBe(0);
+    expect(instrumentalNoteProgress(sheet, 0, 6000)).toBe(0.5);
+    expect(instrumentalNoteProgress(sheet, 0, 11000)).toBe(1);
+  });
+});
+
+describe("reanchorClock", () => {
+  it("holds prevNow across small backward snapshot jitter while playing", () => {
+    expect(reanchorClock(33200, 33140, true, true)).toBe(33200);
+    expect(reanchorClock(33200, 33200 - CLOCK_JITTER_HOLD_MS, true, true)).toBe(33200);
+  });
+
+  it("snaps on real backward seeks, forward jumps, pause, or track changes", () => {
+    expect(reanchorClock(33200, 33200 - CLOCK_JITTER_HOLD_MS - 1, true, true)).toBe(33200 - CLOCK_JITTER_HOLD_MS - 1);
+    expect(reanchorClock(33200, 33250, true, true)).toBe(33250);
+    expect(reanchorClock(33200, 33140, true, false)).toBe(33140);
+    expect(reanchorClock(33200, 500, false, true)).toBe(500);
   });
 });

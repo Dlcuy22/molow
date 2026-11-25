@@ -671,18 +671,10 @@
     });
   }
 
-  function persistRepeat(mode: RepeatMode) {
-    commands.setRepeat(mode);
-    commands.setAppSettings({
-      ...$appSettings,
-      playback: { ...$appSettings.playback, repeat: mode },
-    });
-  }
-
   function toggleRepeat(want: Exclude<RepeatMode, "off">) {
     const mode = nextRepeatTarget(repeatIntent, snap.repeat, want);
     repeatIntent = mode;
-    persistRepeat(mode);
+    commands.setRepeat(mode);
   }
 
   // Seek step per arrow keypress, 5 seconds.

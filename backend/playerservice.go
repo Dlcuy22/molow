@@ -1565,8 +1565,12 @@ func (s *PlayerService) SetRepeat(mode string) error {
 	if err != nil {
 		return s.command(func() error { return err })
 	}
+	if err := s.command(func() error { return s.player.SetRepeat(m) }); err != nil {
+		return err
+	}
+	s.persistRepeatMode(mode)
 
-	return s.command(func() error { return s.player.SetRepeat(m) })
+	return nil
 }
 
 // repeatFromName maps the three UI strings to the engine enum. The two

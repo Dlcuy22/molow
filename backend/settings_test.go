@@ -204,6 +204,37 @@ func TestLoadAppSettingsNormalizesAnUnknownRepeat(t *testing.T) {
 	}
 }
 
+func TestSetRepeatPersistsToSettings(t *testing.T) {
+	isolateConfig(t)
+
+	svc := newPlayerService()
+	svc.player = newFakePlayer()
+
+	if err := svc.SetRepeat("one"); err != nil {
+		t.Fatalf("SetRepeat(one): %v", err)
+	}
+	if got := loadAppSettings(quietLog, "loaded").Playback.Repeat; got != "one" {
+		t.Fatalf("persisted repeat after one = %q, want one", got)
+	}
+
+	if err := svc.SetRepeat("off"); err != nil {
+		t.Fatalf("SetRepeat(off): %v", err)
+	}
+	if got := svc.AppSettings().Playback.Repeat; got != "off" {
+		t.Fatalf("in-memory repeat after off = %q, want off", got)
+	}
+	if got := loadAppSettings(quietLog, "loaded").Playback.Repeat; got != "off" {
+		t.Fatalf("persisted repeat after off = %q, want off", got)
+	}
+
+	if err := svc.SetRepeat("all"); err != nil {
+		t.Fatalf("SetRepeat(all): %v", err)
+	}
+	if got := loadAppSettings(quietLog, "loaded").Playback.Repeat; got != "all" {
+		t.Fatalf("persisted repeat after all = %q, want all", got)
+	}
+}
+
 // TestLoadAppSettingsNormalizesAnUnknownPlayPauseStyle proves the style falls
 // back to the default disc, so the panel always has a valid option selected.
 func TestLoadAppSettingsNormalizesAnUnknownPlayPauseStyle(t *testing.T) {

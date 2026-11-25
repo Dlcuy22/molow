@@ -17,13 +17,17 @@
   import { formatTime } from "../lib/format";
   import {
     activeLineAt,
+    instrumentalNoteProgress,
+    isRTLText,
     JITTER_HOLD_MS,
     lyricOffsetFor,
     lyricProviderInfo,
     lyricSyncLabel,
     nextClockWakeMs,
+    reanchorClock,
     seekTargetMs,
     wordOpacity,
+    wordSweepBackgroundPosition,
   } from "../lib/lyric-clock";
   import { sweepSegments } from "../lib/word-sweep";
   import SeekBar from "../lib/ui/SeekBar.svelte";
@@ -140,10 +144,13 @@
     el: HTMLSpanElement;
     startMs: number;
     endMs: number;
+    rtl: boolean;
     lastOpacity: string;
+    lastMaskPos: string;
   };
 
   let active = $state(0);
+  let clockTime = $state(0);
   let clockBase = 0;
   let clockAt = 0;
   let clockPath = "";
@@ -155,7 +162,26 @@
   const clockNow = (): number =>
     snap.state === "playing" ? clockBase + (performance.now() - clockAt) : clockBase;
 
-  function applyWordOpacity(entry: WordEntry, t: number) {
+  function applyWordStyle(entry: WordEntry, t: number, quality: boolean) {
+    if (quality) {
+      if (entry.lastOpacity !== "") {
+        entry.lastOpacity = "";
+        entry.el.style.opacity = "";
+      }
+      const pos = wordSweepBackgroundPosition(t, entry.startMs, entry.endMs, entry.rtl);
+      if (pos !== entry.lastMaskPos) {
+        entry.lastMaskPos = pos;
+        entry.el.style.maskPosition = pos;
+        entry.el.style.webkitMaskPosition = pos;
+      }
+      return;
+    }
+
+    if (entry.lastMaskPos !== "") {
+      entry.lastMaskPos = "";
+      entry.el.style.maskPosition = "";
+      entry.el.style.webkitMaskPosition = "";
+    }
     const op = wordOpacity(t, entry.startMs, entry.endMs);
     if (op !== entry.lastOpacity) {
       entry.lastOpacity = op;
@@ -164,8 +190,9 @@
   }
 
   function paintWords(t: number) {
+    const quality = qualityKaraoke;
     for (const entry of activeWords) {
-      applyWordOpacity(entry, t);
+      applyWordStyle(entry, t, quality);
     }
   }
 
@@ -174,17 +201,21 @@
       el,
       startMs: word.startMs,
       endMs: word.endMs,
+      rtl: isRTLText(word.text),
       lastOpacity: "",
+      lastMaskPos: "",
     };
     activeWords.add(entry);
-    applyWordOpacity(entry, clockNow() - lyricOffsetMs);
+    applyWordStyle(entry, clockNow() - lyricOffsetMs, qualityKaraoke);
 
     return {
       update(next: LyricWord) {
         entry.startMs = next.startMs;
         entry.endMs = next.endMs;
+        entry.rtl = isRTLText(next.text);
         entry.lastOpacity = "";
-        applyWordOpacity(entry, clockNow() - lyricOffsetMs);
+        entry.lastMaskPos = "";
+        applyWordStyle(entry, clockNow() - lyricOffsetMs, qualityKaraoke);
       },
       destroy() {
         activeWords.delete(entry);
@@ -209,6 +240,9 @@
     if (idx !== active) {
       active = idx;
     }
+    if (qualityKaraoke && lines[idx]?.text === instrumentalMark) {
+      clockTime = t;
+    }
     if (forcePaint) {
       paintWords(t);
       lastWordPaint = performance.now();
@@ -222,9 +256,23 @@
     if (!open || snap.state !== "playing") {
       return;
     }
-    const wake = nextClockWakeMs(lines, idx, t);
+    let wake = nextClockWakeMs(lines, idx, t);
     if (wake === null) {
       return;
+    }
+    if (wake > 0 && qualityKaraoke && lines[idx]?.text === instrumentalMark) {
+      const cur = lines[idx];
+      const gapEnd = lines.slice(idx + 1).find((l) => l.timeMs >= 0 && l.text.trim() !== instrumentalMark && l.text.trim() !== "")?.timeMs ?? -1;
+      if (gapEnd > cur.timeMs) {
+        const span = gapEnd - cur.timeMs;
+        for (const threshold of [0.05, 0.33, 0.66]) {
+          const at = cur.timeMs + span * threshold;
+          if (at > t) {
+            wake = Math.min(wake, at - t);
+            break;
+          }
+        }
+      }
     }
     if (wake === 0) {
       clockRaf = requestAnimationFrame(stepClock);
@@ -243,7 +291,7 @@
     const { t, idx } = syncClock(true, shouldPaint);
     const wake = nextClockWakeMs(lines, idx, t);
     if (wake !== 0 && !shouldPaint) {
-      // Snap finished words to full opacity before sleeping rAF.
+      // Snap finished words before sleeping rAF.
       paintWords(t);
       lastWordPaint = now;
     }
@@ -254,11 +302,13 @@
   $effect(() => {
     const pos = snap.position;
     const sameTrack = snap.path === clockPath;
+    const playing = sameTrack && snap.state === "playing";
+    const now = performance.now();
+    const prevNow = playing ? clockBase + (now - clockAt) : clockBase;
     clockPath = snap.path;
-    clockBase = pos;
-    clockAt = performance.now();
+    clockBase = reanchorClock(prevNow, pos, sameTrack, playing);
+    clockAt = now;
     untrack(() => {
-      const playing = sameTrack && snap.state === "playing";
       const forcePaint = !playing || clockRaf === undefined;
       const { t, idx } = syncClock(playing, forcePaint);
       if (clockRaf === undefined) {
@@ -267,11 +317,12 @@
     });
   });
 
-  // Sync active and words when lyrics mount/reload, the spinner clears, or the offset changes.
+  // Sync active and words when lyrics mount/reload, the spinner clears, or settings change.
   $effect(() => {
     void lines;
     void lyricOffsetMs;
     void showSpinner;
+    void qualityKaraoke;
     untrack(() => {
       const { t, idx } = syncClock(false, true);
       scheduleClock(t, idx);
@@ -311,6 +362,12 @@
   };
 
   const sweepBoth = $derived($appSettings.playback.lyrics.wordSweep !== "original");
+  const qualityKaraoke = $derived($appSettings.playback.lyrics.karaokeStyle === "quality");
+  const instrumentalProgress = $derived(
+    qualityKaraoke && lines[active]?.text === instrumentalMark
+      ? instrumentalNoteProgress(lines, active, clockTime, instrumentalMark)
+      : 0,
+  );
 
   const visualizerStyle = $derived($appSettings.general.visualizerStyle ?? "minimal");
   const visualizerFull = $derived($spectrumConfig.enabled && visualizerStyle === "full");
@@ -481,6 +538,8 @@
         {#if segment.word}
           <span
             class="lyric-word"
+            class:lyric-word-quality={qualityKaraoke}
+            class:lyric-word-rtl={qualityKaraoke && isRTLText(segment.text)}
             use:trackWord={segment.word}
           >{segment.text}</span>
         {:else}{segment.text}{/if}
@@ -660,9 +719,23 @@
                 >
                   {#if line.text === instrumentalMark}
                     <span class="inline-flex items-center gap-[2px]" aria-hidden="true">
-                      <MusicNote size={28} weight="fill" />
-                      <MusicNote size={28} weight="fill" />
-                      <MusicNote size={28} weight="fill" />
+                      {#if qualityKaraoke && i === active}
+                        {#each [0.05, 0.33, 0.66] as threshold (threshold)}
+                          <span
+                            class="inline-flex transition-[opacity,transform] duration-300 ease-out"
+                            class:opacity-100={instrumentalProgress >= threshold}
+                            class:scale-100={instrumentalProgress >= threshold}
+                            class:opacity-35={instrumentalProgress < threshold}
+                            class:scale-75={instrumentalProgress < threshold}
+                          >
+                            <MusicNote size={28} weight="fill" />
+                          </span>
+                        {/each}
+                      {:else}
+                        <MusicNote size={28} weight="fill" />
+                        <MusicNote size={28} weight="fill" />
+                        <MusicNote size={28} weight="fill" />
+                      {/if}
                     </span>
                   {:else}
                     <span class="block">{@render tier(tiers[0].text, tiers[0].words, i === active)}</span>
@@ -751,14 +824,57 @@
     }
   }
 
+  .lyric-word {
+    opacity: 0.3;
+  }
+
+  .lyric-word-quality {
+    opacity: 1;
+    -webkit-mask-image: linear-gradient(
+      to right,
+      #000,
+      #000 45%,
+      rgb(0 0 0 / 0.3) 55%,
+      rgb(0 0 0 / 0.3)
+    );
+    mask-image: linear-gradient(
+      to right,
+      #000,
+      #000 45%,
+      rgb(0 0 0 / 0.3) 55%,
+      rgb(0 0 0 / 0.3)
+    );
+    -webkit-mask-size: 225% 100%;
+    mask-size: 225% 100%;
+    -webkit-mask-position: 100% 0;
+    mask-position: 100% 0;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+  }
+
+  .lyric-word-rtl {
+    -webkit-mask-image: linear-gradient(
+      to left,
+      #000,
+      #000 45%,
+      rgb(0 0 0 / 0.3) 55%,
+      rgb(0 0 0 / 0.3)
+    );
+    mask-image: linear-gradient(
+      to left,
+      #000,
+      #000 45%,
+      rgb(0 0 0 / 0.3) 55%,
+      rgb(0 0 0 / 0.3)
+    );
+    -webkit-mask-position: 0% 0;
+    mask-position: 0% 0;
+  }
+
   /* Isolate only the active line onto its own layer so word-sweep repaints do
    * not invalidate the entire multi-thousand-pixel lyrics scroll layer. */
   .lyric-line-active {
     transform: translateZ(0);
     contain: layout paint;
-  }
-
-  .lyric-word {
-    opacity: 0.3;
   }
 </style>

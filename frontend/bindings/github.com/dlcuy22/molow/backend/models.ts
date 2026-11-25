@@ -254,6 +254,9 @@ export interface LyricsCacheClear {
  * 
  * PetitLyricsDelayMs shifts PetitLyrics timing in milliseconds (-2000 to 2000,
  * default 0): negative moves late lyrics earlier, positive delays early ones.
+ * KaraokeStyle picks how word-synced lyrics highlight each word: "performance"
+ * fades word opacity on the compositor, while "quality" sweeps a left-to-right
+ * gradient across the word and animates instrumental note progress.
  */
 export interface LyricsSettings {
     "providers": { [_ in string]?: boolean } | null;
@@ -264,6 +267,7 @@ export interface LyricsSettings {
     "romanizationLanguage": string;
     "autoSpacing": boolean;
     "wordSweep": string;
+    "karaokeStyle": string;
 }
 
 /**

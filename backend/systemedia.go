@@ -164,7 +164,7 @@ func (s *PlayerService) systemMediaCommands() systemedia.Commands {
 		// field was the old "the engine has no repeat mode" refusal.
 		SetLoop: func(name string) {
 			if mode, ok := repeatFromLoop(name); ok {
-				_ = s.player.SetRepeat(mode)
+				_ = s.SetRepeat(repeatName(mode))
 			}
 		},
 	}

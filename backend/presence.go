@@ -41,6 +41,10 @@ const (
 	ytmWatchURL = "https://music.youtube.com/watch?v="
 	// The project home, for the second button.
 	projectURL = "https://github.com/dlcuy22/molow"
+
+	// discordIdleTimeout tears down the RPC session after playback stays away
+	// from playing for five minutes, freeing the pipe and clearing status.
+	discordIdleTimeout = 5 * time.Minute
 )
 
 // DiscordStatus is the settings UI's read of the integration: whether the user
@@ -67,15 +71,47 @@ type presenceState struct {
 	manager  presenceManager
 	uploader *discordrpc.ImageUploader
 
+	// opMu serializes Start and Stop calls on manager so an async idle
+	// disconnect cannot overlap a reconnect, disable, or shutdown.
+	opMu sync.Mutex
+
 	// lastPath is the reference of the track the current activity describes, so
 	// a 4 Hz tick that changes nothing does no work.
 	lastPath string
 
-	// wg tracks the background art-resolution goroutines, so shutdown waits for
-	// them instead of letting one touch a torn-down engine. An Add is only ever
-	// made while enabled is true, and stop clears enabled under mu before
-	// waiting, so no Add can race the Wait.
+	idleSince        time.Time
+	idleDisconnected bool
+	now              func() time.Time
+
+	// wg tracks background art-resolution and connection-transition goroutines,
+	// so shutdown waits for them instead of letting one touch a torn-down
+	// engine. An Add is only ever made while manager is non-nil, and
+	// stopDiscord clears manager and enabled under mu before waiting, so no Add
+	// can race the Wait.
 	wg sync.WaitGroup
+}
+
+func (p *presenceState) clockNow() time.Time {
+	if p.now != nil {
+		return p.now()
+	}
+
+	return time.Now()
+}
+
+func (s *PlayerService) syncPresenceConnection(mgr presenceManager) {
+	s.presence.opMu.Lock()
+	defer s.presence.opMu.Unlock()
+
+	s.presence.mu.Lock()
+	wantRunning := s.presence.enabled && s.presence.manager == mgr && !s.presence.idleDisconnected
+	s.presence.mu.Unlock()
+
+	if wantRunning {
+		mgr.Start()
+	} else {
+		mgr.Stop()
+	}
 }
 
 // initDiscord restores the remembered choice at startup. The toggle lives in
@@ -120,9 +156,13 @@ func (s *PlayerService) SetDiscordEnabled(on bool) error {
 		s.presence.manager = nil
 		s.presence.enabled = false
 		s.presence.lastPath = ""
+		s.presence.idleSince = time.Time{}
+		s.presence.idleDisconnected = false
 		s.presence.mu.Unlock()
 		if mgr != nil {
+			s.presence.opMu.Lock()
 			mgr.Stop()
+			s.presence.opMu.Unlock()
 		}
 		if err := s.persistDiscordEnabled(false); err != nil {
 			s.log.Warn("discord: could not persist disabled state", "error", err)
@@ -152,9 +192,11 @@ func (s *PlayerService) SetDiscordEnabled(on bool) error {
 	s.presence.manager = mgr
 	s.presence.enabled = true
 	s.presence.lastPath = ""
+	s.presence.idleSince = time.Time{}
+	s.presence.idleDisconnected = false
 	s.presence.mu.Unlock()
 
-	mgr.Start()
+	s.syncPresenceConnection(mgr)
 	if err := s.persistDiscordEnabled(true); err != nil {
 		s.log.Warn("discord: could not persist enabled state", "error", err)
 	}
@@ -185,10 +227,15 @@ func (s *PlayerService) stopDiscord() {
 	mgr := s.presence.manager
 	s.presence.manager = nil
 	s.presence.enabled = false
+	s.presence.lastPath = ""
+	s.presence.idleSince = time.Time{}
+	s.presence.idleDisconnected = false
 	s.presence.mu.Unlock()
 	s.presence.wg.Wait()
 	if mgr != nil {
+		s.presence.opMu.Lock()
 		mgr.Stop()
+		s.presence.opMu.Unlock()
 	}
 }
 
@@ -203,6 +250,54 @@ func (s *PlayerService) syncPresence(snap Snapshot) {
 		s.presence.mu.Unlock()
 
 		return
+	}
+
+	playing := snap.State == "playing"
+	reconnect := false
+
+	if !playing {
+		if s.presence.idleDisconnected {
+			s.presence.mu.Unlock()
+
+			return
+		}
+		now := s.presence.clockNow()
+		if s.presence.idleSince.IsZero() {
+			s.presence.idleSince = now
+		} else if now.Sub(s.presence.idleSince) >= discordIdleTimeout {
+			s.presence.idleDisconnected = true
+			s.presence.lastPath = ""
+			// Clear the cached track under mu so a reconnect for another track
+			// cannot flash the previous one before async art resolves.
+			mgr.Clear()
+			s.presence.wg.Add(1)
+			s.presence.mu.Unlock()
+
+			s.logger().Info("discord: presence disconnected after idle timeout")
+			go func() {
+				defer s.presence.wg.Done()
+				s.syncPresenceConnection(mgr)
+			}()
+
+			return
+		}
+	} else {
+		s.presence.idleSince = time.Time{}
+		if s.presence.idleDisconnected {
+			s.presence.idleDisconnected = false
+			reconnect = true
+			s.presence.wg.Add(1)
+		}
+	}
+
+	if reconnect {
+		defer func() {
+			s.logger().Info("discord: presence reconnecting on playback")
+			go func() {
+				defer s.presence.wg.Done()
+				s.syncPresenceConnection(mgr)
+			}()
+		}()
 	}
 
 	// Nothing sounding is an empty presence, not a stale one.
@@ -410,9 +505,9 @@ func (s *PlayerService) resolvePresenceArt(snap Snapshot) {
 
 	s.presence.mu.Lock()
 	mgr := s.presence.manager
-	// A track change while this was in flight makes the result stale; the newer
-	// syncPresence already owns the activity.
-	stale := s.presence.lastPath != snap.Path
+	// A track change or idle disconnect while this was in flight makes the
+	// result stale; the newer syncPresence already owns the activity.
+	stale := s.presence.lastPath != snap.Path || s.presence.idleDisconnected
 	s.presence.mu.Unlock()
 	if mgr == nil || stale {
 		return

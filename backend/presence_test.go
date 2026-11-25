@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/dlcuy22/molow/internal/discordrpc"
 	"github.com/dlcuy22/molow/internal/library"
@@ -177,14 +179,42 @@ func TestDiscordEnabledRoundTrips(t *testing.T) {
 }
 
 type fakePresenceManager struct {
-	mu      sync.Mutex
-	updates []discordrpc.TrackInfo
-	clears  int
+	mu           sync.Mutex
+	updates      []discordrpc.TrackInfo
+	clears       int
+	starts       int
+	stops        int
+	disconnected bool
+	onStart      func()
+	onStop       func()
 }
 
-func (f *fakePresenceManager) Start()          {}
-func (f *fakePresenceManager) Stop()           {}
-func (f *fakePresenceManager) Connected() bool { return true }
+func (f *fakePresenceManager) Start() {
+	f.mu.Lock()
+	f.disconnected = false
+	f.starts++
+	hook := f.onStart
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+}
+func (f *fakePresenceManager) Stop() {
+	f.mu.Lock()
+	f.disconnected = true
+	f.stops++
+	hook := f.onStop
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+}
+func (f *fakePresenceManager) Connected() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return !f.disconnected
+}
 func (f *fakePresenceManager) Clear() {
 	f.mu.Lock()
 	f.clears++
@@ -200,6 +230,12 @@ func (f *fakePresenceManager) snapshot() []discordrpc.TrackInfo {
 	defer f.mu.Unlock()
 
 	return append([]discordrpc.TrackInfo(nil), f.updates...)
+}
+func (f *fakePresenceManager) stats() (starts, stops, clears int, connected bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.starts, f.stops, f.clears, !f.disconnected
 }
 
 // TestSyncPresenceStreamedUsesCachedLinksWithoutPlaceholder pins the hot path:
@@ -445,5 +481,231 @@ func TestSyncPresenceStreamedFallbackStillAvoidsDefaultLargeAsset(t *testing.T) 
 	want := "https://i.ytimg.com/vi/INnieyJ_QPE/hqdefault.jpg"
 	if updates[0].LargeImage != want {
 		t.Fatalf("LargeImage = %q, want %q", updates[0].LargeImage, want)
+	}
+}
+
+func newIdleTestService(mgr presenceManager, now *time.Time) *PlayerService {
+	index := newYTMIndex()
+	index.put(ytmTrack{
+		ID:             "vid1",
+		Title:          "Track A",
+		Artist:         "Artist A",
+		Album:          "Album A",
+		ThumbnailURL:   "https://lh3.googleusercontent.com/cover1",
+		ArtistID:       "UC1",
+		ArtistThumbURL: "https://lh3.googleusercontent.com/avatar1",
+		AlbumLoaded:    true,
+	})
+	index.put(ytmTrack{
+		ID:             "vid2",
+		Title:          "Track B",
+		Artist:         "Artist B",
+		Album:          "Album B",
+		ThumbnailURL:   "https://lh3.googleusercontent.com/cover2",
+		ArtistID:       "UC2",
+		ArtistThumbURL: "https://lh3.googleusercontent.com/avatar2",
+		AlbumLoaded:    true,
+	})
+
+	return &PlayerService{
+		ctx: context.Background(),
+		ytm: index,
+		presence: presenceState{
+			enabled: true,
+			manager: mgr,
+			now:     func() time.Time { return *now },
+		},
+	}
+}
+
+func TestSyncPresenceIdleDisconnectsAndReconnectsOnPlay(t *testing.T) {
+	now := time.Date(2026, 11, 26, 4, 0, 0, 0, time.UTC)
+	mgr := &fakePresenceManager{}
+	svc := newIdleTestService(mgr, &now)
+
+	trackA := Snapshot{State: "playing", Path: "ytm:vid1", Title: "Track A", Artist: "Artist A", Album: "Album A"}
+	svc.syncPresence(trackA)
+	svc.presence.wg.Wait()
+	if got := len(mgr.snapshot()); got != 1 {
+		t.Fatalf("initial updates = %d, want 1", got)
+	}
+
+	pausedA := trackA
+	pausedA.State = "paused"
+	svc.syncPresence(pausedA)
+
+	now = now.Add(4*time.Minute + 59*time.Second)
+	svc.syncPresence(pausedA)
+	svc.presence.wg.Wait()
+	if _, stops, _, _ := mgr.stats(); stops != 0 {
+		t.Fatalf("stops before timeout = %d, want 0", stops)
+	}
+	if st := svc.DiscordStatus(); !st.Enabled || !st.Connected {
+		t.Fatalf("status before timeout = %+v, want enabled & connected", st)
+	}
+
+	now = now.Add(1 * time.Second)
+	svc.syncPresence(pausedA)
+	svc.presence.wg.Wait()
+	if _, stops, clears, _ := mgr.stats(); stops != 1 || clears != 1 {
+		t.Fatalf("stops/clears at timeout = %d/%d, want 1/1", stops, clears)
+	}
+	if st := svc.DiscordStatus(); !st.Enabled || st.Connected {
+		t.Fatalf("status after timeout = %+v, want enabled & disconnected", st)
+	}
+
+	now = now.Add(1 * time.Minute)
+	svc.syncPresence(pausedA)
+	svc.presence.wg.Wait()
+	if _, stops, _, _ := mgr.stats(); stops != 1 {
+		t.Fatalf("duplicate stops while idle = %d, want 1", stops)
+	}
+
+	now = now.Add(1 * time.Minute)
+	svc.syncPresence(trackA)
+	svc.presence.wg.Wait()
+	if starts, stops, _, connected := mgr.stats(); starts != 1 || stops != 1 || !connected {
+		t.Fatalf("stats after play = starts=%d stops=%d connected=%v, want 1/1/true", starts, stops, connected)
+	}
+	if st := svc.DiscordStatus(); !st.Enabled || !st.Connected {
+		t.Fatalf("status after play = %+v, want enabled & connected", st)
+	}
+	if got := len(mgr.snapshot()); got != 2 {
+		t.Fatalf("updates after reconnect = %d, want 2", got)
+	}
+}
+
+func TestSyncPresenceResumeResetsIdleTimer(t *testing.T) {
+	now := time.Date(2026, 11, 26, 4, 0, 0, 0, time.UTC)
+	mgr := &fakePresenceManager{}
+	svc := newIdleTestService(mgr, &now)
+
+	playing := Snapshot{State: "playing", Path: "ytm:vid1", Title: "Track A", Artist: "Artist A"}
+	paused := playing
+	paused.State = "paused"
+
+	svc.syncPresence(playing)
+	svc.syncPresence(paused)
+
+	now = now.Add(4 * time.Minute)
+	svc.syncPresence(playing)
+
+	now = now.Add(1 * time.Minute)
+	svc.syncPresence(paused)
+
+	now = now.Add(4*time.Minute + 59*time.Second)
+	svc.syncPresence(paused)
+	svc.presence.wg.Wait()
+	if _, stops, _, _ := mgr.stats(); stops != 0 {
+		t.Fatalf("stops before second timeout = %d, want 0", stops)
+	}
+
+	now = now.Add(1 * time.Second)
+	svc.syncPresence(paused)
+	svc.presence.wg.Wait()
+	if _, stops, _, _ := mgr.stats(); stops != 1 {
+		t.Fatalf("stops at second timeout = %d, want 1", stops)
+	}
+}
+
+func TestSyncPresenceStoppedIdleDisconnectsAndReconnectsOnNewTrack(t *testing.T) {
+	now := time.Date(2026, 11, 26, 4, 0, 0, 0, time.UTC)
+	mgr := &fakePresenceManager{}
+	svc := newIdleTestService(mgr, &now)
+
+	svc.syncPresence(Snapshot{State: "playing", Path: "ytm:vid1", Title: "Track A", Artist: "Artist A"})
+	svc.syncPresence(Snapshot{State: "stopped"})
+
+	now = now.Add(5 * time.Minute)
+	svc.syncPresence(Snapshot{State: "stopped"})
+	svc.presence.wg.Wait()
+	if _, stops, _, _ := mgr.stats(); stops != 1 {
+		t.Fatalf("stops after stopped idle = %d, want 1", stops)
+	}
+
+	svc.syncPresence(Snapshot{State: "playing", Path: "ytm:vid2", Title: "Track B", Artist: "Artist B"})
+	svc.presence.wg.Wait()
+	if starts, _, _, connected := mgr.stats(); starts != 1 || !connected {
+		t.Fatalf("stats after new track = starts=%d connected=%v, want 1/true", starts, connected)
+	}
+	updates := mgr.snapshot()
+	if len(updates) != 2 || updates[1].Title != "Track B" {
+		t.Fatalf("updates = %+v, want Track B as second update", updates)
+	}
+}
+
+func TestSyncPresenceIdleDisconnectAndPlaySerializeLifecycle(t *testing.T) {
+	now := time.Date(2026, 11, 26, 4, 0, 0, 0, time.UTC)
+	var inFlight atomic.Int32
+	var overlapped atomic.Bool
+	stopStarted := make(chan struct{})
+	var stopOnce sync.Once
+
+	mgr := &fakePresenceManager{
+		onStop: func() {
+			if inFlight.Add(1) != 1 {
+				overlapped.Store(true)
+			}
+			stopOnce.Do(func() { close(stopStarted) })
+			time.Sleep(20 * time.Millisecond)
+			inFlight.Add(-1)
+		},
+		onStart: func() {
+			if inFlight.Add(1) != 1 {
+				overlapped.Store(true)
+			}
+			inFlight.Add(-1)
+		},
+	}
+	svc := newIdleTestService(mgr, &now)
+
+	playing := Snapshot{State: "playing", Path: "ytm:vid1", Title: "Track A", Artist: "Artist A"}
+	paused := playing
+	paused.State = "paused"
+
+	svc.syncPresence(playing)
+	svc.syncPresence(paused)
+
+	now = now.Add(5 * time.Minute)
+	svc.syncPresence(paused)
+	<-stopStarted
+	svc.syncPresence(playing)
+	svc.presence.wg.Wait()
+
+	if overlapped.Load() {
+		t.Fatal("Stop and Start overlapped")
+	}
+	if starts, stops, _, connected := mgr.stats(); starts != 1 || stops != 1 || !connected {
+		t.Fatalf("stats = starts=%d stops=%d connected=%v, want 1/1/true", starts, stops, connected)
+	}
+	if got := len(mgr.snapshot()); got != 2 {
+		t.Fatalf("updates = %d, want 2", got)
+	}
+}
+
+func TestSyncPresenceStopDiscordPreventsReconnectOnPlay(t *testing.T) {
+	now := time.Date(2026, 11, 26, 4, 0, 0, 0, time.UTC)
+	mgr := &fakePresenceManager{}
+	svc := newIdleTestService(mgr, &now)
+
+	playing := Snapshot{State: "playing", Path: "ytm:vid1", Title: "Track A", Artist: "Artist A"}
+	paused := playing
+	paused.State = "paused"
+
+	svc.syncPresence(playing)
+	svc.syncPresence(paused)
+	now = now.Add(5 * time.Minute)
+	svc.syncPresence(paused)
+	svc.presence.wg.Wait()
+
+	svc.stopDiscord()
+	svc.syncPresence(playing)
+	svc.presence.wg.Wait()
+
+	if starts, _, _, _ := mgr.stats(); starts != 0 {
+		t.Fatalf("starts after stopDiscord = %d, want 0", starts)
+	}
+	if st := svc.DiscordStatus(); st.Enabled || st.Connected {
+		t.Fatalf("status after stopDiscord = %+v, want disabled & disconnected", st)
 	}
 }

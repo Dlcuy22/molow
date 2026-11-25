@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -615,10 +616,14 @@ func (s *PlayerService) ImportYTM(libraryID string, hit YTMResult) (YTMImport, e
 		if !hit.Playable {
 			return YTMImport{}, fmt.Errorf("ytm: %q is not a track", hit.Title)
 		}
+		single := []YTMResult{hit}
+		s.enrichYTMResults(s.ctx, single)
+		hit = single[0]
 		if _, err := s.catalogYTM(dst, hit, s.storeYTMCover(hit.Thumbnail)); err != nil {
 			return YTMImport{}, err
 		}
 		s.refreshLibraryCover(libraryID)
+		s.emit(eventLibrary, LibraryProgress{LibraryID: libraryID, Done: 1, Total: 1, State: "ready"})
 
 		return YTMImport{Name: name, Tracks: 1}, nil
 	}
@@ -633,6 +638,7 @@ func (s *PlayerService) ImportYTM(libraryID string, hit YTMResult) (YTMImport, e
 	if name == "" {
 		name = strings.TrimSpace(hit.Title)
 	}
+	s.enrichYTMResults(s.ctx, rows)
 	covers := s.storeYTMCovers(rows)
 	refs := make([]string, 0, len(rows))
 	for i, row := range rows {
@@ -657,8 +663,64 @@ func (s *PlayerService) ImportYTM(libraryID string, hit YTMResult) (YTMImport, e
 	}
 	s.refreshPlaylistCover(playlist.ID)
 	s.refreshLibraryCover(libraryID)
+	s.emit(eventLibrary, LibraryProgress{LibraryID: libraryID, Done: len(refs), Total: len(refs), State: "ready"})
 
 	return YTMImport{PlaylistID: playlist.ID, Name: name, Tracks: len(refs)}, nil
+}
+
+// enrichYTMResults hydrates missing album, artist, artistId, duration, and
+// thumbnail metadata for imported tracks via loadSong so albums and artists
+// populate the library immediately without waiting for playback.
+func (s *PlayerService) enrichYTMResults(ctx context.Context, rows []YTMResult) {
+	if s.ytmProv == nil || len(rows) == 0 {
+		return
+	}
+	loadSong := s.ytmProv.calls().loadSong
+	if loadSong == nil {
+		return
+	}
+
+	var need []int
+	for i := range rows {
+		r := &rows[i]
+		if r.VideoID != "" && (r.Album == "" || r.Artist == "" || r.ArtistID == "" || r.Thumbnail == "") {
+			need = append(need, i)
+		}
+	}
+	if len(need) == 0 {
+		return
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, ytmHTTPTimeout)
+	defer cancel()
+
+	sem := make(chan struct{}, ytmCoverWorkers)
+	var wg sync.WaitGroup
+	for _, idx := range need {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-reqCtx.Done():
+				return
+			}
+			defer func() { <-sem }()
+
+			song, err := loadSong(reqCtx, rows[i].VideoID)
+			if err != nil || song == nil {
+				return
+			}
+			rows[i].Album = firstNonEmpty(rows[i].Album, ytmAlbum(song.Album))
+			rows[i].Artist = firstNonEmpty(rows[i].Artist, ytmArtists(song.Artists))
+			rows[i].ArtistID = firstNonEmpty(rows[i].ArtistID, ytmFirstArtistID(song.Artists))
+			rows[i].Thumbnail = firstNonEmpty(rows[i].Thumbnail, ytmThumb(song.Thumbnail))
+			if rows[i].DurationMs == 0 && song.DurationMs > 0 {
+				rows[i].DurationMs = song.DurationMs
+			}
+		}(idx)
+	}
+	wg.Wait()
 }
 
 // storeYTMCover fetches one thumbnail into the art cache and returns its cover id. A

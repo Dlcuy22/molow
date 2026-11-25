@@ -111,3 +111,33 @@ func TestImportYTMRejectsAnAlbum(t *testing.T) {
 		t.Fatalf("rejected import left %+v", lists)
 	}
 }
+
+func TestImportYTMPlaylistHydratesMissingAlbumsAndArtists(t *testing.T) {
+	svc, store := newTestLibraries(t, t.TempDir())
+	svc.ytm = newYTMIndex()
+	prov := ytmTestProvider("Favorit", "vid1", "vid2")
+	prov.loadSong = func(_ context.Context, id string) (*ytm.Song, error) {
+		return &ytm.Song{
+			ID:      id,
+			Name:    "Song " + id,
+			Artists: []ytm.Artist{{ID: "UC" + id, Name: "Artist " + id}},
+			Album:   &ytm.Playlist{ID: "MPREb_" + id, Name: "Album " + id},
+		}, nil
+	}
+	svc.ytmProv = prov
+
+	if _, err := svc.ImportYTM(defaultLibraryID, YTMResult{
+		VideoID: "PL99", Title: "Favorit", Kind: "Playlist",
+	}); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	albums, totalAlbums, err := store.Albums(defaultLibraryID, 10, 0)
+	if err != nil || totalAlbums != 2 || len(albums) != 2 {
+		t.Fatalf("albums = %+v (total=%d), err=%v", albums, totalAlbums, err)
+	}
+	artists, totalArtists, err := store.Artists(defaultLibraryID, 10, 0)
+	if err != nil || totalArtists != 2 || len(artists) != 2 {
+		t.Fatalf("artists = %+v (total=%d), err=%v", artists, totalArtists, err)
+	}
+}

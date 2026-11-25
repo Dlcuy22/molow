@@ -55,6 +55,11 @@
     0 1px 3px hsl(0 0% 0% / 0.4);
 
   --ease-panel: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.22, 1.12, 0.36, 1);
+  --dur-fast: 120ms;
+  --dur-panel: 180ms;
+  --dur-popover: 250ms;
 }
 
 /* Audio level meters use a fixed green-yellow-red scale so the color carries
@@ -263,6 +268,12 @@ body {
 .scroll-thin {
   scrollbar-width: thin;
   scrollbar-color: var(--color-line) transparent;
+}
+.scroll-none {
+  scrollbar-width: none;
+}
+.scroll-none::-webkit-scrollbar {
+  display: none;
 }
 @supports not (scrollbar-color: auto) {
   .scroll-thin::-webkit-scrollbar {
@@ -556,4 +567,60 @@ body {
 }
 .fader:disabled::-moz-range-thumb {
   background: var(--color-disabled);
+}
+
+/* Shared compositor-only entrance motion for popovers, menus, and dialogs. */
+.motion-popover {
+  transform-origin: top left;
+  will-change: transform, opacity;
+  animation: motion-popover-in var(--dur-popover) var(--ease-spring) both;
+}
+
+.motion-dialog {
+  transform-origin: center top;
+  will-change: transform, opacity;
+  animation: motion-dialog-in var(--dur-popover) var(--ease-spring) both;
+}
+
+.motion-scrim {
+  animation: motion-scrim-in var(--dur-panel) var(--ease-out) both;
+}
+
+@keyframes motion-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes motion-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes motion-scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-popover,
+  .motion-dialog,
+  .motion-scrim {
+    animation: none;
+  }
 }

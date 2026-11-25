@@ -635,14 +635,14 @@
 -->
 {#if open}
   <div
-    class="fixed inset-0 z-50 flex justify-center bg-black/50 p-4"
+    class="motion-scrim fixed inset-0 z-50 flex justify-center bg-black/50 p-4"
     role="presentation"
     onclick={(e) => {
       if (e.target === e.currentTarget) onclose();
     }}
   >
     <div
-      class="mt-[8vh] flex max-h-[70vh] w-full max-w-xl flex-col overflow-hidden rounded-[6px] border border-line bg-surface"
+      class="motion-dialog mt-[8vh] flex max-h-[70vh] w-full max-w-xl flex-col overflow-hidden rounded-[6px] border border-line bg-surface"
       role="dialog"
       aria-modal="true"
       aria-label={importMode

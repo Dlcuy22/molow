@@ -123,6 +123,7 @@
   bind:this={el}
   class="fixed z-50 min-w-48 rounded-[6px] border border-line bg-surface py-1 shadow-menu"
   class:invisible={!placed}
+  class:motion-popover={placed}
   style="left:{left}px; top:{top}px"
   role="menu"
   aria-label="Actions for {target.label}"

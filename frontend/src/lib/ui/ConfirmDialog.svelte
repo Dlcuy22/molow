@@ -29,9 +29,9 @@
   }
 </script>
 
-<div class="fixed inset-0 z-50 grid place-items-center bg-black/40" role="presentation">
+<div class="motion-scrim fixed inset-0 z-50 grid place-items-center bg-black/40" role="presentation">
   <div
-    class="w-[min(360px,calc(100vw-32px))] rounded-lg border border-line bg-surface p-4 shadow-menu"
+    class="motion-dialog w-[min(360px,calc(100vw-32px))] rounded-lg border border-line bg-surface p-4 shadow-menu"
     role="dialog"
     aria-modal="true"
     aria-label={title}

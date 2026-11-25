@@ -23,7 +23,7 @@
 </script>
 
 <div
-  class="fixed z-40 w-[240px] rounded-lg bg-surface p-1.5 shadow-menu"
+  class="motion-popover fixed z-40 w-[240px] origin-top-right rounded-lg bg-surface p-1.5 shadow-menu"
   style="top:{top}px; right:{right}px"
   role="menu"
   tabindex="-1"

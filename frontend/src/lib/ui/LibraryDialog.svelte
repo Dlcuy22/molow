@@ -91,12 +91,12 @@
 </script>
 
 <div
-  class="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
+  class="motion-scrim fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
   role="presentation"
   onpointerdown={handleBackdropPointerDown}
 >
   <div
-    class="w-[min(420px,calc(100vw-32px))] rounded-lg border border-line bg-surface p-5 shadow-menu"
+    class="motion-dialog w-[min(420px,calc(100vw-32px))] rounded-lg border border-line bg-surface p-5 shadow-menu"
     role="dialog"
     aria-modal="true"
     aria-labelledby="library-dialog-title"

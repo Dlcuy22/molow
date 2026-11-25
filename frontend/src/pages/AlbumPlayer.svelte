@@ -586,93 +586,93 @@
   </button>
 
   <div
-    class="player-stage absolute top-[18%] w-[28.2%] min-w-[240px] max-w-[333px] {centerPlayer ? 'left-1/2 -translate-x-1/2' : 'left-[12%] translate-x-0'}"
+    class="player-stage absolute top-1/2 w-[clamp(240px,min(28.2vw,50vh),520px)] -translate-x-1/2 -translate-y-1/2 {centerPlayer ? 'left-1/2' : 'left-1/4'}"
   >
-    <Cover id={heldCoverId} alt={snap.album} size={333} radius={16} fill class="w-full" />
+      <Cover id={heldCoverId} alt={snap.album} size={520} radius={16} fill class="w-full" />
 
-    <Marquee
-      text={snap.title || "Nothing playing"}
-      class="mt-[11px] font-display text-[20px] font-[600] leading-tight"
-    />
-    {#if onopenArtist && snap.path.startsWith("ytm:") && snap.artist}
-      <button
-        type="button"
-        class="max-w-full cursor-pointer truncate rounded-sm text-left text-[12px] leading-tight text-fg/56 transition-colors hover:text-fg hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-        onclick={() => onopenArtist(snap.path, snap.artist, snap.artistId)}
-      >
-        {snap.artist}
-      </button>
-    {:else}
-      <p class="truncate text-[12px] leading-tight text-fg/56">{snap.artist}</p>
-    {/if}
-
-    <div class="mt-[16px] flex items-center justify-between text-[10px] tabular-nums">
-      <span>{formatTime(position)}</span>
-      <span>{formatTime(remaining)}</span>
-    </div>
-    <div class="mt-1">
-      <SeekBar
-        position={snap.position}
-        {duration}
-        tone="fg"
-        onseek={(ms) => onseek(ms)}
+      <Marquee
+        text={snap.title || "Nothing playing"}
+        class="mt-[clamp(10px,1.2vh,16px)] font-display text-[clamp(20px,1.55vw,28px)] font-[600] leading-tight"
       />
-    </div>
+      {#if onopenArtist && snap.path.startsWith("ytm:") && snap.artist}
+        <button
+          type="button"
+          class="max-w-full cursor-pointer truncate rounded-sm text-left text-[clamp(12px,0.95vw,16px)] leading-tight text-fg/56 transition-colors hover:text-fg hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          onclick={() => onopenArtist(snap.path, snap.artist, snap.artistId)}
+        >
+          {snap.artist}
+        </button>
+      {:else}
+        <p class="truncate text-[clamp(12px,0.95vw,16px)] leading-tight text-fg/56">{snap.artist}</p>
+      {/if}
 
-    <div class="mx-auto mt-4 flex w-[253px] max-w-full items-center justify-between">
-      <button
-        class="dock-btn dock-chip -m-[5.5px] grid size-9 place-items-center rounded-md text-fg transition-colors disabled:text-disabled"
-        class:text-muted={!snap.shuffled}
-        disabled={queue.length === 0}
-        aria-label={snap.shuffled ? "Shuffle on" : "Shuffle off"}
-        aria-pressed={snap.shuffled}
-        onclick={() => commands.shuffle(!snap.shuffled)}
-      >
-        <Shuffle size="25" weight={snap.shuffled ? "fill" : "regular"} />
-      </button>
-      <button
-        class="dock-btn -m-[5.5px] grid size-9 place-items-center text-fg transition-colors disabled:text-disabled"
-        disabled={queue.length === 0}
-        aria-label="Previous track"
-        onclick={() => commands.prev()}
-      >
-        <SkipBack size="25" weight="fill" />
-      </button>
-      <button
-        class="dock-btn dock-chip -m-[4px] grid size-10 place-items-center rounded-md text-fg transition-colors disabled:text-disabled"
-        disabled={queue.length === 0}
-        aria-label={snap.state === "playing" ? "Pause" : "Play"}
-        onclick={() => commands.togglePause()}
-      >
-        {#if snap.state === "playing"}
-          <Pause size="32" weight="fill" />
-        {:else}
-          <Play size="32" weight="fill" class="-translate-x-[1.5px]" />
-        {/if}
-      </button>
-      <button
-        class="dock-btn -m-[5.5px] grid size-9 place-items-center text-fg transition-colors disabled:text-disabled"
-        disabled={queue.length === 0}
-        aria-label="Next track"
-        onclick={() => commands.next()}
-      >
-        <SkipForward size="25" weight="fill" />
-      </button>
-      <button
-        class="dock-btn dock-chip -m-[5.5px] grid size-9 place-items-center rounded-md text-fg transition-colors disabled:text-disabled"
-        class:text-muted={snap.repeat === "off"}
-        aria-label={snap.repeat === "off" ? "Repeat off" : "Repeat on"}
-        aria-pressed={snap.repeat !== "off"}
-        onclick={() => commands.setRepeat(snap.repeat === "off" ? "all" : "off")}
-      >
-        {#if snap.repeat === "one"}
-          <RepeatOnce size="25" weight="fill" />
-        {:else}
-          <Repeat size="25" weight={snap.repeat === "all" ? "fill" : "regular"} />
-        {/if}
-      </button>
+      <div class="mt-[clamp(14px,1.8vh,22px)] flex items-center justify-between text-[clamp(10px,0.8vw,13px)] tabular-nums">
+        <span>{formatTime(position)}</span>
+        <span>{formatTime(remaining)}</span>
+      </div>
+      <div class="mt-1.5">
+        <SeekBar
+          position={snap.position}
+          {duration}
+          tone="fg"
+          onseek={(ms) => onseek(ms)}
+        />
+      </div>
+
+      <div class="mx-auto mt-[clamp(14px,1.8vh,22px)] flex w-[clamp(240px,22vw,340px)] max-w-full items-center justify-between text-[clamp(24px,2.05vw,32px)]">
+        <button
+          class="dock-btn dock-chip -m-[0.22em] grid size-[1.5em] place-items-center rounded-md text-fg transition-colors disabled:text-disabled"
+          class:text-muted={!snap.shuffled}
+          disabled={queue.length === 0}
+          aria-label={snap.shuffled ? "Shuffle on" : "Shuffle off"}
+          aria-pressed={snap.shuffled}
+          onclick={() => commands.shuffle(!snap.shuffled)}
+        >
+          <Shuffle size="1em" weight={snap.shuffled ? "fill" : "regular"} />
+        </button>
+        <button
+          class="dock-btn -m-[0.22em] grid size-[1.5em] place-items-center text-fg transition-colors disabled:text-disabled"
+          disabled={queue.length === 0}
+          aria-label="Previous track"
+          onclick={() => commands.prev()}
+        >
+          <SkipBack size="1em" weight="fill" />
+        </button>
+        <button
+          class="dock-btn dock-chip -m-[0.16em] grid size-[1.65em] place-items-center rounded-md text-fg transition-colors disabled:text-disabled"
+          disabled={queue.length === 0}
+          aria-label={snap.state === "playing" ? "Pause" : "Play"}
+          onclick={() => commands.togglePause()}
+        >
+          {#if snap.state === "playing"}
+            <Pause size="1.3em" weight="fill" />
+          {:else}
+            <Play size="1.3em" weight="fill" class="-translate-x-[1.5px]" />
+          {/if}
+        </button>
+        <button
+          class="dock-btn -m-[0.22em] grid size-[1.5em] place-items-center text-fg transition-colors disabled:text-disabled"
+          disabled={queue.length === 0}
+          aria-label="Next track"
+          onclick={() => commands.next()}
+        >
+          <SkipForward size="1em" weight="fill" />
+        </button>
+        <button
+          class="dock-btn dock-chip -m-[0.22em] grid size-[1.5em] place-items-center rounded-md text-fg transition-colors disabled:text-disabled"
+          class:text-muted={snap.repeat === "off"}
+          aria-label={snap.repeat === "off" ? "Repeat off" : "Repeat on"}
+          aria-pressed={snap.repeat !== "off"}
+          onclick={() => commands.setRepeat(snap.repeat === "off" ? "all" : "off")}
+        >
+          {#if snap.repeat === "one"}
+            <RepeatOnce size="1em" weight="fill" />
+          {:else}
+            <Repeat size="1em" weight={snap.repeat === "all" ? "fill" : "regular"} />
+          {/if}
+        </button>
+      </div>
     </div>
-  </div>
 
   <div
     class="absolute inset-y-0 left-1/2 right-0 pr-9 transition-opacity duration-300 ease-out {centerPlayer ? 'pointer-events-none opacity-0' : 'opacity-100'}"
@@ -710,7 +710,7 @@
         </div>
       {:else if lines.length > 0}
         <div
-          class="flex flex-col gap-[22px] py-[calc(50vh-22px)] pl-2"
+          class="flex flex-col gap-[clamp(20px,2.6vh,34px)] py-[calc(50vh-22px)] pl-2 pr-[clamp(8px,2vw,40px)]"
           in:fade={{ duration: SPINNER_FADE_MS }}
         >
           {#each lines as line, i (line.timeMs + ":" + i)}
@@ -727,7 +727,7 @@
                      to that second, ends any browse session and centres the
                      chosen line. -->
                 <button
-                  class="cursor-pointer rounded-md border-0 bg-transparent p-0 text-left font-jp text-[28px] font-medium leading-[1.4] text-inherit transition-opacity hover:opacity-80"
+                  class="cursor-pointer rounded-md border-0 bg-transparent p-0 text-left font-jp text-[clamp(24px,2.3vw,40px)] font-medium leading-[1.4] text-inherit transition-opacity hover:opacity-80"
                   onclick={() => {
                     onseek(seekTargetMs(line.timeMs, lyricOffsetMs));
                     endUserScroll();
@@ -746,37 +746,37 @@
                             class:opacity-35={instrumentalProgress < threshold}
                             class:scale-75={instrumentalProgress < threshold}
                           >
-                            <MusicNote size={28} weight="fill" />
+                            <MusicNote size="1em" weight="fill" />
                           </span>
                         {/each}
                       {:else}
-                        <MusicNote size={28} weight="fill" />
-                        <MusicNote size={28} weight="fill" />
-                        <MusicNote size={28} weight="fill" />
+                        <MusicNote size="1em" weight="fill" />
+                        <MusicNote size="1em" weight="fill" />
+                        <MusicNote size="1em" weight="fill" />
                       {/if}
                     </span>
                   {:else}
                     <span class="block">{@render tier(tiers[0].text, tiers[0].words, i === active)}</span>
                     {#if tiers[1]}
-                      <span class="mt-[3px] block font-jp text-[17px] font-normal italic leading-[1.4] text-fg/56">
+                      <span class="mt-[3px] block font-jp text-[clamp(15px,1.45vw,24px)] font-normal italic leading-[1.4] text-fg/56">
                         {@render tier(tiers[1].text, tiers[1].words, i === active && sweepBoth)}
                       </span>
                     {/if}
                   {/if}
                 </button>
               {:else}
-                <p class="font-jp text-[28px] font-medium leading-[1.4]">
+                <p class="font-jp text-[clamp(24px,2.3vw,40px)] font-medium leading-[1.4]">
                   {@render tier(tiers[0].text, tiers[0].words, false)}
                 </p>
                 {#if tiers[1]}
-                  <p class="mt-[3px] font-jp text-[17px] font-normal italic leading-[1.4] text-fg/56">
+                  <p class="mt-[3px] font-jp text-[clamp(15px,1.45vw,24px)] font-normal italic leading-[1.4] text-fg/56">
                     {@render tier(tiers[1].text, tiers[1].words, false)}
                   </p>
                 {/if}
               {/if}
               {#if line.translation}
                 <p
-                  class="text-[26px] font-semibold leading-[1.4]"
+                  class="text-[clamp(22px,2.1vw,34px)] font-semibold leading-[1.4]"
                   class:opacity-[0.65]={i === active}
                   class:opacity-20={i !== active}
                 >

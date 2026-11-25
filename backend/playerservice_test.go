@@ -186,6 +186,8 @@ func TestSetShuffleReachesTheEngine(t *testing.T) {
 // TestSetRepeatReachesTheEngine pins the three-mode command wiring and that an
 // unknown string is refused rather than silently mapped to off.
 func TestSetRepeatReachesTheEngine(t *testing.T) {
+	isolateConfig(t)
+
 	fp := newFakePlayer()
 	svc := newPlayerService()
 	svc.player = fp

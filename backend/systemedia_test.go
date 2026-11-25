@@ -205,6 +205,8 @@ func TestSystemMediaLoopMapsRepeat(t *testing.T) {
 // MPRIS name is mapped back to the engine mode, and an unknown name is ignored
 // rather than stored.
 func TestSystemMediaSetLoopReachesTheEngine(t *testing.T) {
+	isolateConfig(t)
+
 	fake := newFakePlayer()
 	svc := &PlayerService{player: fake}
 	cmd := svc.systemMediaCommands()

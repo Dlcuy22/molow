@@ -507,6 +507,19 @@ export interface TrackCacheClear {
 }
 
 /**
+ * YTMAddTarget describes a destination playlist for importing a single song
+ * into a YouTube Music account library.
+ */
+export interface YTMAddTarget {
+    "playlistId": string;
+    "remoteId": string;
+    "title": string;
+    "subtitle"?: string;
+    "thumbnail"?: string;
+    "hasVideo"?: boolean;
+}
+
+/**
  * YTMArtistAlbum is one album or single card on a YouTube Music artist page.
  */
 export interface YTMArtistAlbum {
@@ -578,6 +591,8 @@ export interface YTMImport {
     "playlistId"?: string;
     "name": string;
     "tracks": number;
+    "needsTarget"?: boolean;
+    "duplicate"?: boolean;
 }
 
 /**
@@ -602,4 +617,14 @@ export interface YTMResult {
      */
     "artistId": string;
     "playable": boolean;
+}
+
+/**
+ * YTMSongTarget selects where a single YouTube Music song import lands.
+ */
+export interface YTMSongTarget {
+    "liked"?: boolean;
+    "playlistId"?: string;
+    "newPlaylist"?: string;
+    "allowDuplicate"?: boolean;
 }

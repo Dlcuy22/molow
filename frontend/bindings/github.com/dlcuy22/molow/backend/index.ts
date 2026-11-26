@@ -38,11 +38,13 @@ export type {
     SpectrumConfig,
     StreamSettings,
     TrackCacheClear,
+    YTMAddTarget,
     YTMArtistAlbum,
     YTMArtistRef,
     YTMArtistTrack,
     YTMArtistVideo,
     YTMArtistViewData,
     YTMImport,
-    YTMResult
+    YTMResult,
+    YTMSongTarget
 } from "./models.js";

@@ -118,6 +118,15 @@ export function AuthStatus(): $CancellablePromise<$models.AuthStatus> {
 }
 
 /**
+ * CheckKeyring probes whether the platform secret store (Credential Manager on
+ * Windows, Secret Service daemon on Linux, Keychain on macOS) is reachable and
+ * unlocked before opening the sign-in flow.
+ */
+export function CheckKeyring(): $CancellablePromise<void> {
+    return $Call.ByID(2580835784);
+}
+
+/**
  * ClearLogFile empties the log file in place, so a press starts the log over
  * at zero and the file never goes away. Windows refuses to delete a file a
  * handle is open on, so the clear truncates instead of removing it. The
@@ -285,18 +294,22 @@ export function ImportFolder(libraryID: string, path: string): $CancellablePromi
 }
 
 /**
- * ImportYTM copies a YouTube Music hit into a library's catalogue. The hit is
- * the row the palette listed: a song becomes one track, and a playlist becomes
- * a playlist row carrying its remote id plus its entries. Everything is an
- * ordinary catalogue row afterwards, so browsing, liking and playback need no
- * special case.
- * 
- * The hit carries the metadata the search already showed, so a song costs no
- * second request; a playlist is one catalogue walk, bounded the same way
- * queueing one is.
+ * ImportYTM copies a YouTube Music hit into a library's catalogue. For local
+ * libraries it creates a local-only copy; for a KindYTM account library it
+ * saves playlists directly to YouTube Music and signals NeedsTarget for single
+ * songs so the UI can ask where the song should go.
  */
 export function ImportYTM(libraryID: string, hit: $models.YTMResult): $CancellablePromise<$models.YTMImport> {
     return $Call.ByID(2718073968, libraryID, hit);
+}
+
+/**
+ * ImportYTMSong pushes a single song import into a KindYTM account library:
+ * either liking it (Liked Music), adding it to an existing owned playlist with
+ * duplicate checking, or creating a new private playlist holding it.
+ */
+export function ImportYTMSong(libraryID: string, hit: $models.YTMResult, to: $models.YTMSongTarget): $CancellablePromise<$models.YTMImport> {
+    return $Call.ByID(2068565145, libraryID, hit, to);
 }
 
 /**
@@ -568,8 +581,8 @@ export function RenamePlaylist(libraryID: string, playlistID: string, name: stri
 }
 
 /**
- * RescanLibrary rescans every watched root on a worker. A scan already running
- * is not duplicated.
+ * RescanLibrary rescans every watched root on a worker (or re-syncs a YTM
+ * account library). A scan already running is not duplicated.
  */
 export function RescanLibrary(id: string): $CancellablePromise<void> {
     return $Call.ByID(967501736, id);
@@ -736,7 +749,7 @@ export function SetVolume(v: number): $CancellablePromise<void> {
 /**
  * SignIn opens the login window and waits for a session.
  * 
- * The window is a separate GTK toplevel on its own cookie jar, because a Wails
+ * The window is an isolated browser view on its own cookie jar, because a Wails
  * webview exposes no cookie API and the cookies that matter are HttpOnly. It is
  * closed as soon as the session is captured, and its profile directory is
  * removed, so nothing is left behind.
@@ -759,11 +772,19 @@ export function SignInWithCookieHeader(header: string): $CancellablePromise<void
 }
 
 /**
- * SignOut forgets the stored session. It reports no error when nothing was
- * stored, so a second sign-out is harmless.
+ * SignOut forgets the stored session, keeping any cached YTM library rows on
+ * disk in signedOut state.
  */
 export function SignOut(): $CancellablePromise<void> {
     return $Call.ByID(1134654828);
+}
+
+/**
+ * SignOutWithOptions forgets the stored session and optionally deletes all
+ * cached YouTube Music libraries from library.db.
+ */
+export function SignOutWithOptions(deleteLibrary: boolean): $CancellablePromise<void> {
+    return $Call.ByID(188184922, deleteLibrary);
 }
 
 /**
@@ -826,6 +847,13 @@ export function TogglePause(): $CancellablePromise<void> {
  */
 export function UpdateLibrary(id: string, name: string, description: string): $CancellablePromise<library$0.Library> {
     return $Call.ByID(2641423699, id, name, description);
+}
+
+/**
+ * YTMAddTargets lists the owned playlists that can receive videoID in libraryID.
+ */
+export function YTMAddTargets(libraryID: string, videoID: string): $CancellablePromise<$models.YTMAddTarget[] | null> {
+    return $Call.ByID(30479916, libraryID, videoID);
 }
 
 /**

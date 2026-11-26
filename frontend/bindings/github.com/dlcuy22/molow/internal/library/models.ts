@@ -122,6 +122,7 @@ export interface Playlist {
     "coverId"?: string;
     "customCover"?: boolean;
     "coverIds"?: string[] | null;
+    "owned": boolean;
 }
 
 /**

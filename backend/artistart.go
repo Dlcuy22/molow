@@ -53,16 +53,21 @@ func (a *ytmArtistIndex) put(id, url string) {
 // artistAvatarBytes resolves the artist's avatar and returns normalized image
 // bytes and MIME type, or false when none is available.
 func (p *ytmProvider) artistAvatarBytes(ctx context.Context, artistID string) ([]byte, string, bool) {
+	return p.artistAvatarBytesForEdge(ctx, artistID, artwork.MaxEdge)
+}
+
+func (p *ytmProvider) artistAvatarBytesForEdge(ctx context.Context, artistID string, edge int) ([]byte, string, bool) {
 	if artistID == "" {
 		return nil, "", false
 	}
+	edge = artwork.NormalizeThumbEdge(edge)
 
 	if p.art != nil {
 		p.avatarMu.Lock()
 		artID := p.avatarIDs[artistID]
 		p.avatarMu.Unlock()
 		if artID != "" {
-			if data, mime, ok := p.art.Bytes(artID); ok {
+			if data, mime, ok := p.art.ThumbBytes(artID, edge); ok {
 				return data, mime, true
 			}
 		}
@@ -86,14 +91,14 @@ func (p *ytmProvider) artistAvatarBytes(ctx context.Context, artistID string) ([
 		p.avatarIDs[artistID] = artID
 		p.avatarMu.Unlock()
 
-		return p.art.Bytes(artID)
+		return p.art.ThumbBytes(artID, edge)
 	}
 
 	img, err := artwork.Decode(data)
 	if err != nil {
 		return nil, "", false
 	}
-	encoded, mime, err := artwork.Encode(artwork.Resize(img, artwork.MaxEdge))
+	encoded, mime, err := artwork.Encode(artwork.Resize(img, edge))
 	if err != nil {
 		return nil, "", false
 	}

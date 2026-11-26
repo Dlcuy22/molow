@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/dlcuy22/molo/meta"
@@ -48,6 +49,7 @@ func (s *PlayerService) serveArtwork(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
+	edge := parseArtworkEdge(r)
 
 	if strings.HasPrefix(rest, artAvatarPrefix) {
 		artistID := strings.TrimSpace(strings.TrimPrefix(rest, artAvatarPrefix))
@@ -57,7 +59,7 @@ func (s *PlayerService) serveArtwork(w http.ResponseWriter, r *http.Request) {
 
 			return
 		}
-		data, mime, ok := s.ytmProv.artistAvatarBytes(r.Context(), artistID)
+		data, mime, ok := s.ytmProv.artistAvatarBytesForEdge(r.Context(), artistID, edge)
 		if !ok {
 			s.logger().Debug("artwork: miss", "path", r.URL.Path)
 			http.NotFound(w, r)
@@ -77,7 +79,7 @@ func (s *PlayerService) serveArtwork(w http.ResponseWriter, r *http.Request) {
 
 			return
 		}
-		data, mime, ok := s.ytmSearchCoverBytes(r.Context(), ytmRef(videoID))
+		data, mime, ok := s.ytmSearchCoverBytes(r.Context(), ytmRef(videoID), edge)
 		if !ok {
 			s.logger().Debug("artwork: miss", "path", r.URL.Path)
 			http.NotFound(w, r)
@@ -111,10 +113,7 @@ func (s *PlayerService) serveArtwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if path, ok := s.art.FilePath(id); ok {
-		w.Header().Set("Cache-Control", artImmutableCacheHdr)
-		http.ServeFile(w, r, path)
-
+	if s.serveCoverPath(w, r, id, edge) {
 		return
 	}
 
@@ -124,10 +123,7 @@ func (s *PlayerService) serveArtwork(w http.ResponseWriter, r *http.Request) {
 		data := s.player.Snapshot().Meta.Tags.Cover
 		if artwork.ID(data) == id {
 			if _, err := s.art.Put(data); err == nil {
-				if path, ok := s.art.FilePath(id); ok {
-					w.Header().Set("Cache-Control", artImmutableCacheHdr)
-					http.ServeFile(w, r, path)
-
+				if s.serveCoverPath(w, r, id, edge) {
 					return
 				}
 			}
@@ -137,7 +133,7 @@ func (s *PlayerService) serveArtwork(w http.ResponseWriter, r *http.Request) {
 	// Fallback 2: a queued row passed its track path so its embedded or remote
 	// cover can be materialized on first view.
 	if trackPath := r.URL.Query().Get("path"); trackPath != "" {
-		if path, ok := s.materializeQueueCover(r.Context(), id, trackPath); ok {
+		if path, ok := s.materializeQueueCover(r.Context(), id, trackPath, edge); ok {
 			w.Header().Set("Cache-Control", artImmutableCacheHdr)
 			http.ServeFile(w, r, path)
 
@@ -147,6 +143,29 @@ func (s *PlayerService) serveArtwork(w http.ResponseWriter, r *http.Request) {
 
 	s.logger().Debug("artwork: miss", "path", r.URL.Path)
 	http.NotFound(w, r)
+}
+
+func (s *PlayerService) serveCoverPath(w http.ResponseWriter, r *http.Request, id string, edge int) bool {
+	path, err := s.art.ThumbPath(id, edge)
+	if err != nil || path == "" {
+		return false
+	}
+	w.Header().Set("Cache-Control", artImmutableCacheHdr)
+	http.ServeFile(w, r, path)
+
+	return true
+}
+
+func parseArtworkEdge(r *http.Request) int {
+	if r == nil {
+		return artwork.MaxEdge
+	}
+	px, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("s")))
+	if err != nil || px <= 0 {
+		return artwork.MaxEdge
+	}
+
+	return artwork.NormalizeThumbEdge(px)
 }
 
 func (s *PlayerService) serveBackdrop(w http.ResponseWriter, r *http.Request, id string) {
@@ -182,7 +201,16 @@ func (s *PlayerService) serveBackdrop(w http.ResponseWriter, r *http.Request, id
 	http.NotFound(w, r)
 }
 
-func (s *PlayerService) materializeQueueCover(ctx context.Context, id, trackPath string) (string, bool) {
+func (s *PlayerService) thumbPath(id string, edge int) (string, bool) {
+	path, err := s.art.ThumbPath(id, edge)
+	if err != nil || path == "" {
+		return "", false
+	}
+
+	return path, true
+}
+
+func (s *PlayerService) materializeQueueCover(ctx context.Context, id, trackPath string, edge int) (string, bool) {
 	if isYTMRef(trackPath) {
 		t, ok := s.ytm.lookup(trackPath)
 		if !ok {
@@ -195,7 +223,7 @@ func (s *PlayerService) materializeQueueCover(ctx context.Context, id, trackPath
 			return "", false
 		}
 		if cid := t.coverID(); cid != "" {
-			if p, ok := s.art.FilePath(cid); ok {
+			if p, ok := s.thumbPath(cid, edge); ok {
 				return p, true
 			}
 		}
@@ -208,7 +236,7 @@ func (s *PlayerService) materializeQueueCover(ctx context.Context, id, trackPath
 			return "", false
 		}
 
-		return s.art.FilePath(cid)
+		return s.thumbPath(cid, edge)
 	}
 
 	tags := s.index.lookup(trackPath)
@@ -227,10 +255,10 @@ func (s *PlayerService) materializeQueueCover(ctx context.Context, id, trackPath
 		return "", false
 	}
 
-	return s.art.FilePath(id)
+	return s.thumbPath(id, edge)
 }
 
-func (s *PlayerService) ytmSearchCoverBytes(ctx context.Context, ref string) ([]byte, string, bool) {
+func (s *PlayerService) ytmSearchCoverBytes(ctx context.Context, ref string, edge int) ([]byte, string, bool) {
 	t, ok := s.ytm.lookup(ref)
 	if !ok {
 		if cat, found := s.catalogYTMTrack(ref); found {
@@ -241,15 +269,42 @@ func (s *PlayerService) ytmSearchCoverBytes(ctx context.Context, ref string) ([]
 	if !ok {
 		return nil, "", false
 	}
+	edge = artwork.NormalizeThumbEdge(edge)
 	// Reuse already-stored canonical art for tracks in the library catalogue
 	// without triggering a network request or a new disk write.
 	if s.art != nil && t.CoverID != "" {
-		if data, mime, ok := s.art.Bytes(t.CoverID); ok {
+		if data, mime, ok := s.art.ThumbBytes(t.CoverID, edge); ok {
 			return data, mime, true
 		}
 	}
 
-	return s.ytmProv.searchThumbBytes(ctx, ref, t.ThumbnailURL)
+	data, mime, ok := s.ytmProv.searchThumbBytes(ctx, ref, t.ThumbnailURL)
+	if !ok {
+		return nil, "", false
+	}
+	data, mime = resizeEncodedForEdge(data, mime, edge)
+
+	return data, mime, true
+}
+
+func resizeEncodedForEdge(data []byte, mime string, edge int) ([]byte, string) {
+	edge = artwork.NormalizeThumbEdge(edge)
+	if edge >= artwork.MaxEdge || len(data) == 0 {
+		return data, mime
+	}
+	img, err := artwork.Decode(data)
+	if err != nil {
+		return data, mime
+	}
+	if b := img.Bounds(); b.Dx() <= edge && b.Dy() <= edge {
+		return data, mime
+	}
+	out, outMime, err := artwork.Encode(artwork.Resize(img, edge))
+	if err != nil {
+		return data, mime
+	}
+
+	return out, outMime
 }
 
 func writeImageBytes(w http.ResponseWriter, r *http.Request, data []byte, mime, cacheControl string) {

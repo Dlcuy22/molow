@@ -29,6 +29,25 @@ import (
 // kilobytes.
 const MaxEdge = 512
 
+// ThumbBuckets lists supported cached edge sizes in ascending order up to
+// [MaxEdge].
+var ThumbBuckets = [4]int{64, 128, 256, MaxEdge}
+
+// NormalizeThumbEdge snaps px to the smallest bucket in [ThumbBuckets] that is
+// at least px, returning [MaxEdge] when px is non-positive or exceeds it.
+func NormalizeThumbEdge(px int) int {
+	if px <= 0 {
+		return MaxEdge
+	}
+	for _, b := range ThumbBuckets {
+		if px <= b {
+			return b
+		}
+	}
+
+	return MaxEdge
+}
+
 const (
 	accentEdge  = 256
 	jpegQuality = 82

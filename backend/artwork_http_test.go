@@ -16,11 +16,11 @@ import (
 	"github.com/dlcuy22/molow/internal/artwork"
 )
 
-func testPNGBytes(t *testing.T, r, g, b uint8) []byte {
+func testPNGSizedBytes(t *testing.T, w, h int, r, g, b uint8) []byte {
 	t.Helper()
-	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
-	for y := range 16 {
-		for x := range 16 {
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
 			img.Set(x, y, imgcolor.NRGBA{R: r, G: g, B: b, A: 0xff})
 		}
 	}
@@ -30,6 +30,12 @@ func testPNGBytes(t *testing.T, r, g, b uint8) []byte {
 	}
 
 	return buf.Bytes()
+}
+
+func testPNGBytes(t *testing.T, r, g, b uint8) []byte {
+	t.Helper()
+
+	return testPNGSizedBytes(t, 16, 16, r, g, b)
 }
 
 func TestArtworkMiddlewareServesCachedAndActiveCovers(t *testing.T) {
@@ -234,5 +240,116 @@ func TestArtworkMiddlewareServesBackdrops(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("GET %s status = %d, want 404", bad, rec.Code)
 		}
+	}
+}
+
+func TestArtworkMiddlewareSizedVariants(t *testing.T) {
+	art, err := artwork.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := newPlayerService()
+	svc.art = art
+	fp := newFakePlayer()
+	svc.player = fp
+
+	bigRaw := testPNGSizedBytes(t, 600, 600, 0x35, 0x84, 0xe4)
+	id, err := art.Put(bigRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := svc.artworkMiddleware()(http.NotFoundHandler())
+
+	for _, tc := range []struct {
+		target   string
+		maxBound int
+	}{
+		{"/art/" + id + "?s=64", 64},
+		{"/art/" + id + "?s=200", 256},
+		{"/art/" + id + "?s=abc", artwork.MaxEdge},
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.target, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200", tc.target, rec.Code)
+		}
+		if cc := rec.Header().Get("Cache-Control"); cc != artImmutableCacheHdr {
+			t.Fatalf("GET %s Cache-Control = %q, want %q", tc.target, cc, artImmutableCacheHdr)
+		}
+		img, err := artwork.Decode(rec.Body.Bytes())
+		if err != nil {
+			t.Fatalf("Decode %s: %v", tc.target, err)
+		}
+		if b := img.Bounds(); b.Dx() > tc.maxBound || b.Dy() > tc.maxBound || b.Dx() == 0 {
+			t.Fatalf("GET %s bounds = %dx%d, want <= %d", tc.target, b.Dx(), b.Dy(), tc.maxBound)
+		}
+	}
+
+	head := httptest.NewRecorder()
+	handler.ServeHTTP(head, httptest.NewRequest(http.MethodHead, "/art/"+id+"?s=128", nil))
+	if head.Code != http.StatusOK || head.Body.Len() != 0 {
+		t.Fatalf("HEAD ?s=128 = (%d, len=%d), want (200, 0)", head.Code, head.Body.Len())
+	}
+
+	// Active-track fallback persists canonical art and serves the requested tier.
+	liveRaw := testPNGSizedBytes(t, 600, 600, 0xd1, 0x5b, 0x5b)
+	liveID := artwork.ID(liveRaw)
+	fp.meta = meta.Meta{Tags: meta.Tags{Cover: liveRaw}}
+	liveRec := httptest.NewRecorder()
+	handler.ServeHTTP(liveRec, httptest.NewRequest(http.MethodGet, "/art/"+liveID+"?s=64", nil))
+	if liveRec.Code != http.StatusOK {
+		t.Fatalf("active fallback ?s=64 = %d, want 200", liveRec.Code)
+	}
+	liveImg, err := artwork.Decode(liveRec.Body.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := liveImg.Bounds(); b.Dx() > 64 || b.Dy() > 64 {
+		t.Fatalf("active fallback bounds = %dx%d, want <= 64", b.Dx(), b.Dy())
+	}
+
+	// Artist avatar respects ?s=.
+	avatarID, err := art.Put(testPNGSizedBytes(t, 600, 600, 0x40, 0xa0, 0x60))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.ytmProv.art = art
+	svc.ytmProv.avatarMu.Lock()
+	svc.ytmProv.avatarIDs["UC123"] = avatarID
+	svc.ytmProv.avatarMu.Unlock()
+
+	avatarRec := httptest.NewRecorder()
+	handler.ServeHTTP(avatarRec, httptest.NewRequest(http.MethodGet, "/art/avatar/UC123?s=128", nil))
+	if avatarRec.Code != http.StatusOK {
+		t.Fatalf("GET /art/avatar/UC123?s=128 = %d", avatarRec.Code)
+	}
+	avatarImg, err := artwork.Decode(avatarRec.Body.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := avatarImg.Bounds(); b.Dx() > 128 || b.Dy() > 128 {
+		t.Fatalf("avatar bounds = %dx%d, want <= 128", b.Dx(), b.Dy())
+	}
+
+	// Search thumbnail downscales below ytmSearchThumbEdge when ?s=64 is asked.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(testPNGSizedBytes(t, 300, 300, 0x90, 0x60, 0xc0))
+	}))
+	t.Cleanup(srv.Close)
+	svc.ytmProv.http = srv.Client()
+	svc.ytm.put(ytmTrack{ID: "vid64", Title: "Search 64", ThumbnailURL: srv.URL + "/thumb.png"})
+
+	searchRec := httptest.NewRecorder()
+	handler.ServeHTTP(searchRec, httptest.NewRequest(http.MethodGet, "/art/ytm-search/vid64?s=64", nil))
+	if searchRec.Code != http.StatusOK {
+		t.Fatalf("GET /art/ytm-search/vid64?s=64 = %d", searchRec.Code)
+	}
+	searchImg, err := artwork.Decode(searchRec.Body.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := searchImg.Bounds(); b.Dx() > 64 || b.Dy() > 64 {
+		t.Fatalf("search ?s=64 bounds = %dx%d, want <= 64", b.Dx(), b.Dy())
 	}
 }

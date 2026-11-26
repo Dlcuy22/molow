@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ const (
 	DefaultOrphanMaxBytes int64 = 64 << 20
 
 	subdir          = "molow-art"
+	thumbSubdir     = "thumb"
 	cacheMax        = 64
 	staleTempMaxAge = 5 * time.Minute
 )
@@ -127,7 +129,10 @@ type Store struct {
 	putInflight map[string]*putCall
 
 	backdropMu       sync.Mutex
-	backdropInflight map[string]*backdropCall
+	backdropInflight map[string]*pathCall
+
+	thumbMu       sync.Mutex
+	thumbInflight map[thumbKey]*pathCall
 
 	accentMu       sync.Mutex
 	accentLRU      *lruCache[accentKey, []color.Colour]
@@ -139,10 +144,15 @@ type putCall struct {
 	err  error
 }
 
-type backdropCall struct {
+type pathCall struct {
 	done chan struct{}
 	path string
 	err  error
+}
+
+type thumbKey struct {
+	id   string
+	edge int
 }
 
 type accentKey struct {
@@ -172,7 +182,8 @@ func Open(dir string) (*Store, error) {
 	return &Store{
 		dir:              dir,
 		putInflight:      make(map[string]*putCall),
-		backdropInflight: make(map[string]*backdropCall),
+		backdropInflight: make(map[string]*pathCall),
+		thumbInflight:    make(map[thumbKey]*pathCall),
 		accentLRU:        newLRU[accentKey, []color.Colour](cacheMax),
 		accentInflight:   make(map[accentKey]*accentCall),
 	}, nil
@@ -191,10 +202,7 @@ func safeID(id string) bool {
 	return id != "" && !strings.ContainsAny(id, `/\.`)
 }
 
-func (s *Store) fileFor(id string) (path, mime string, ok bool) {
-	if s == nil || !safeID(id) {
-		return "", "", false
-	}
+func findImageFile(base string) (path, mime string, ok bool) {
 	for _, cand := range [2]struct {
 		ext  string
 		mime string
@@ -202,13 +210,69 @@ func (s *Store) fileFor(id string) (path, mime string, ok bool) {
 		{".jpg", "image/jpeg"},
 		{".png", "image/png"},
 	} {
-		p := filepath.Join(s.dir, id+cand.ext)
+		p := base + cand.ext
 		if info, err := os.Stat(p); err == nil && info.Size() > 0 {
 			return p, cand.mime, true
 		}
 	}
 
 	return "", "", false
+}
+
+func imageExt(mime string) string {
+	if mime == "image/png" {
+		return ".png"
+	}
+
+	return ".jpg"
+}
+
+func mimeForPath(p string) string {
+	if strings.EqualFold(filepath.Ext(p), ".png") {
+		return "image/png"
+	}
+
+	return "image/jpeg"
+}
+
+func writeAtomicFile(dst, tmpPattern string, data []byte) error {
+	dir := filepath.Dir(dst)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, tmpPattern)
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	return os.Rename(tmpName, dst)
+}
+
+func (s *Store) fileFor(id string) (path, mime string, ok bool) {
+	if s == nil || !safeID(id) {
+		return "", "", false
+	}
+
+	return findImageFile(filepath.Join(s.dir, id))
+}
+
+func (s *Store) thumbFileFor(id string, edge int) (path, mime string, ok bool) {
+	if s == nil || !safeID(id) {
+		return "", "", false
+	}
+
+	return findImageFile(filepath.Join(s.dir, thumbSubdir, strconv.Itoa(edge), id))
 }
 
 // Has reports whether a normalized artwork file exists on disk for id.
@@ -275,28 +339,9 @@ func (s *Store) putOnce(id string, raw []byte) error {
 		return err
 	}
 
-	ext := ".jpg"
-	if mime == "image/png" {
-		ext = ".png"
-	}
-	dst := filepath.Join(s.dir, id+ext)
-	tmp, err := os.CreateTemp(s.dir, id+".tmp*")
-	if err != nil {
-		return fmt.Errorf("artwork: temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-
-	if _, err := tmp.Write(encoded); err != nil {
-		_ = tmp.Close()
-
-		return fmt.Errorf("artwork: write: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("artwork: close: %w", err)
-	}
-	if err := os.Rename(tmpName, dst); err != nil {
-		return fmt.Errorf("artwork: commit: %w", err)
+	dst := filepath.Join(s.dir, id+imageExt(mime))
+	if err := writeAtomicFile(dst, id+".tmp*", encoded); err != nil {
+		return fmt.Errorf("artwork: put write: %w", err)
 	}
 
 	return nil
@@ -356,7 +401,7 @@ func (s *Store) BackdropPath(id string) (string, error) {
 
 		return call.path, call.err
 	}
-	call := &backdropCall{done: make(chan struct{})}
+	call := &pathCall{done: make(chan struct{})}
 	s.backdropInflight[id] = call
 	s.backdropMu.Unlock()
 
@@ -389,31 +434,104 @@ func (s *Store) backdropOnce(id string) (string, error) {
 		return "", err
 	}
 
-	bgDir := filepath.Join(s.dir, backdropSubdir)
-	if err := os.MkdirAll(bgDir, 0o755); err != nil {
-		return "", fmt.Errorf("artwork: backdrop dir: %w", err)
-	}
-	dst := filepath.Join(bgDir, id+".png")
-	tmp, err := os.CreateTemp(bgDir, id+".tmp*")
-	if err != nil {
-		return "", fmt.Errorf("artwork: backdrop temp: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-
-	if _, err := tmp.Write(encoded); err != nil {
-		_ = tmp.Close()
-
+	dst := filepath.Join(s.dir, backdropSubdir, id+".png")
+	if err := writeAtomicFile(dst, id+".tmp*", encoded); err != nil {
 		return "", fmt.Errorf("artwork: backdrop write: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return "", fmt.Errorf("artwork: backdrop close: %w", err)
-	}
-	if err := os.Rename(tmpName, dst); err != nil {
-		return "", fmt.Errorf("artwork: backdrop commit: %w", err)
 	}
 
 	return dst, nil
+}
+
+// ThumbPath returns the on-disk path for id scaled to its quantized [ThumbBuckets]
+// edge, persisting it under <dir>/thumb/<edge>/<id>.jpg|.png on first request.
+// Unknown or unsafe IDs return ("", nil), and covers already within edge
+// return the canonical path without upscaling.
+func (s *Store) ThumbPath(id string, edge int) (string, error) {
+	if s == nil || !safeID(id) {
+		return "", nil
+	}
+	edge = NormalizeThumbEdge(edge)
+	if edge >= MaxEdge {
+		p, _ := s.FilePath(id)
+
+		return p, nil
+	}
+	if p, _, ok := s.thumbFileFor(id, edge); ok {
+		return p, nil
+	}
+	canon, ok := s.FilePath(id)
+	if !ok {
+		return "", nil
+	}
+
+	key := thumbKey{id: id, edge: edge}
+	s.thumbMu.Lock()
+	if call, ok := s.thumbInflight[key]; ok {
+		s.thumbMu.Unlock()
+		<-call.done
+
+		return call.path, call.err
+	}
+	call := &pathCall{done: make(chan struct{})}
+	s.thumbInflight[key] = call
+	s.thumbMu.Unlock()
+
+	p, err := s.thumbOnce(id, edge, canon)
+
+	s.thumbMu.Lock()
+	call.path = p
+	call.err = err
+	delete(s.thumbInflight, key)
+	s.thumbMu.Unlock()
+	close(call.done)
+
+	return p, err
+}
+
+func (s *Store) thumbOnce(id string, edge int, canon string) (string, error) {
+	if p, _, ok := s.thumbFileFor(id, edge); ok {
+		return p, nil
+	}
+	data, _, ok := s.Bytes(id)
+	if !ok {
+		return "", nil
+	}
+	img, err := Decode(data)
+	if err != nil {
+		return "", err
+	}
+	if b := img.Bounds(); b.Dx() <= edge && b.Dy() <= edge {
+		return canon, nil
+	}
+	encoded, mime, err := Encode(Resize(img, edge))
+	if err != nil {
+		return "", err
+	}
+
+	dst := filepath.Join(s.dir, thumbSubdir, strconv.Itoa(edge), id+imageExt(mime))
+	if err := writeAtomicFile(dst, id+".tmp*", encoded); err != nil {
+		return "", fmt.Errorf("artwork: thumb write: %w", err)
+	}
+
+	return dst, nil
+}
+
+// ThumbBytes reads the quantized cover bytes and MIME type for id at edge.
+func (s *Store) ThumbBytes(id string, edge int) ([]byte, string, bool) {
+	edge = NormalizeThumbEdge(edge)
+	if edge >= MaxEdge {
+		return s.Bytes(id)
+	}
+	p, err := s.ThumbPath(id, edge)
+	if err != nil || p == "" {
+		return nil, "", false
+	}
+	data, err := os.ReadFile(p)
+	if err != nil || len(data) == 0 {
+		return nil, "", false
+	}
+
+	return data, mimeForPath(p), true
 }
 
 // DataURL returns id as an inline base64 data URL read directly from disk.
@@ -426,10 +544,11 @@ func (s *Store) DataURL(id string) (string, bool) {
 	return FormatDataURL(data, mime), true
 }
 
-// Prune deletes unreferenced .jpg and .png files in the cache directory oldest
-// mtime first until remaining orphan bytes fit within maxBytes. Any cover ID in
-// protected is never removed regardless of size. Stale temp files older than
-// five minutes are swept as well.
+// Prune deletes unreferenced .jpg and .png files across canonical, backdrop, and
+// quantized thumbnail cache directories oldest mtime first until remaining
+// orphan bytes fit within maxBytes. Any cover ID in protected is never removed
+// regardless of size. Stale temp files older than five minutes are swept as
+// well.
 func (s *Store) Prune(protected map[string]struct{}, maxBytes int64) (int, error) {
 	if s == nil {
 		return 0, nil
@@ -490,6 +609,15 @@ func (s *Store) Prune(protected map[string]struct{}, maxBytes int64) (int, error
 	scanDir(s.dir, entries)
 	if bgEntries, err := os.ReadDir(filepath.Join(s.dir, backdropSubdir)); err == nil {
 		scanDir(filepath.Join(s.dir, backdropSubdir), bgEntries)
+	}
+	for _, edge := range ThumbBuckets {
+		if edge >= MaxEdge {
+			continue
+		}
+		thumbDir := filepath.Join(s.dir, thumbSubdir, strconv.Itoa(edge))
+		if thumbEntries, err := os.ReadDir(thumbDir); err == nil {
+			scanDir(thumbDir, thumbEntries)
+		}
 	}
 
 	if orphanBytes <= maxBytes {

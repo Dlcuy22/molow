@@ -377,3 +377,120 @@ func TestComposeMosaicSingleAndQuad(t *testing.T) {
 	checkQuad("bottom-left", 64, 384, 30, 60, 220)
 	checkQuad("bottom-right", 384, 384, 230, 210, 30)
 }
+
+func TestNormalizeThumbEdge(t *testing.T) {
+	cases := []struct {
+		in   int
+		want int
+	}{
+		{-10, MaxEdge},
+		{0, MaxEdge},
+		{32, 64},
+		{64, 64},
+		{80, 128},
+		{166, 256},
+		{256, 256},
+		{400, MaxEdge},
+		{1024, MaxEdge},
+	}
+	for _, tc := range cases {
+		if got := NormalizeThumbEdge(tc.in); got != tc.want {
+			t.Errorf("NormalizeThumbEdge(%d) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestStoreThumbPathAndBytes(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Large cover generates quantized variants on demand and leaves 512px canonical.
+	largeRaw := makePNG(t, 800, 800, imgcolor.NRGBA{R: 120, G: 80, B: 200, A: 255})
+	largeID, err := s.Put(largeRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonPath, ok := s.FilePath(largeID)
+	if !ok {
+		t.Fatal("missing canonical file")
+	}
+
+	p512, err := s.ThumbPath(largeID, 512)
+	if err != nil || p512 != canonPath {
+		t.Fatalf("ThumbPath(512) = (%q, %v), want %q", p512, err, canonPath)
+	}
+
+	for _, edge := range []int{64, 256} {
+		p, err := s.ThumbPath(largeID, edge)
+		if err != nil || p == "" || p == canonPath {
+			t.Fatalf("ThumbPath(%d) = (%q, %v), want variant path", edge, p, err)
+		}
+		data, mime, ok := s.ThumbBytes(largeID, edge)
+		if !ok || len(data) == 0 || mime == "" {
+			t.Fatalf("ThumbBytes(%d) = (%d bytes, %q, %v)", edge, len(data), mime, ok)
+		}
+		img, err := Decode(data)
+		if err != nil {
+			t.Fatalf("Decode(%d): %v", edge, err)
+		}
+		if b := img.Bounds(); b.Dx() > edge || b.Dy() > edge {
+			t.Fatalf("variant %d bounds = %dx%d, want <= %d", edge, b.Dx(), b.Dy(), edge)
+		}
+	}
+
+	// Small source cover stays on canonical path instead of upscaling into thumb/.
+	smallRaw := makePNG(t, 48, 48, imgcolor.NRGBA{R: 40, G: 180, B: 90, A: 255})
+	smallID, err := s.Put(smallRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	smallCanon, ok := s.FilePath(smallID)
+	if !ok {
+		t.Fatal("missing small canonical file")
+	}
+	pSmall, err := s.ThumbPath(smallID, 64)
+	if err != nil || pSmall != smallCanon {
+		t.Fatalf("small cover ThumbPath(64) = (%q, %v), want canonical %q", pSmall, err, smallCanon)
+	}
+	if _, err := os.Stat(filepath.Join(s.Dir(), thumbSubdir, "64", smallID+".jpg")); !os.IsNotExist(err) {
+		t.Fatalf("expected no duplicated 64px variant for 48px source")
+	}
+}
+
+func TestStorePruneIncludesThumbVariants(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	keepThumb64 := filepath.Join(dir, thumbSubdir, "64", "keep1.jpg")
+	orphanThumb64 := filepath.Join(dir, thumbSubdir, "64", "orphan.jpg")
+	orphanThumb128 := filepath.Join(dir, thumbSubdir, "128", "orphan.jpg")
+	for _, path := range []string{keepThumb64, orphanThumb64, orphanThumb128} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, make([]byte, 128), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	removed, err := s.Prune(map[string]struct{}{"keep1": {}}, 0)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("removed = %d, want 2", removed)
+	}
+	if _, err := os.Stat(keepThumb64); err != nil {
+		t.Fatalf("protected thumb variant removed: %v", err)
+	}
+	for _, orphan := range []string{orphanThumb64, orphanThumb128} {
+		if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+			t.Fatalf("orphan %s should be removed", orphan)
+		}
+	}
+}

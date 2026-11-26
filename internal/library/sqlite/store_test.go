@@ -876,3 +876,91 @@ func TestMigration005MigratesTrackFilesAndLikes(t *testing.T) {
 		}
 	}
 }
+
+func TestYTMSyncAndRemotePlaylistHelpers(t *testing.T) {
+	s := newTestStore(t)
+	lib, err := s.AddLibrary(library.Library{
+		ID: "ytm:UC123", Kind: library.KindYTM, Name: "Kasaki",
+	})
+	if err != nil {
+		t.Fatalf("AddLibrary: %v", err)
+	}
+	if lib.Kind != library.KindYTM || lib.Name != "Kasaki" {
+		t.Fatalf("lib = %+v", lib)
+	}
+
+	if at, err := s.SyncTime(lib.ID, "likes"); err != nil || at != 0 {
+		t.Fatalf("initial SyncTime = (%d, %v), want (0, nil)", at, err)
+	}
+	if err := s.SetSyncTime(lib.ID, "likes", 1700000000); err != nil {
+		t.Fatalf("SetSyncTime: %v", err)
+	}
+	if at, err := s.SyncTime(lib.ID, "likes"); err != nil || at != 1700000000 {
+		t.Fatalf("SyncTime = (%d, %v), want 1700000000", at, err)
+	}
+
+	if _, err := s.UpsertRemoteTrack(lib.ID, library.KindYTM, TrackRow{NativeID: "v1", Title: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertRemoteTrack(lib.ID, library.KindYTM, TrackRow{NativeID: "v2", Title: "Two"}); err != nil {
+		t.Fatal(err)
+	}
+
+	pl1, err := s.UpsertRemotePlaylist(lib.ID, "My List", "PL1", true)
+	if err != nil || !pl1.Owned {
+		t.Fatalf("UpsertRemotePlaylist insert: (%+v, %v)", pl1, err)
+	}
+	pl1Renamed, err := s.UpsertRemotePlaylist(lib.ID, "My Renamed List", "PL1", false)
+	if err != nil || pl1Renamed.ID != pl1.ID || pl1Renamed.Name != "My Renamed List" || pl1Renamed.Owned {
+		t.Fatalf("UpsertRemotePlaylist update = (%+v, %v)", pl1Renamed, err)
+	}
+	if _, err := s.UpsertRemotePlaylist(lib.ID, "Dropped List", "PL2", false); err != nil {
+		t.Fatalf("UpsertRemotePlaylist PL2: %v", err)
+	}
+
+	r1 := library.RemoteRef(library.KindYTM, "v1")
+	r2 := library.RemoteRef(library.KindYTM, "v2")
+	if err := s.ReplacePlaylistEntries(pl1.ID, []string{r2, r1, r2}); err != nil {
+		t.Fatalf("ReplacePlaylistEntries: %v", err)
+	}
+	if has, err := s.PlaylistHasTrack(pl1.ID, r1); err != nil || !has {
+		t.Fatalf("PlaylistHasTrack(r1) = (%v, %v), want true", has, err)
+	}
+	if has, err := s.PlaylistHasTrack(pl1.ID, library.RemoteRef(library.KindYTM, "missing")); err != nil || has {
+		t.Fatalf("PlaylistHasTrack(missing) = (%v, %v), want false", has, err)
+	}
+	tracks, err := s.PlaylistTracks(pl1.ID, 10, 0)
+	if err != nil || len(tracks) != 2 || tracks[0].Ref != r2 || tracks[1].Ref != r1 {
+		t.Fatalf("PlaylistTracks after replace = (%+v, %v)", tracks, err)
+	}
+
+	if err := s.PruneRemotePlaylists(lib.ID, map[string]bool{"PL1": true}); err != nil {
+		t.Fatalf("PruneRemotePlaylists: %v", err)
+	}
+	lists, err := s.Playlists(lib.ID)
+	if err != nil || len(lists) != 1 || lists[0].RemoteID != "PL1" || lists[0].Owned {
+		t.Fatalf("Playlists after prune = (%+v, %v)", lists, err)
+	}
+
+	// Tombstones stay active until expired or absent from remoteKeys.
+	if err := s.AddTombstone(lib.ID, "playlist:PLdel", 1000); err != nil {
+		t.Fatalf("AddTombstone PLdel: %v", err)
+	}
+	if err := s.AddTombstone(lib.ID, "playlist:PLold", 100); err != nil {
+		t.Fatalf("AddTombstone PLold: %v", err)
+	}
+	if err := s.AddTombstone(lib.ID, "playlist:PLgone", 1000); err != nil {
+		t.Fatalf("AddTombstone PLgone: %v", err)
+	}
+	active, err := s.ActiveTombstones(lib.ID, 500)
+	if err != nil || !active["playlist:PLdel"] || active["playlist:PLold"] {
+		t.Fatalf("ActiveTombstones = (%+v, %v)", active, err)
+	}
+	if err := s.ReconcileTombstones(lib.ID, map[string]bool{"playlist:PLdel": true, "playlist:PLold": true}, 500); err != nil {
+		t.Fatalf("ReconcileTombstones: %v", err)
+	}
+	afterReconcile, err := s.ActiveTombstones(lib.ID, 0)
+	if err != nil || len(afterReconcile) != 1 || !afterReconcile["playlist:PLdel"] {
+		t.Fatalf("after ReconcileTombstones = (%+v, %v)", afterReconcile, err)
+	}
+}

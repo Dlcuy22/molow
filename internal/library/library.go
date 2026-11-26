@@ -132,6 +132,7 @@ type Playlist struct {
 	CoverID     string   `json:"coverId,omitempty"`
 	CustomCover bool     `json:"customCover,omitempty"`
 	CoverIDs    []string `json:"coverIds,omitempty"`
+	Owned       bool     `json:"owned"`
 }
 
 // RemoteRef is the playable reference of a track that has no file: the kind

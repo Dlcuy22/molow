@@ -377,7 +377,7 @@ func (s *Store) ToggleLiked(ref string) (bool, error) {
 // Playlists lists a library's playlists with their entry counts.
 func (s *Store) Playlists(libraryID string) ([]library.Playlist, error) {
 	rows, err := s.db.Query(
-		`SELECT p.id, p.name, p.description, p.remote_id, p.cover_id, p.custom_cover,
+		`SELECT p.id, p.name, p.description, p.remote_id, p.cover_id, p.custom_cover, p.owned,
 		        (SELECT COUNT(*) FROM playlist_entry e WHERE e.playlist_id = p.id)
 		 FROM playlist p WHERE p.library_id = ?
 		 ORDER BY p.updated_at DESC, p.name COLLATE NOCASE`,
@@ -393,12 +393,14 @@ func (s *Store) Playlists(libraryID string) ([]library.Playlist, error) {
 		var (
 			p           library.Playlist
 			customCover int
+			owned       int
 		)
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RemoteID, &p.CoverID, &customCover, &p.TrackCount); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RemoteID, &p.CoverID, &customCover, &owned, &p.TrackCount); err != nil {
 			return nil, err
 		}
 		p.LibraryID = libraryID
 		p.CustomCover = customCover != 0
+		p.Owned = owned != 0
 		out = append(out, p)
 	}
 	if err := rows.Err(); err != nil {
@@ -510,21 +512,290 @@ func (s *Store) CreatePlaylist(libraryID, name string) (library.Playlist, error)
 // CreatePlaylistWithRemote adds a playlist that mirrors a remote list, so the
 // row remembers which list it came from. Its entries are added afterwards.
 func (s *Store) CreatePlaylistWithRemote(libraryID, name, remoteID string) (library.Playlist, error) {
+	return s.createPlaylistWithRemoteOwned(libraryID, name, remoteID, true)
+}
+
+func (s *Store) createPlaylistWithRemoteOwned(libraryID, name, remoteID string, owned bool) (library.Playlist, error) {
 	var raw [8]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return library.Playlist{}, err
 	}
 	id := "playlist:" + hex.EncodeToString(raw[:])
 	now := time.Now().Unix()
+	ownedInt := 0
+	if owned {
+		ownedInt = 1
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO playlist (id, library_id, name, remote_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`, id, libraryID, name, remoteID, now, now,
+		`INSERT INTO playlist (id, library_id, name, remote_id, owned, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`, id, libraryID, name, remoteID, ownedInt, now, now,
 	)
 	if err != nil {
 		return library.Playlist{}, err
 	}
 
-	return library.Playlist{ID: id, LibraryID: libraryID, Name: name, RemoteID: remoteID}, nil
+	return library.Playlist{ID: id, LibraryID: libraryID, Name: name, RemoteID: remoteID, Owned: owned}, nil
+}
+
+// UpsertRemotePlaylist finds a playlist by (libraryID, remoteID), updating its
+// name and ownership if present or inserting a new row when missing.
+func (s *Store) UpsertRemotePlaylist(libraryID, name, remoteID string, owned bool) (library.Playlist, error) {
+	if remoteID == "" {
+		return s.CreatePlaylist(libraryID, name)
+	}
+	var id string
+	err := s.db.QueryRow(
+		`SELECT id FROM playlist WHERE library_id = ? AND remote_id = ? LIMIT 1`,
+		libraryID, remoteID,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return s.createPlaylistWithRemoteOwned(libraryID, name, remoteID, owned)
+	}
+	if err != nil {
+		return library.Playlist{}, err
+	}
+	ownedInt := 0
+	if owned {
+		ownedInt = 1
+	}
+	if _, err := s.db.Exec(
+		`UPDATE playlist SET name = ?, owned = ?, updated_at = ? WHERE id = ?`,
+		name, ownedInt, time.Now().Unix(), id,
+	); err != nil {
+		return library.Playlist{}, err
+	}
+	return library.Playlist{ID: id, LibraryID: libraryID, Name: name, RemoteID: remoteID, Owned: owned}, nil
+}
+
+// PlaylistByRemoteID returns the mirrored playlist row matching (libraryID, remoteID).
+func (s *Store) PlaylistByRemoteID(libraryID, remoteID string) (library.Playlist, bool, error) {
+	var (
+		p           library.Playlist
+		customCover int
+		owned       int
+	)
+	err := s.db.QueryRow(
+		`SELECT p.id, p.name, p.description, p.remote_id, p.cover_id, p.custom_cover, p.owned,
+		        (SELECT COUNT(*) FROM playlist_entry e WHERE e.playlist_id = p.id)
+		 FROM playlist p WHERE p.library_id = ? AND p.remote_id = ? LIMIT 1`,
+		libraryID, remoteID,
+	).Scan(&p.ID, &p.Name, &p.Description, &p.RemoteID, &p.CoverID, &customCover, &owned, &p.TrackCount)
+	if errors.Is(err, sql.ErrNoRows) {
+		return library.Playlist{}, false, nil
+	}
+	if err != nil {
+		return library.Playlist{}, false, err
+	}
+	p.LibraryID = libraryID
+	p.CustomCover = customCover != 0
+	p.Owned = owned != 0
+	return p, true, nil
+}
+
+// ReplacePlaylistEntries atomically replaces all entries in playlistID with refs
+// in dense 0..N-1 position order, skipping unresolved or duplicate track IDs.
+func (s *Store) ReplacePlaylistEntries(playlistID string, refs []string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var libraryID string
+	if err := tx.QueryRow(`SELECT library_id FROM playlist WHERE id = ?`, playlistID).Scan(&libraryID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM playlist_entry WHERE playlist_id = ?`, playlistID); err != nil {
+		return err
+	}
+
+	now := time.Now().Unix()
+	seen := make(map[int64]bool, len(refs))
+	pos := 0
+	for _, ref := range refs {
+		id, err := refTrackIDInLibrary(tx, libraryID, ref)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if _, err := tx.Exec(
+			`INSERT INTO playlist_entry (playlist_id, position, track_id, added_at)
+			 VALUES (?, ?, ?, ?)`,
+			playlistID, pos, id, now,
+		); err != nil {
+			return err
+		}
+		pos++
+	}
+	if _, err := tx.Exec(`UPDATE playlist SET updated_at = ? WHERE id = ?`, now, playlistID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// PruneRemotePlaylists deletes mirrored playlists in libraryID whose remote_id
+// is absent from keepRemoteIDs.
+func (s *Store) PruneRemotePlaylists(libraryID string, keepRemoteIDs map[string]bool) error {
+	rows, err := s.db.Query(
+		`SELECT id, remote_id FROM playlist WHERE library_id = ? AND remote_id <> ''`,
+		libraryID,
+	)
+	if err != nil {
+		return err
+	}
+	var dropIDs []string
+	for rows.Next() {
+		var id, remoteID string
+		if err := rows.Scan(&id, &remoteID); err != nil {
+			rows.Close()
+			return err
+		}
+		if !keepRemoteIDs[remoteID] {
+			dropIDs = append(dropIDs, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, id := range dropIDs {
+		if _, err := s.db.Exec(`DELETE FROM playlist WHERE id = ?`, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SetSyncTime records when a YTM sync scope completed.
+func (s *Store) SetSyncTime(libraryID, scope string, at int64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO ytm_sync (library_id, scope, synced_at)
+		 VALUES (?, ?, ?)
+		 ON CONFLICT(library_id, scope) DO UPDATE SET synced_at = excluded.synced_at`,
+		libraryID, scope, at,
+	)
+	return err
+}
+
+// SyncTime returns the unix timestamp when scope last synced, or 0 if never.
+func (s *Store) SyncTime(libraryID, scope string) (int64, error) {
+	var at int64
+	err := s.db.QueryRow(
+		`SELECT synced_at FROM ytm_sync WHERE library_id = ? AND scope = ?`,
+		libraryID, scope,
+	).Scan(&at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return at, err
+}
+
+// AddTombstone records a deleted or unsaved remote key so a pull before YTM
+// settles does not resurrect the row.
+func (s *Store) AddTombstone(libraryID, key string, now int64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO ytm_tombstone (library_id, key, deleted_at)
+		 VALUES (?, ?, ?)
+		 ON CONFLICT(library_id, key) DO UPDATE SET deleted_at = excluded.deleted_at`,
+		libraryID, key, now,
+	)
+	return err
+}
+
+// ActiveTombstones returns keys deleted at or after cutoff.
+func (s *Store) ActiveTombstones(libraryID string, cutoff int64) (map[string]bool, error) {
+	rows, err := s.db.Query(
+		`SELECT key FROM ytm_tombstone WHERE library_id = ? AND deleted_at >= ?`,
+		libraryID, cutoff,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]bool)
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		out[key] = true
+	}
+	return out, rows.Err()
+}
+
+// ReconcileTombstones drops tombstones that have expired before cutoff or whose
+// key has already vanished from remoteKeys.
+func (s *Store) ReconcileTombstones(libraryID string, remoteKeys map[string]bool, cutoff int64) error {
+	rows, err := s.db.Query(
+		`SELECT key, deleted_at FROM ytm_tombstone WHERE library_id = ?`,
+		libraryID,
+	)
+	if err != nil {
+		return err
+	}
+	var drop []string
+	for rows.Next() {
+		var (
+			key       string
+			deletedAt int64
+		)
+		if err := rows.Scan(&key, &deletedAt); err != nil {
+			rows.Close()
+			return err
+		}
+		if deletedAt < cutoff || !remoteKeys[key] {
+			drop = append(drop, key)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, key := range drop {
+		if _, err := s.db.Exec(`DELETE FROM ytm_tombstone WHERE library_id = ? AND key = ?`, libraryID, key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PlaylistHasTrack reports whether playlistID already contains ref.
+func (s *Store) PlaylistHasTrack(playlistID, ref string) (bool, error) {
+	var libraryID string
+	if err := s.db.QueryRow(`SELECT library_id FROM playlist WHERE id = ?`, playlistID).Scan(&libraryID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	trackID, err := refTrackIDInLibrary(s.db, libraryID, ref)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var count int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM playlist_entry WHERE playlist_id = ? AND track_id = ?`,
+		playlistID, trackID,
+	).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // RenamePlaylist sets a playlist's name. The library id is checked so a

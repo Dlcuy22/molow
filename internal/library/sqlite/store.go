@@ -144,11 +144,15 @@ func (s *Store) AddLibrary(lib library.Library) (library.Library, error) {
 		return library.Library{}, errors.New("library: empty id")
 	}
 	now := time.Now().Unix()
+	accountID := lib.Root
+	if lib.Kind == library.KindYTM && accountID == "" {
+		accountID = strings.TrimPrefix(lib.ID, "ytm:")
+	}
 	_, err := s.db.Exec(
 		`INSERT INTO library (id, kind, name, description, root, account_id, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, root = excluded.root`,
-		lib.ID, string(lib.Kind), lib.Name, lib.Description, lib.Root, lib.Root, now,
+		 ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, root = excluded.root, account_id = excluded.account_id`,
+		lib.ID, string(lib.Kind), lib.Name, lib.Description, lib.Root, accountID, now,
 	)
 	if err != nil {
 		return library.Library{}, err

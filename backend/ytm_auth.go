@@ -22,7 +22,9 @@ func (s *PlayerService) restoreYTM() {
 		return
 	}
 
-	client, err := clientFromCredentials(creds)
+	gen := s.authGen.Add(1)
+	s.authExpired.Store(false)
+	client, err := s.clientWithCookieCapture(creds, gen)
 	if err != nil {
 		s.log.Warn("ytm: could not rebuild the session", "error", err)
 		return
@@ -39,8 +41,9 @@ func (s *PlayerService) restoreYTM() {
 
 		if _, _, err := client.GetLikedSongs(ctx); err != nil {
 			if errors.Is(err, ytm.ErrSessionExpired) {
-				// The file stays: the user may want to copy the session out, and
-				// deleting it silently would be worse than reporting it.
+				s.authExpired.Store(true)
+				// The file stays: the user may want to see the expired state and
+				// re-sign in rather than losing the account metadata silently.
 				s.log.Warn("ytm: the stored session has expired; sign in again")
 				return
 			}

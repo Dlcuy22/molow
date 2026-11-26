@@ -1,17 +1,13 @@
-// Package loginwin opens an isolated WebKitGTK window so a user can sign in to
+// Package loginwin opens an isolated browser window so a user can sign in to
 // YouTube Music, then hands back the cookies that window collected.
 //
 // It exists because a Wails webview cannot do this job: the framework exposes no
 // cookie API, and the cookies that matter are HttpOnly, so no script running in
 // the page can read them either. Only the network layer can, which is why this
-// package drives WebKitGTK directly.
+// package drives WebKitGTK on Linux and WebView2 on Windows directly.
 //
-// The window is a plain GTK4 toplevel on its own WebKitNetworkSession, created
-// from the GTK main loop Wails already runs. It is built with purego rather than
-// cgo so the package compiles under CGO_ENABLED=0 and every symbol stays in one
-// file where it can be audited.
-//
-// Only Linux is implemented. The other targets return ErrUnsupported.
+// Each platform implementation keeps its own private profile directory (cleaned
+// before and after capture) and compiles under CGO_ENABLED=0.
 package loginwin
 
 import (
@@ -80,9 +76,6 @@ type Result struct {
 	// deduplicated. This is the form ytm-go replays verbatim.
 	CookieHeader string
 
-	// Cookies is the same set with domain and path intact, for Restore.
-	Cookies []Cookie
-
 	// VisitorData, DataSyncID and AuthUser are deliberately left empty here.
 	// They are not cookies and the window cannot read them without running
 	// script in the page. The caller fills them from the account listing, which
@@ -98,5 +91,5 @@ type Result struct {
 // hang, and knowing the page is the only way to tell a stalled Google flow from a
 // window that never loaded at all.
 func (s *Session) CurrentURL() string {
-	return s.CurrentURL()
+	return s.currentURL()
 }

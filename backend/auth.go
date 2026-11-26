@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/dlcuy22/molow/backend/loginwin"
+	"github.com/dlcuy22/molow/internal/library"
 	ytm "github.com/dlcuy22/ytm-go"
 )
 
@@ -41,6 +42,13 @@ type AuthStatus struct {
 // write the file twice.
 var authMu chan struct{} = make(chan struct{}, 1)
 
+// CheckKeyring probes whether the platform secret store (Credential Manager on
+// Windows, Secret Service daemon on Linux, Keychain on macOS) is reachable and
+// unlocked before opening the sign-in flow.
+func (s *PlayerService) CheckKeyring() error {
+	return getKeyStore().Probe()
+}
+
 // SignInWithCookieHeader signs in from a pasted Cookie: header.
 //
 // The whole header is required, not one field. Measured against the live
@@ -52,6 +60,10 @@ func (s *PlayerService) SignInWithCookieHeader(header string) error {
 	authMu <- struct{}{}
 	defer func() { <-authMu }()
 
+	if err := getKeyStore().Probe(); err != nil {
+		return err
+	}
+
 	header = normalizeCookieHeader(header)
 	if err := checkCookieHeader(header); err != nil {
 		return err
@@ -61,18 +73,26 @@ func (s *PlayerService) SignInWithCookieHeader(header string) error {
 	if err := s.completeSignIn(creds); err != nil {
 		return err
 	}
-	return saveCredentials(creds)
+	if err := saveCredentials(creds); err != nil {
+		return err
+	}
+	s.startYTMLibrarySync(creds)
+	return nil
 }
 
 // SignIn opens the login window and waits for a session.
 //
-// The window is a separate GTK toplevel on its own cookie jar, because a Wails
+// The window is an isolated browser view on its own cookie jar, because a Wails
 // webview exposes no cookie API and the cookies that matter are HttpOnly. It is
 // closed as soon as the session is captured, and its profile directory is
 // removed, so nothing is left behind.
 func (s *PlayerService) SignIn() error {
 	authMu <- struct{}{}
 	defer func() { <-authMu }()
+
+	if err := getKeyStore().Probe(); err != nil {
+		return err
+	}
 
 	jarDir, err := loginJarDir()
 	if err != nil {
@@ -110,7 +130,17 @@ func (s *PlayerService) SignIn() error {
 	if err := s.completeSignIn(creds); err != nil {
 		return err
 	}
-	return saveCredentials(creds)
+	if err := saveCredentials(creds); err != nil {
+		return err
+	}
+	s.startYTMLibrarySync(creds)
+	return nil
+}
+
+func (s *PlayerService) startYTMLibrarySync(creds *Credentials) {
+	if id, err := s.ensureYTMLibrary(creds); err == nil {
+		s.triggerYTMSync(id, syncTriggerManual)
+	}
 }
 
 // completeSignIn validates a captured session and fills in the identity.
@@ -140,6 +170,11 @@ func (s *PlayerService) completeSignIn(creds *Credentials) error {
 	// sign-in has to hand it the new session now. Without this, every catalogue
 	// call keeps using the old cookies until the next start, which makes a
 	// re-login look ineffective.
+	gen := s.authGen.Add(1)
+	s.authExpired.Store(false)
+	if rotated, err := s.clientWithCookieCapture(creds, gen); err == nil {
+		client = rotated
+	}
 	s.ytmProv.setClient(client)
 
 	// The identity is a nicety. If the account endpoints fail the session is
@@ -172,13 +207,39 @@ func (s *PlayerService) completeSignIn(creds *Credentials) error {
 	return nil
 }
 
-// SignOut forgets the stored session. It reports no error when nothing was
-// stored, so a second sign-out is harmless.
+// SignOut forgets the stored session, keeping any cached YTM library rows on
+// disk in signedOut state.
 func (s *PlayerService) SignOut() error {
+	return s.SignOutWithOptions(false)
+}
+
+// SignOutWithOptions forgets the stored session and optionally deletes all
+// cached YouTube Music libraries from library.db.
+func (s *PlayerService) SignOutWithOptions(deleteLibrary bool) error {
 	authMu <- struct{}{}
 	defer func() { <-authMu }()
 
-	return clearCredentials()
+	s.authGen.Add(1)
+	s.authExpired.Store(false)
+	s.stopYTMSyncers()
+	if s.ytmProv != nil {
+		s.ytmProv.setClient(ytmClient(s.logger()))
+	}
+	if err := clearCredentials(); err != nil {
+		return err
+	}
+
+	if deleteLibrary && s.libStore != nil {
+		if rows, err := s.libStore.Libraries(); err == nil {
+			for _, row := range rows {
+				if row.Kind == library.KindYTM {
+					_ = s.RemoveLibrary(row.ID)
+				}
+			}
+		}
+	}
+	s.emit(eventLibrary, LibraryProgress{State: "ready"})
+	return nil
 }
 
 // AuthStatus reports the stored session without touching the network, so the UI
@@ -190,6 +251,14 @@ func (s *PlayerService) AuthStatus() AuthStatus {
 	creds, err := loadCredentials()
 	if err != nil || creds == nil {
 		return AuthStatus{}
+	}
+	if s.authExpired.Load() {
+		return AuthStatus{
+			Name:      creds.Name,
+			Email:     creds.Email,
+			ChannelID: creds.ChannelID,
+			Expired:   true,
+		}
 	}
 	return AuthStatus{
 		SignedIn:  true,
@@ -205,12 +274,19 @@ func (s *PlayerService) AuthStatus() AuthStatus {
 func (s *PlayerService) RefreshAuth() AuthStatus {
 	creds, err := loadCredentials()
 	if err != nil || creds == nil {
+		s.authExpired.Store(false)
 		return AuthStatus{}
 	}
 
-	client, err := clientFromCredentials(creds)
+	client, err := s.clientWithCookieCapture(creds, s.authGen.Load())
 	if err != nil {
-		return AuthStatus{Expired: true}
+		s.authExpired.Store(true)
+		return AuthStatus{
+			Name:      creds.Name,
+			Email:     creds.Email,
+			ChannelID: creds.ChannelID,
+			Expired:   true,
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), authProbeTimeout)
@@ -218,7 +294,13 @@ func (s *PlayerService) RefreshAuth() AuthStatus {
 
 	if _, _, err := client.GetLikedSongs(ctx); err != nil {
 		if errors.Is(err, ytm.ErrSessionExpired) {
-			return AuthStatus{Expired: true}
+			s.authExpired.Store(true)
+			return AuthStatus{
+				Name:      creds.Name,
+				Email:     creds.Email,
+				ChannelID: creds.ChannelID,
+				Expired:   true,
+			}
 		}
 		// A network failure says nothing about the session, so the stored state
 		// stands rather than being reported as expired.
@@ -230,6 +312,7 @@ func (s *PlayerService) RefreshAuth() AuthStatus {
 		}
 	}
 
+	s.authExpired.Store(false)
 	return AuthStatus{
 		SignedIn:  true,
 		Name:      creds.Name,
@@ -329,7 +412,17 @@ func (s *PlayerService) SwitchChannel(channelID string) error {
 		return fmt.Errorf("auth: switching channel failed: %w", err)
 	}
 
-	return saveCredentials(creds)
+	if err := saveCredentials(creds); err != nil {
+		return err
+	}
+	gen := s.authGen.Add(1)
+	s.authExpired.Store(false)
+	s.stopYTMSyncers()
+	if rotated, err := s.clientWithCookieCapture(creds, gen); err == nil && s.ytmProv != nil {
+		s.ytmProv.setClient(rotated)
+	}
+	s.startYTMLibrarySync(creds)
+	return nil
 }
 
 // clientFromCredentialsInto applies the stored channel fields onto a live client,

@@ -1,6 +1,7 @@
 package loginwin
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -154,4 +155,22 @@ func sapiSID(cookies []Cookie) string {
 		}
 	}
 	return best
+}
+
+// describeJar summarises what the jar held, so a timeout can say whether the
+// sign-in never started or stopped at the Google account stage.
+func describeJar(cookies []Cookie) string {
+	if len(cookies) == 0 {
+		return "the cookie jar is empty"
+	}
+
+	var youtube, google int
+	for _, c := range cookies {
+		if isYouTubeDomain(c.Domain) {
+			youtube++
+		} else {
+			google++
+		}
+	}
+	return fmt.Sprintf("%d cookies, %d scoped to YouTube, %d elsewhere", len(cookies), youtube, google)
 }

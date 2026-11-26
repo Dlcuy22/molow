@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dlcuy22/molo"
@@ -25,6 +26,7 @@ import (
 	"github.com/dlcuy22/molow/internal/library/sqlite"
 	"github.com/dlcuy22/molow/internal/spectrum"
 	"github.com/dlcuy22/molow/internal/trackcache"
+	ytm "github.com/dlcuy22/ytm-go"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -184,6 +186,17 @@ type PlayerService struct {
 	libStore *sqlite.Store
 	libs     map[string]library.Source
 	scanning map[string]bool
+
+	// Auth lifecycle guards: authGen invalidates in-flight Set-Cookie writes from
+	// a previous sign-in/sign-out generation, authExpired reports a revoked session,
+	// and cookieRefreshMu throttles active cookie-rotation probes.
+	authGen           atomic.Uint64
+	authExpired       atomic.Bool
+	cookiePersistMu   sync.Mutex
+	cookieRefreshMu   sync.Mutex
+	lastCookieRefresh time.Time
+	refreshSessionFn  func(context.Context, *ytm.Client) error
+	ytmOpsOverride    func(*ytmAccountOps)
 
 	// The lyric prefetch runs one chain per track change, writes the result
 	// to disk as a sidecar, and lets the lyric pane join it. The loader stays
@@ -368,6 +381,7 @@ func (s *PlayerService) ServiceShutdown() error {
 	}
 	s.stopDiscord()
 	s.stopSystemMedia()
+	s.stopYTMSyncers()
 	s.wg.Wait()
 	if s.preview != nil {
 		s.preview.close()

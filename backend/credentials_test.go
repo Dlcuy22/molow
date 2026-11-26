@@ -1,26 +1,83 @@
 package backend
 
 import (
+	"context"
+	"crypto/rand"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/dlcuy22/molow/backend/loginwin"
 )
 
-// isolateConfig points the config directory at a temporary home, so a test can
-// never touch the real credentials file. On Windows os.UserConfigDir reads
-// %AppData% and ignores XDG_CONFIG_HOME, so both have to be moved or a desktop
-// run would resolve to the real %AppData%\molo and rewrite the user's files.
+// memKeyStore is an in-memory KeyStore so unit tests exercise envelope
+// encryption without ever touching the user's real OS keyring.
+type memKeyStore struct {
+	mu       sync.Mutex
+	key      []byte
+	probeErr error
+}
+
+func newMemKeyStore() *memKeyStore {
+	return &memKeyStore{}
+}
+
+func (m *memKeyStore) Probe() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.probeErr
+}
+
+func (m *memKeyStore) GetKey() ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.key) == 0 {
+		return nil, ErrKeyNotFound
+	}
+	cp := make([]byte, len(m.key))
+	copy(cp, m.key)
+	return cp, nil
+}
+
+func (m *memKeyStore) GetOrCreateKey() ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.probeErr != nil {
+		return nil, m.probeErr
+	}
+	if len(m.key) == 0 {
+		m.key = make([]byte, aes256KeySize)
+		if _, err := rand.Read(m.key); err != nil {
+			return nil, err
+		}
+	}
+	cp := make([]byte, len(m.key))
+	copy(cp, m.key)
+	return cp, nil
+}
+
+func (m *memKeyStore) DeleteKey() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.key = nil
+	return nil
+}
+
+// isolateConfig points the config directory at a temporary home and installs
+// an in-memory keyring, so a test can never touch the real credentials file or
+// real OS keyring.
 func isolateConfig(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
 	t.Setenv("AppData", dir)
+	setKeyStoreForTest(t, newMemKeyStore())
 	return dir
 }
 
@@ -28,7 +85,7 @@ func TestSaveCredentialsIsPrivateAndAtomic(t *testing.T) {
 	isolateConfig(t)
 
 	creds := &Credentials{
-		CookieHeader: "SAPISID=a; SID=b",
+		CookieHeader: "SAPISID=secret-seed-value; SID=secret-sid-value",
 		Name:         "Test User",
 		Email:        "test@example.invalid",
 	}
@@ -40,22 +97,31 @@ func TestSaveCredentialsIsPrivateAndAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("credentialsPath: %v", err)
 	}
+	if !strings.HasSuffix(path, "credentials.enc") {
+		t.Fatalf("credentialsPath = %q, want credentials.enc", path)
+	}
 
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	// Windows has no POSIX mode bits: a writable file always stats 0666 and
-	// the real protection comes from the profile's ACLs, so the mode is only
-	// asserted where the platform can honour it.
 	if runtime.GOOS != "windows" {
 		if perm := info.Mode().Perm(); perm != 0o600 {
 			t.Errorf("mode = %o, want 600", perm)
 		}
 	}
 
-	// A leftover temporary file would mean the write was not atomic, and it would
-	// also be a second copy of the secrets on disk.
+	// On-disk ciphertext must never expose plaintext cookie strings or values.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	for _, needle := range []string{"SAPISID", "secret-seed-value", "SID", "secret-sid-value", "Test User"} {
+		if strings.Contains(string(raw), needle) {
+			t.Errorf("credentials.enc contains plaintext %q", needle)
+		}
+	}
+
 	entries, err := os.ReadDir(filepath.Dir(path))
 	if err != nil {
 		t.Fatalf("read dir: %v", err)
@@ -78,9 +144,6 @@ func TestLoadCredentialsRoundTrip(t *testing.T) {
 		ChannelID:    "UCchannel",
 		Name:         "Test User",
 		Email:        "test@example.invalid",
-		Cookies: []Cookie{
-			{Name: "SAPISID", Value: "a", Domain: ".youtube.com", Path: "/", HTTPOnly: true},
-		},
 	}
 	if err := saveCredentials(want); err != nil {
 		t.Fatalf("saveCredentials: %v", err)
@@ -99,40 +162,59 @@ func TestLoadCredentialsRoundTrip(t *testing.T) {
 	if got.DataSyncID != "123||" {
 		t.Errorf("DataSyncID = %q", got.DataSyncID)
 	}
-	if len(got.Cookies) != 1 || !got.Cookies[0].HTTPOnly {
-		t.Errorf("Cookies = %+v, want one HttpOnly entry", got.Cookies)
-	}
-	// CapturedAt is filled in on save, so the UI can show when the session began.
 	if got.CapturedAt.IsZero() {
 		t.Error("CapturedAt is zero")
 	}
 }
 
-func TestLoadCredentialsMissing(t *testing.T) {
+func TestLoadCredentialsMissingAndKeyErrors(t *testing.T) {
 	isolateConfig(t)
 
-	_, err := loadCredentials()
-	if err != ErrNoCredentials {
+	if _, err := loadCredentials(); err != ErrNoCredentials {
 		t.Fatalf("error = %v, want ErrNoCredentials", err)
+	}
+
+	if err := saveCredentials(&Credentials{CookieHeader: "SAPISID=a; SID=b"}); err != nil {
+		t.Fatalf("saveCredentials: %v", err)
+	}
+
+	// Missing key in keyring -> ErrNoCredentials (no plaintext fallback).
+	if err := getKeyStore().DeleteKey(); err != nil {
+		t.Fatalf("DeleteKey: %v", err)
+	}
+	if _, err := loadCredentials(); !errors.Is(err, ErrNoCredentials) {
+		t.Fatalf("loadCredentials with missing key = %v, want ErrNoCredentials", err)
 	}
 }
 
-func TestLoadCredentialsRejectsWrongVersion(t *testing.T) {
+func TestLoadCredentialsRejectsTamperedOrWrongEnvelope(t *testing.T) {
 	isolateConfig(t)
 
+	if err := saveCredentials(&Credentials{CookieHeader: "SAPISID=a; SID=b"}); err != nil {
+		t.Fatalf("saveCredentials: %v", err)
+	}
 	path, err := credentialsPath()
 	if err != nil {
 		t.Fatalf("credentialsPath: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatalf("mkdir: %v", err)
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
 	}
-	if err := os.WriteFile(path, []byte(`{"version":99,"cookie_header":"SAPISID=a; SID=b"}`), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
+	raw[len(raw)-1] ^= 0xff
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write tampered: %v", err)
+	}
+	if _, err := loadCredentials(); err == nil {
+		t.Fatal("tampered ciphertext was accepted")
 	}
 
+	if err := os.WriteFile(path, []byte(`{"version":1,"cookie_header":"SAPISID=a; SID=b"}`), 0o600); err != nil {
+		t.Fatalf("write plaintext: %v", err)
+	}
 	if _, err := loadCredentials(); err == nil {
-		t.Fatal("a file with an unknown version was accepted")
+		t.Fatal("unencrypted plaintext file was accepted")
 	}
 }
 
@@ -152,6 +234,35 @@ func TestClearCredentials(t *testing.T) {
 	if _, err := loadCredentials(); err != ErrNoCredentials {
 		t.Errorf("error = %v, want ErrNoCredentials after clearing", err)
 	}
+	if _, err := getKeyStore().GetKey(); !errors.Is(err, ErrKeyNotFound) {
+		t.Errorf("keyring GetKey = %v, want ErrKeyNotFound after clearCredentials", err)
+	}
+}
+
+func TestSignInAbortsWhenKeyringUnavailable(t *testing.T) {
+	isolateConfig(t)
+	ks := &memKeyStore{probeErr: errors.New("org.freedesktop.secrets unavailable")}
+	setKeyStoreForTest(t, ks)
+
+	svc := &PlayerService{}
+	if err := svc.CheckKeyring(); err == nil {
+		t.Fatal("CheckKeyring succeeded when keyring is unavailable")
+	}
+	if err := svc.SignIn(); err == nil || !strings.Contains(err.Error(), "org.freedesktop.secrets") {
+		t.Fatalf("SignIn err = %v, want keyring failure", err)
+	}
+	if err := svc.SignInWithCookieHeader("SAPISID=abc; SID=def"); err == nil || !strings.Contains(err.Error(), "org.freedesktop.secrets") {
+		t.Fatalf("SignInWithCookieHeader err = %v, want keyring failure", err)
+	}
+
+	path, err := credentialsPath()
+	if err != nil {
+		t.Fatalf("credentialsPath: %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("credentials file created despite failed keyring pre-flight: %v", err)
+	}
+	_ = context.Background()
 }
 
 func TestNormalizeCookieHeader(t *testing.T) {
@@ -183,7 +294,6 @@ func TestCheckCookieHeader(t *testing.T) {
 			wantErr: "empty",
 		},
 		{
-			// The shape measured live: a real SAPISID that authenticates nothing.
 			name:    "seed without identity",
 			header:  "SAPISID=abc",
 			wantErr: "no SID",
@@ -239,8 +349,6 @@ func TestClientFromCredentialsAppliesChannel(t *testing.T) {
 		t.Fatal("nil client")
 	}
 
-	// The channel has to reach the session, or a brand account would always
-	// behave like its first channel.
 	auth := client.Auth()
 	if auth == nil {
 		t.Fatal("client has no auth")
@@ -265,46 +373,24 @@ func TestClientFromCredentialsRejectsEmpty(t *testing.T) {
 	}
 }
 
-func TestCredentialsFromLoginKeepsDomainAndPath(t *testing.T) {
-	// The header throws domain and path away; Restore needs them back, so the
-	// conversion has to carry them across.
-	result := loginwinResultForTest()
+func TestCredentialsFromLoginMapsHeaderAndMetadata(t *testing.T) {
+	result := loginwin.Result{
+		URL:          "https://music.youtube.com/",
+		SAPISID:      "abc",
+		CookieHeader: "SAPISID=abc; SID=def",
+		VisitorData:  "visitor",
+		AuthUser:     "1",
+		DataSyncID:   "sync||",
+	}
 	creds := credentialsFromLogin(result)
 
 	if creds.CookieHeader != "SAPISID=abc; SID=def" {
 		t.Errorf("CookieHeader = %q", creds.CookieHeader)
 	}
-	if len(creds.Cookies) != 2 {
-		t.Fatalf("got %d cookies, want 2", len(creds.Cookies))
+	if creds.VisitorData != "visitor" || creds.AuthUser != "1" || creds.DataSyncID != "sync||" {
+		t.Errorf("unexpected metadata: %+v", creds)
 	}
-	if creds.Cookies[0].Domain != ".youtube.com" || creds.Cookies[0].Path != "/" {
-		t.Errorf("cookie lost its scope: %+v", creds.Cookies[0])
-	}
-	if !creds.Cookies[0].HTTPOnly {
-		t.Error("HttpOnly was not carried across")
-	}
-	if !creds.Cookies[0].Expires.After(time.Now()) {
-		t.Error("expiry was not carried across")
-	}
-
-	// And back again, for Restore.
-	back := creds.loginCookies()
-	if len(back) != 2 || back[1].Name != "SID" {
-		t.Errorf("loginCookies = %+v", back)
-	}
-}
-
-// loginwinResultForTest builds the result a successful capture produces, so the
-// conversion can be checked without opening a window.
-func loginwinResultForTest() loginwin.Result {
-	expires := time.Now().Add(24 * time.Hour)
-	return loginwin.Result{
-		URL:          "https://music.youtube.com/",
-		SAPISID:      "abc",
-		CookieHeader: "SAPISID=abc; SID=def",
-		Cookies: []loginwin.Cookie{
-			{Name: "SAPISID", Value: "abc", Domain: ".youtube.com", Path: "/", HTTPOnly: true, Expires: expires},
-			{Name: "SID", Value: "def", Domain: ".youtube.com", Path: "/", Secure: true, Expires: expires},
-		},
+	if creds.CapturedAt.IsZero() || creds.CapturedAt.After(time.Now().Add(time.Second)) {
+		t.Errorf("CapturedAt = %v", creds.CapturedAt)
 	}
 }

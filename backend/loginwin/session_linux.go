@@ -53,10 +53,8 @@ var fn struct {
 	webkitNetworkSessionGetCookieManager func(uintptr) uintptr
 	webkitCookieManagerGetAllCookies     func(uintptr, uintptr, uintptr, uintptr)
 	webkitCookieManagerGetAllCookiesFin  func(uintptr, uintptr, *uintptr) uintptr
-	webkitCookieManagerReplaceCookies    func(uintptr, uintptr, uintptr, uintptr, uintptr)
 	webkitCookieManagerSetPersistStorage func(uintptr, *byte, int32)
 
-	soupCookieNew         func(*byte, *byte, *byte, *byte, int32) uintptr
 	soupCookieGetName     func(uintptr) *byte
 	soupCookieGetValue    func(uintptr) *byte
 	soupCookieGetDomain   func(uintptr) *byte
@@ -65,10 +63,6 @@ var fn struct {
 	soupCookieGetHTTPOnly func(uintptr) int32
 	soupCookieGetExpires  func(uintptr) uintptr
 	soupCookieGetSameSite func(uintptr) int32
-	soupCookieSetSecure   func(uintptr, int32)
-	soupCookieSetHTTPOnly func(uintptr, int32)
-	soupCookieSetSameSite func(uintptr, int32)
-	soupCookieFree        func(uintptr)
 
 	gObjectNewWithProperties func(uintptr, uint32, **byte, *gvalue) uintptr
 	gObjectUnref             func(uintptr)
@@ -81,7 +75,6 @@ var fn struct {
 	gErrorFree      func(uintptr)
 	gListLength     func(uintptr) uint32
 	gListNthData    func(uintptr, uint32) uintptr
-	gListAppend     func(uintptr, uintptr) uintptr
 	gListFree       func(uintptr)
 	gDateTimeToUnix func(uintptr) int64
 }
@@ -110,7 +103,6 @@ var requiredSymbols = map[string][]string{
 		"webkit_network_session_new", "webkit_network_session_get_cookie_manager",
 		"webkit_cookie_manager_get_all_cookies",
 		"webkit_cookie_manager_get_all_cookies_finish",
-		"webkit_cookie_manager_replace_cookies",
 		"webkit_cookie_manager_set_persistent_storage",
 	},
 }
@@ -176,10 +168,8 @@ func load() error {
 	purego.RegisterLibFunc(&fn.webkitNetworkSessionGetCookieManager, webkit, "webkit_network_session_get_cookie_manager")
 	purego.RegisterLibFunc(&fn.webkitCookieManagerGetAllCookies, webkit, "webkit_cookie_manager_get_all_cookies")
 	purego.RegisterLibFunc(&fn.webkitCookieManagerGetAllCookiesFin, webkit, "webkit_cookie_manager_get_all_cookies_finish")
-	purego.RegisterLibFunc(&fn.webkitCookieManagerReplaceCookies, webkit, "webkit_cookie_manager_replace_cookies")
 	purego.RegisterLibFunc(&fn.webkitCookieManagerSetPersistStorage, webkit, "webkit_cookie_manager_set_persistent_storage")
 
-	purego.RegisterLibFunc(&fn.soupCookieNew, soup, "soup_cookie_new")
 	purego.RegisterLibFunc(&fn.soupCookieGetName, soup, "soup_cookie_get_name")
 	purego.RegisterLibFunc(&fn.soupCookieGetValue, soup, "soup_cookie_get_value")
 	purego.RegisterLibFunc(&fn.soupCookieGetDomain, soup, "soup_cookie_get_domain")
@@ -188,10 +178,6 @@ func load() error {
 	purego.RegisterLibFunc(&fn.soupCookieGetHTTPOnly, soup, "soup_cookie_get_http_only")
 	purego.RegisterLibFunc(&fn.soupCookieGetExpires, soup, "soup_cookie_get_expires")
 	purego.RegisterLibFunc(&fn.soupCookieGetSameSite, soup, "soup_cookie_get_same_site_policy")
-	purego.RegisterLibFunc(&fn.soupCookieSetSecure, soup, "soup_cookie_set_secure")
-	purego.RegisterLibFunc(&fn.soupCookieSetHTTPOnly, soup, "soup_cookie_set_http_only")
-	purego.RegisterLibFunc(&fn.soupCookieSetSameSite, soup, "soup_cookie_set_same_site_policy")
-	purego.RegisterLibFunc(&fn.soupCookieFree, soup, "soup_cookie_free")
 
 	purego.RegisterLibFunc(&fn.gObjectNewWithProperties, gobject, "g_object_new_with_properties")
 	purego.RegisterLibFunc(&fn.gObjectUnref, gobject, "g_object_unref")
@@ -204,7 +190,6 @@ func load() error {
 	purego.RegisterLibFunc(&fn.gErrorFree, glib, "g_error_free")
 	purego.RegisterLibFunc(&fn.gListLength, glib, "g_list_length")
 	purego.RegisterLibFunc(&fn.gListNthData, glib, "g_list_nth_data")
-	purego.RegisterLibFunc(&fn.gListAppend, glib, "g_list_append")
 	purego.RegisterLibFunc(&fn.gListFree, glib, "g_list_free")
 	purego.RegisterLibFunc(&fn.gDateTimeToUnix, glib, "g_date_time_to_unix")
 
@@ -394,7 +379,6 @@ func (s *Session) Wait(ctx context.Context) (Result, error) {
 				URL:          s.currentURL(),
 				SAPISID:      sapiSID(cookies),
 				CookieHeader: cookieHeader(cookies),
-				Cookies:      cookies,
 			}, nil
 		}
 
@@ -406,24 +390,6 @@ func (s *Session) Wait(ctx context.Context) (Result, error) {
 		case <-ticker.C:
 		}
 	}
-}
-
-// describeJar summarises what the jar held, so a timeout can say whether the
-// sign-in never started or stopped at the Google account stage.
-func describeJar(cookies []Cookie) string {
-	if len(cookies) == 0 {
-		return "the cookie jar is empty"
-	}
-
-	var youtube, google int
-	for _, c := range cookies {
-		if isYouTubeDomain(c.Domain) {
-			youtube++
-		} else {
-			google++
-		}
-	}
-	return fmt.Sprintf("%d cookies, %d scoped to YouTube, %d elsewhere", len(cookies), youtube, google)
 }
 
 // currentURL reports the page the window is showing, for diagnostics.
@@ -534,120 +500,6 @@ func readCookie(ptr uintptr) Cookie {
 		c.SameSite = "strict"
 	}
 	return c
-}
-
-// restoreCall carries the reply channel to the async replace callback.
-type restoreCall struct {
-	ch     chan error
-	handle uintptr
-}
-
-// Restore seeds the jar from a saved set, so a relaunch can reuse the session.
-func (s *Session) Restore(cookies []Cookie) error {
-	s.mu.Lock()
-	manager := s.manager
-	s.mu.Unlock()
-	if manager == 0 {
-		return ErrClosed
-	}
-	if len(cookies) == 0 {
-		return nil
-	}
-
-	// The call is created here rather than inside the closure so the timeout path
-	// can reach it and undo what the closure registered.
-	call := &restoreCall{ch: make(chan error, 1)}
-	call.handle = retain(call)
-
-	postToMain(func() {
-		var list uintptr
-		var built []uintptr
-		for _, c := range cookies {
-			ptr := buildSoupCookie(c)
-			if ptr == 0 {
-				continue
-			}
-			built = append(built, ptr)
-			list = fn.gListAppend(list, ptr)
-		}
-		if list == 0 {
-			release(call.handle)
-			call.ch <- nil
-			return
-		}
-
-		// The cookies and the list stay alive until the reply arrives: replace is
-		// asynchronous, so freeing them here could pull them out from under it.
-		restorePending.Store(call.handle, built)
-		fn.webkitCookieManagerReplaceCookies(manager, list, 0, restoreCallback, call.handle)
-	})
-
-	// Without the loop running there is no reply, so the wait is bounded rather
-	// than depending on the caller having a live GTK thread.
-	select {
-	case err := <-call.ch:
-		return err
-	case <-time.After(30 * time.Second):
-		// The callback will never run, so the cookies it was meant to free are
-		// released here instead, and the handle is dropped.
-		if built, loaded := restorePending.LoadAndDelete(call.handle); loaded {
-			for _, ptr := range built.([]uintptr) {
-				fn.soupCookieFree(ptr)
-			}
-		}
-		release(call.handle)
-		return fmt.Errorf("loginwin: the GTK main loop did not answer the cookie restore")
-	}
-}
-
-// restorePending keeps the SoupCookie pointers alive across the async reply.
-var restorePending sync.Map
-
-var restoreCallback = purego.NewCallback(func(source, result, data uintptr) {
-	call, ok := lookup(data).(*restoreCall)
-	if !ok {
-		return
-	}
-	if built, loaded := restorePending.LoadAndDelete(data); loaded {
-		for _, ptr := range built.([]uintptr) {
-			fn.soupCookieFree(ptr)
-		}
-	}
-	release(call.handle)
-	call.ch <- nil
-})
-
-// buildSoupCookie creates one SoupCookie from a Go value.
-func buildSoupCookie(c Cookie) uintptr {
-	if c.Name == "" || c.Domain == "" {
-		return 0
-	}
-	path := c.Path
-	if path == "" {
-		path = "/"
-	}
-
-	strs, keep := cstrings(c.Name, c.Value, c.Domain, path)
-	// -1 makes the cookie a session cookie.
-	ptr := fn.soupCookieNew(strs[0], strs[1], strs[2], strs[3], -1)
-	runtime.KeepAlive(keep)
-	if ptr == 0 {
-		return 0
-	}
-
-	if c.Secure {
-		fn.soupCookieSetSecure(ptr, 1)
-	}
-	if c.HTTPOnly {
-		fn.soupCookieSetHTTPOnly(ptr, 1)
-	}
-	switch c.SameSite {
-	case "lax":
-		fn.soupCookieSetSameSite(ptr, 1)
-	case "strict":
-		fn.soupCookieSetSameSite(ptr, 2)
-	}
-	return ptr
 }
 
 // Close destroys the window and drops the session.

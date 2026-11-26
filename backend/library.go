@@ -79,6 +79,11 @@ func (s *PlayerService) initLibraries() {
 		return
 	}
 	for _, row := range rows {
+		if row.Kind == library.KindYTM {
+			s.registerYTM(row)
+
+			continue
+		}
 		s.registerLocal(row)
 		// Scan on startup, on a worker: the window must open before a large
 		// folder has been walked. A library with no roots has nothing to walk.
@@ -92,6 +97,8 @@ func (s *PlayerService) initLibraries() {
 			_ = s.RescanLibrary(row.ID)
 		}
 	}
+
+	s.syncStartupYTMLibrary()
 
 	go func() {
 		s.backfillCompositeCovers()
@@ -480,8 +487,12 @@ func samePath(a, b string) bool {
 func (s *PlayerService) RemoveLibrary(id string) error {
 	s.libMu.Lock()
 	store := s.libStore
+	old, _ := s.libs[id].(*ytmSource)
 	delete(s.libs, id)
 	s.libMu.Unlock()
+	if old != nil {
+		old.syncer.stop()
+	}
 	if store == nil {
 		return fmt.Errorf("library: store is not available")
 	}
@@ -489,9 +500,15 @@ func (s *PlayerService) RemoveLibrary(id string) error {
 	return store.RemoveLibrary(id)
 }
 
-// RescanLibrary rescans every watched root on a worker. A scan already running
-// is not duplicated.
+// RescanLibrary rescans every watched root on a worker (or re-syncs a YTM
+// account library). A scan already running is not duplicated.
 func (s *PlayerService) RescanLibrary(id string) error {
+	if src, ok := s.librarySource(id); ok {
+		if _, isYTM := src.(*ytmSource); isYTM {
+			s.triggerYTMSync(id, syncTriggerManual)
+			return nil
+		}
+	}
 	return s.scanLibrary(id, "")
 }
 
@@ -571,9 +588,11 @@ func (s *PlayerService) createImportPlaylist(libraryID, root string, refs []stri
 // YTMImport is the outcome of one YouTube Music import: how many tracks landed
 // in the library, and the playlist row when the hit was a playlist.
 type YTMImport struct {
-	PlaylistID string `json:"playlistId,omitempty"`
-	Name       string `json:"name"`
-	Tracks     int    `json:"tracks"`
+	PlaylistID  string `json:"playlistId,omitempty"`
+	Name        string `json:"name"`
+	Tracks      int    `json:"tracks"`
+	NeedsTarget bool   `json:"needsTarget,omitempty"`
+	Duplicate   bool   `json:"duplicate,omitempty"`
 }
 
 // ytmCoverWorkers bounds the artwork fetches one import keeps in flight. Each
@@ -581,23 +600,14 @@ type YTMImport struct {
 // time waiting on one request at a time.
 const ytmCoverWorkers = 6
 
-// ImportYTM copies a YouTube Music hit into a library's catalogue. The hit is
-// the row the palette listed: a song becomes one track, and a playlist becomes
-// a playlist row carrying its remote id plus its entries. Everything is an
-// ordinary catalogue row afterwards, so browsing, liking and playback need no
-// special case.
-//
-// The hit carries the metadata the search already showed, so a song costs no
-// second request; a playlist is one catalogue walk, bounded the same way
-// queueing one is.
+// ImportYTM copies a YouTube Music hit into a library's catalogue. For local
+// libraries it creates a local-only copy; for a KindYTM account library it
+// saves playlists directly to YouTube Music and signals NeedsTarget for single
+// songs so the UI can ask where the song should go.
 func (s *PlayerService) ImportYTM(libraryID string, hit YTMResult) (YTMImport, error) {
 	src, ok := s.librarySource(libraryID)
 	if !ok {
 		return YTMImport{}, fmt.Errorf("library: unknown id %q", libraryID)
-	}
-	dst, ok := src.(*local.Local)
-	if !ok {
-		return YTMImport{}, fmt.Errorf("library: %q cannot import YouTube Music", libraryID)
 	}
 	if strings.TrimSpace(hit.VideoID) == "" {
 		return YTMImport{}, fmt.Errorf("ytm: %q has no id", hit.Title)
@@ -610,6 +620,21 @@ func (s *PlayerService) ImportYTM(libraryID string, hit YTMResult) (YTMImport, e
 	// landing half an album or a list of one.
 	if hit.Kind == "Album" {
 		return YTMImport{}, fmt.Errorf("ytm: albums cannot be imported yet")
+	}
+
+	if ytmSrc, isYTM := src.(*ytmSource); isYTM {
+		if hit.Kind == "Playlist" {
+			return ytmSrc.importPlaylist(s.ctx, hit)
+		}
+		if !hit.Playable {
+			return YTMImport{}, fmt.Errorf("ytm: %q is not a track", hit.Title)
+		}
+		return YTMImport{Name: name, NeedsTarget: true}, nil
+	}
+
+	dst, ok := src.(*local.Local)
+	if !ok {
+		return YTMImport{}, fmt.Errorf("library: %q cannot import YouTube Music", libraryID)
 	}
 
 	if hit.Kind != "Playlist" {
@@ -936,14 +961,19 @@ func (s *PlayerService) LibraryFeed(id, tab, cursor string, limit int) (library.
 	return src.Feed(s.ctx, tab, cursor, limit)
 }
 
+type albumArtistSource interface {
+	AlbumTracks(ctx context.Context, album, artist string) ([]library.Track, error)
+	ArtistTracks(ctx context.Context, artist string) ([]library.Track, error)
+}
+
 // LibraryAlbumTracks reads one album's tracks in order.
 func (s *PlayerService) LibraryAlbumTracks(id, album, artist string) ([]library.Track, error) {
 	src, ok := s.librarySource(id)
 	if !ok {
 		return nil, fmt.Errorf("library: unknown id %q", id)
 	}
-	if localSrc, ok := src.(*local.Local); ok {
-		return localSrc.AlbumTracks(s.ctx, album, artist)
+	if reader, ok := src.(albumArtistSource); ok {
+		return reader.AlbumTracks(s.ctx, album, artist)
 	}
 
 	return nil, fmt.Errorf("library: %q cannot list an album", id)
@@ -955,8 +985,8 @@ func (s *PlayerService) LibraryArtistTracks(id, artist string) ([]library.Track,
 	if !ok {
 		return nil, fmt.Errorf("library: unknown id %q", id)
 	}
-	if localSrc, ok := src.(*local.Local); ok {
-		return localSrc.ArtistTracks(s.ctx, artist)
+	if reader, ok := src.(albumArtistSource); ok {
+		return reader.ArtistTracks(s.ctx, artist)
 	}
 
 	return nil, fmt.Errorf("library: %q cannot list an artist", id)

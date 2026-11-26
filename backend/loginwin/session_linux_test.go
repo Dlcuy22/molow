@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
@@ -231,66 +230,4 @@ func verifyPersistence(t *testing.T, jarDir string) {
 		return
 	}
 	t.Log("PERSISTENCE: the cookie survived a close and reopen")
-}
-
-// TestWindowRestoresCookies proves the Restore path, which is what a relaunch
-// uses when the jar on disk is missing or unusable.
-func TestWindowRestoresCookies(t *testing.T) {
-	requireSmoke(t)
-	registerLoopSymbols(t)
-
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
-	loopSymbols.gtkInit()
-	loop := loopSymbols.gMainLoopNew(0, 0)
-	if loop == 0 {
-		t.Fatal("g_main_loop_new returned NULL")
-	}
-
-	jarDir := t.TempDir()
-	blank := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "<html><body>blank</body></html>")
-	}))
-	defer blank.Close()
-
-	// The host has to match the page origin, or the jar will not hand the cookie
-	// back for it.
-	host := strings.TrimPrefix(blank.URL, "http://")
-	seeded := []Cookie{
-		{Name: "SAPISID", Value: "restored-sapisid", Domain: host, Path: "/"},
-		{Name: "SID", Value: "restored-sid", Domain: host, Path: "/"},
-	}
-
-	done := make(chan error, 1)
-	go func() {
-		s, err := Open(Options{JarDir: jarDir, URL: blank.URL, Timeout: 30 * time.Second})
-		if err != nil {
-			done <- err
-			loopSymbols.gMainLoopQuit(loop)
-			return
-		}
-		if err := s.Restore(seeded); err != nil {
-			s.Close()
-			done <- err
-			loopSymbols.gMainLoopQuit(loop)
-			return
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		cookie, err := waitForCookie(ctx, s, "SAPISID")
-		if err == nil && cookie.Value != "restored-sapisid" {
-			err = fmt.Errorf("SAPISID = %q, want the restored value", cookie.Value)
-		}
-		s.Close()
-		time.Sleep(200 * time.Millisecond)
-		done <- err
-		loopSymbols.gMainLoopQuit(loop)
-	}()
-
-	loopSymbols.gMainLoopRun(loop)
-	if err := <-done; err != nil {
-		t.Fatalf("Restore: %v", err)
-	}
 }

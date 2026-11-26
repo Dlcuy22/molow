@@ -168,6 +168,9 @@ func Run(assets embed.FS) {
 	window.OnWindowEvent(events.Common.WindowUnMinimise, func(*application.WindowEvent) {
 		service.setMainWindowMinimised(false)
 	})
+	window.OnWindowEvent(events.Common.WindowFocus, func(*application.WindowEvent) {
+		service.notifyWindowFocused()
+	})
 
 	if err := app.Run(); err != nil {
 		slog.Error("application exited", "error", err)

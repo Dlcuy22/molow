@@ -9,6 +9,7 @@
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
   import MusicNotes from "phosphor-svelte/lib/MusicNotes";
   import Plus from "phosphor-svelte/lib/Plus";
+  import UserCircle from "phosphor-svelte/lib/UserCircle";
   import type { Playlist } from "../types";
   import Cover from "./Cover.svelte";
   import { openContextMenu } from "./context-menu.svelte";
@@ -18,6 +19,7 @@
     kind?: string;
     name: string;
     description?: string;
+    status?: string;
     coverId: string;
     trackCount?: number;
   }
@@ -30,11 +32,13 @@
     playlists = [],
     playlistsLoading = false,
     activePlaylistId = "",
+    ytmStatus = null,
     onnav = (_tab: "home" | "library" | "search") => {},
     onsearch = () => {},
     onswitch = (_id: string) => {},
     onopenplaylist = (_list: Playlist) => {},
     onnewlibrary = () => {},
+    onyoutubeaccount,
     oneffects = () => {},
     onsettings = () => {},
     onwidthcommit = (_width: number) => {},
@@ -46,11 +50,13 @@
     playlists?: Playlist[];
     playlistsLoading?: boolean;
     activePlaylistId?: string;
+    ytmStatus?: { signedIn?: boolean; expired?: boolean; name?: string } | null;
     onnav?: (tab: "home" | "library" | "search") => void;
     onsearch?: () => void;
     onswitch?: (id: string) => void;
     onopenplaylist?: (list: Playlist) => void;
     onnewlibrary?: () => void;
+    onyoutubeaccount?: () => void;
     oneffects?: () => void;
     onsettings?: () => void;
     onwidthcommit?: (width: number) => void;
@@ -86,6 +92,15 @@
   }
 
   function librarySubtitle(lib: LibraryCard): string {
+    if (lib.status === "scanning") {
+      return "Syncing...";
+    }
+    if (lib.status === "expired") {
+      return "Session expired";
+    }
+    if (lib.status === "signedOut") {
+      return "Signed out";
+    }
     if (lib.description) {
       return lib.description;
     }
@@ -101,7 +116,7 @@
   }
 
   function playlistCoverId(list: Playlist): string {
-    if (list.trackCount === 0 && !list.customCover) {
+    if (list.trackCount === 0 && !list.customCover && !list.remoteId) {
       return "";
     }
 
@@ -581,6 +596,26 @@
       <Plus size="14" class="shrink-0" />
       <span class="truncate">New library</span>
     </button>
+    {#if onyoutubeaccount}
+      <button
+        type="button"
+        role="menuitem"
+        class="mt-0.5 flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+        onclick={() => {
+          closeSwitcher(false);
+          onyoutubeaccount();
+        }}
+      >
+        <UserCircle size="14" class="shrink-0" />
+        <span class="min-w-0 flex-1 truncate">
+          {ytmStatus?.expired
+            ? "YouTube Music (Expired)"
+            : ytmStatus?.signedIn
+              ? ytmStatus.name || "YouTube Music"
+              : "Sign in to YouTube Music"}
+        </span>
+      </button>
+    {/if}
   </div>
 {/if}
 

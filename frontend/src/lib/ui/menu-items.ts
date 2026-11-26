@@ -25,6 +25,14 @@ export interface MenuDeps {
   removeLibrary: (libraryID: string) => void;
 }
 
+function isBuiltInLiked(list: Playlist): boolean {
+  return list.remoteId === "LM" || list.remoteId === "VLLM";
+}
+
+function isEditablePlaylist(list: Playlist): boolean {
+  return list.owned !== false && !isBuiltInLiked(list);
+}
+
 function trackItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
   const track = target.track;
   const refs = [target.id];
@@ -46,17 +54,18 @@ function trackItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
     });
   }
 
+  const writablePlaylists = deps.playlists.filter(isEditablePlaylist);
   // Name a single playlist inline instead of showing a one-item list.
-  if (deps.playlists.length === 1) {
-    const only = deps.playlists[0];
+  if (writablePlaylists.length === 1) {
+    const only = writablePlaylists[0];
     rows.push({
       kind: "item",
       label: `Add to ${only.name}`,
       run: () => deps.addToPlaylist(only.id, refs),
     });
-  } else if (deps.playlists.length > 1) {
+  } else if (writablePlaylists.length > 1) {
     rows.push({ kind: "separator" });
-    for (const list of deps.playlists) {
+    for (const list of writablePlaylists) {
       rows.push({
         kind: "item",
         label: list.name,
@@ -96,6 +105,16 @@ function playlistItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
   const list = target.playlist;
   if (list === undefined) {
     return [{ kind: "item", label: "Open", run: () => deps.openPlaylist(target.id) }];
+  }
+  if (isBuiltInLiked(list)) {
+    return [{ kind: "item", label: "Open", run: () => deps.openPlaylist(list.id) }];
+  }
+  if (list.owned === false) {
+    return [
+      { kind: "item", label: "Open", run: () => deps.openPlaylist(list.id) },
+      { kind: "separator" },
+      { kind: "item", label: "Remove from library", danger: true, run: () => deps.deletePlaylist(list) },
+    ];
   }
 
   return [

@@ -126,6 +126,23 @@ describe("menuItemsFor track", () => {
 
     expect(labels(items).filter((l) => l.startsWith("Add to") && !queue.has(l))).toEqual([]);
   });
+
+  it("omits foreign and Liked Music playlists from track add targets", () => {
+    const items = menuItemsFor(
+      target(track()),
+      deps({
+        playlists: [
+          playlist({ id: "pl-lm", name: "Liked Music", remoteId: "LM", owned: false }),
+          playlist({ id: "pl-for", name: "Foreign Mix", remoteId: "PLfor", owned: false }),
+          playlist({ id: "pl-own", name: "My Mix", remoteId: "PLown", owned: true }),
+        ],
+      }),
+    );
+
+    expect(labels(items)).toContain("Add to My Mix");
+    expect(labels(items)).not.toContain("Liked Music");
+    expect(labels(items)).not.toContain("Foreign Mix");
+  });
 });
 
 describe("menuItemsFor playlist", () => {
@@ -138,6 +155,27 @@ describe("menuItemsFor playlist", () => {
 
     expect(labels(items)).toEqual(["Open", "Rename", "Delete"]);
     expect(items.find((i) => i.label === "Delete")?.danger).toBe(true);
+  });
+
+  it("makes foreign playlists read-only with Remove from library", () => {
+    const list = playlist({ remoteId: "PLforeign", owned: false });
+    const items = menuItemsFor(
+      { kind: "playlist", id: list.id, label: list.name, libraryId: list.libraryId, playlist: list },
+      deps(),
+    );
+
+    expect(labels(items)).toEqual(["Open", "Remove from library"]);
+    expect(items.find((i) => i.label === "Remove from library")?.danger).toBe(true);
+  });
+
+  it("only offers Open on Liked Music", () => {
+    const list = playlist({ remoteId: "LM", owned: false });
+    const items = menuItemsFor(
+      { kind: "playlist", id: list.id, label: list.name, libraryId: list.libraryId, playlist: list },
+      deps(),
+    );
+
+    expect(labels(items)).toEqual(["Open"]);
   });
 });
 

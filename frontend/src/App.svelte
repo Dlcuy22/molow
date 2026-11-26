@@ -52,6 +52,8 @@
     updateLibrary,
     removeLibrary,
     rescanLibrary,
+    importSongModal,
+    closeImportSongModal,
   } from "./lib/library";
   import type { Album, LibraryInfo, Lyrics, Playlist, Track } from "./lib/types";
   import { isPlaylistQueueActive, type PlaylistPlayback } from "./lib/playlist-view";
@@ -68,8 +70,20 @@
   import QueueWindow from "./lib/ui/QueueWindow.svelte";
   import ContextMenu from "./lib/ui/ContextMenu.svelte";
   import LibraryDialog from "./lib/ui/LibraryDialog.svelte";
+  import YtmAuthDialog from "./lib/ui/YtmAuthDialog.svelte";
+  import SignOutDialog from "./lib/ui/SignOutDialog.svelte";
+  import ImportSongDialog from "./lib/ui/ImportSongDialog.svelte";
   import RenameDialog from "./lib/ui/RenameDialog.svelte";
   import ConfirmDialog from "./lib/ui/ConfirmDialog.svelte";
+  import {
+    authDialogOpen,
+    authStatus,
+    closeAuthDialog,
+    closeSignOutDialog,
+    loadAuthStatus,
+    openAuthDialog,
+    signOutDialogOpen,
+  } from "./lib/auth";
   import { closeContextMenu, contextMenu } from "./lib/ui/context-menu.svelte";
   import { menuItemsFor, type MenuDeps } from "./lib/ui/menu-items";
   import HomePage from "./pages/HomePage.svelte";
@@ -101,6 +115,9 @@
   // One subscription to the Go push stream; connect returns its teardown.
   onMount(connect);
   onMount(connectLibrary);
+  onMount(() => {
+    void loadAuthStatus();
+  });
 
   const snap = $derived($player);
   const queue = $derived(snap.queue ?? []);
@@ -133,6 +150,7 @@
   let filter = $state("all");
   let searchOpen = $state(false);
   let addOpen = $state(false);
+  let settingsInitialTab = $state<"general" | "playback" | "integration" | "stream">("general");
   let queueOpen = $state(false);
   let queuePinned = $state(false);
   let playerOpen = $state(false);
@@ -441,7 +459,7 @@
   }
 
   let renaming = $state<Playlist | null>(null);
-  let confirming = $state<{ title: string; body: string; run: () => void } | null>(null);
+  let confirming = $state<{ title: string; body: string; confirmLabel?: string; run: () => void } | null>(null);
   let libraryDialog = $state<{ mode: "create" } | { mode: "edit"; library: LibraryInfo } | null>(
     null,
   );
@@ -553,9 +571,13 @@
       renaming = list;
     },
     deletePlaylist: (list) => {
+      const unsave = list.owned === false;
       confirming = {
-        title: "Delete playlist",
-        body: `"${list.name}" leaves Molow. Its songs stay in the library.`,
+        title: unsave ? "Remove from library" : "Delete playlist",
+        body: unsave
+          ? `"${list.name}" will be removed from your YouTube Music library.`
+          : `"${list.name}" leaves Molow. Its songs stay in the library.`,
+        confirmLabel: unsave ? "Remove" : "Delete",
         run: () => void deletePlaylist(list.id),
       };
     },
@@ -764,7 +786,14 @@
       // playback view, so the playback keys belong to it. Only the surfaces
       // that actually take the keyboard (the palette, settings) gate it.
       isModalOpen: () =>
-        paletteOpen || settingsOpen || libraryDialog !== null || renaming !== null || confirming !== null,
+        paletteOpen ||
+        settingsOpen ||
+        $authDialogOpen ||
+        $signOutDialogOpen ||
+        $importSongModal !== null ||
+        libraryDialog !== null ||
+        renaming !== null ||
+        confirming !== null,
       isPaletteOpen: () => paletteOpen,
       ownsKey: (k) => shouldIgnoreTarget(document.activeElement, k),
       openSettings: () => (settingsOpen = !settingsOpen),
@@ -784,6 +813,12 @@
     // event; this chain covers a press while focus sits outside the dialog.
     if (contextMenu.open) {
       closeContextMenu(true);
+    } else if ($importSongModal !== null) {
+      closeImportSongModal();
+    } else if ($signOutDialogOpen) {
+      closeSignOutDialog();
+    } else if ($authDialogOpen) {
+      closeAuthDialog();
     } else if (libraryDialog !== null) {
       closeLibraryDialog();
     } else if (renaming !== null) {
@@ -818,6 +853,7 @@
         kind: l.kind,
         name: l.name,
         description: l.description,
+        status: l.status,
         coverId: l.coverId || l.logoCovers[0] || "",
         trackCount: l.trackCount,
       }))}
@@ -825,6 +861,7 @@
       playlists={$libraryPlaylists}
       playlistsLoading={$libraryLoading}
       activePlaylistId={$activePlaylist?.id ?? ""}
+      ytmStatus={$authStatus}
       onswitch={(id) => {
         closeYtmArtist();
         closePlaylist();
@@ -836,6 +873,14 @@
         void openPlaylist(list);
       }}
       onnewlibrary={openCreateLibrary}
+      onyoutubeaccount={() => {
+        if ($authStatus.signedIn && !$authStatus.expired) {
+          settingsInitialTab = "integration";
+          settingsOpen = true;
+        } else {
+          void openAuthDialog();
+        }
+      }}
       onwidthcommit={commitSidebarWidth}
       onnav={(next) => {
         closeYtmArtist();
@@ -851,7 +896,10 @@
         searchOpen = !searchOpen;
         addOpen = false;
       }}
-      onsettings={() => (settingsOpen = true)}
+      onsettings={() => {
+        settingsInitialTab = "general";
+        settingsOpen = true;
+      }}
       oneffects={() => void commands.openEffectWindow()}
     />
 
@@ -1063,7 +1111,24 @@
   onclose={closePalette}
 />
 
-<SettingsPanel open={settingsOpen} livePreview={playerOpen} onclose={() => (settingsOpen = false)} />
+<SettingsPanel
+  open={settingsOpen}
+  initialTab={settingsInitialTab}
+  livePreview={playerOpen}
+  onclose={() => {
+    settingsOpen = false;
+    settingsInitialTab = "general";
+  }}
+/>
+{#if $authDialogOpen}
+  <YtmAuthDialog />
+{/if}
+{#if $signOutDialogOpen}
+  <SignOutDialog />
+{/if}
+{#if $importSongModal}
+  <ImportSongDialog />
+{/if}
 <Toaster />
 
 <!-- One menu for the whole app. It sits outside the sheet's inert wrapper so a
@@ -1107,6 +1172,7 @@
   <ConfirmDialog
     title={confirming.title}
     body={confirming.body}
+    confirmLabel={confirming.confirmLabel}
     onconfirm={() => {
       const pick = confirming;
       confirming = null;

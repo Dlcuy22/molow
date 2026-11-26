@@ -16,7 +16,9 @@
   } = $props();
 
   const coverId = $derived(
-    list.trackCount === 0 && !list.customCover ? "" : list.coverId || list.coverIds?.[0] || "",
+    list.trackCount === 0 && !list.customCover && !list.remoteId
+      ? ""
+      : list.coverId || list.coverIds?.[0] || "",
   );
 
   function menu(e: MouseEvent) {
@@ -51,6 +53,10 @@
     {list.name}
   </span>
   <span class="block text-[11px] text-muted">
-    Playlist · {list.trackCount} {list.trackCount === 1 ? "song" : "songs"}
+    {#if list.remoteId && list.trackCount === 0}
+      Playlist
+    {:else}
+      Playlist · {list.trackCount} {list.trackCount === 1 ? "song" : "songs"}
+    {/if}
   </span>
 </button>

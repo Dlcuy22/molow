@@ -1,5 +1,15 @@
 <script lang="ts">
   import { appSettings, commands, discordStatus, spectrumConfig, spectrumSchema } from "../../store";
+  import {
+    authAccounts,
+    authBusy,
+    authStatus,
+    loadAuthStatus,
+    openAuthDialog,
+    openSignOutDialog,
+    refreshAuth,
+    switchChannel,
+  } from "../../auth";
   import { showToast } from "../../toast";
   import Check from "phosphor-svelte/lib/Check";
   import WarningCircle from "phosphor-svelte/lib/WarningCircle";
@@ -23,8 +33,9 @@
   let {
     open,
     livePreview = false,
+    initialTab = "general",
     onclose,
-  }: { open: boolean; livePreview?: boolean; onclose: () => void } = $props();
+  }: { open: boolean; livePreview?: boolean; initialTab?: Tab; onclose: () => void } = $props();
 
   type Tab = "general" | "playback" | "integration" | "stream";
   let tab = $state<Tab>("general");
@@ -55,6 +66,22 @@
   function toggleDiscord() {
     commands.setDiscordEnabled(!$discordStatus.enabled);
   }
+
+  $effect(() => {
+    if (open && tab === "integration") {
+      void loadAuthStatus();
+    }
+  });
+
+  const ytmStatusLine = $derived(
+    $authStatus.expired
+      ? "Session expired — sign in again to refresh credentials."
+      : $authStatus.signedIn
+        ? $authStatus.email
+          ? `${$authStatus.name || "Signed in"} (${$authStatus.email})`
+          : $authStatus.name || "Signed in"
+        : "Not signed in",
+  );
 
   // spectrumValue reads one visualizer knob. The panel is built from the schema
   // the engine reports, so a new knob is one Go entry and no frontend change.
@@ -176,7 +203,7 @@
   let wasOpen = false;
   $effect(() => {
     if (open && !wasOpen) {
-      tab = "general";
+      tab = initialTab;
       panelEl?.focus();
     }
     wasOpen = open;
@@ -802,23 +829,68 @@
             </SettingGroup>
           </div>
         {:else if tab === "integration"}
-          <div class="divide-y divide-line">
-            <SettingRow
-              label="Discord Rich Presence"
-              description={discordStatusLine}
-            >
-              {#snippet control()}
-                <Switch
-                  checked={$discordStatus.enabled}
-                  label="Discord Rich Presence"
-                  onchange={toggleDiscord}
-                />
-              {/snippet}
-            </SettingRow>
+          <div class="scrub-groups divide-y divide-line">
+            <div>
+              <SettingRow
+                label="Discord Rich Presence"
+                description={discordStatusLine}
+              >
+                {#snippet control()}
+                  <Switch
+                    checked={$discordStatus.enabled}
+                    label="Discord Rich Presence"
+                    onchange={toggleDiscord}
+                  />
+                {/snippet}
+              </SettingRow>
 
-            <div class="py-2.5">
-              <DiscordCard />
+              <div class="py-2.5">
+                <DiscordCard />
+              </div>
             </div>
+
+            <SettingGroup label="YouTube Music" description={null}>
+              <div class="divide-y divide-line">
+                <SettingRow label="Account" description={ytmStatusLine}>
+                  {#snippet control()}
+                    {#if $authStatus.expired}
+                      <div class="flex items-center gap-2">
+                        <Button label="Re-sign in" busyLabel="Opening" disabled={$authBusy} onclick={openAuthDialog} />
+                        <Button label="Sign out" busyLabel="Signing out" disabled={$authBusy} onclick={openSignOutDialog} />
+                      </div>
+                    {:else if $authStatus.signedIn}
+                      <div class="flex items-center gap-2">
+                        <Button label="Check" busyLabel="Checking" disabled={$authBusy} onclick={refreshAuth} />
+                        <Button label="Sign out" busyLabel="Signing out" disabled={$authBusy} onclick={openSignOutDialog} />
+                      </div>
+                    {:else}
+                      <Button label="Sign in" busyLabel="Opening" disabled={$authBusy} onclick={openAuthDialog} />
+                    {/if}
+                  {/snippet}
+                </SettingRow>
+
+                {#if $authStatus.signedIn && !$authStatus.expired && $authAccounts.length > 1}
+                  <SettingRow
+                    label="Channel"
+                    description="Active brand channel for this YouTube Music session."
+                  >
+                    {#snippet control()}
+                      <Picker
+                        label={null}
+                        ariaLabel="YouTube Music channel"
+                        value={$authStatus.channelId ?? ""}
+                        options={$authAccounts.map((a) => ({
+                          value: a.channelId ?? "",
+                          label: a.channelHandle ? `${a.name} (${a.channelHandle})` : a.name,
+                        }))}
+                        disabled={$authBusy}
+                        onchange={(id) => void switchChannel(id)}
+                      />
+                    {/snippet}
+                  </SettingRow>
+                {/if}
+              </div>
+            </SettingGroup>
           </div>
         {:else if tab === "stream"}
           <div class="scrub-groups divide-y divide-line">

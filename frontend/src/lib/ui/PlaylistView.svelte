@@ -69,6 +69,13 @@
 
   const isAlbum = $derived(playlist.album !== undefined);
   const isArtist = $derived(playlist.artist !== undefined);
+  const canRename = $derived(
+    !isAlbum &&
+      !isArtist &&
+      playlist.owned !== false &&
+      playlist.remoteId !== "LM" &&
+      playlist.remoteId !== "VLLM",
+  );
   const kindNoun = $derived(isArtist ? "artist" : isAlbum ? "album" : "playlist");
   const sortLabel = (id: PlaylistSort, fallback: string) =>
     isArtist && id === "order" ? "Album order" : isAlbum && id === "order" ? "Track order" : fallback;
@@ -204,7 +211,7 @@
       </p>
 
       <div class="mt-5 flex items-center justify-center gap-3">
-        {#if !isAlbum && !isArtist}
+        {#if canRename}
           <button
             class="grid size-9 place-items-center rounded-full bg-surface text-fg transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-focus"
             aria-label="Rename playlist"

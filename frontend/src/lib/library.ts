@@ -7,7 +7,7 @@ import { Events } from "@wailsio/runtime";
 import CheckCircle from "phosphor-svelte/lib/CheckCircle";
 import WarningCircle from "phosphor-svelte/lib/WarningCircle";
 import { PlayerService } from "../../bindings/github.com/dlcuy22/molow/backend";
-import type { YTMResult } from "../../bindings/github.com/dlcuy22/molow/backend/models";
+import type { YTMAddTarget, YTMImport, YTMResult, YTMSongTarget } from "../../bindings/github.com/dlcuy22/molow/backend/models";
 import type {
   Album as GenAlbum,
   Artist as GenArtist,
@@ -34,6 +34,11 @@ export const activePlaylist = writable<Playlist | null>(null);
 export const activePlaylistTracks = writable<Track[]>([]);
 export const activePlaylistLoading = writable(false);
 export const activePlaylistError = writable("");
+export const importSongModal = writable<{ libraryId: string; hit: YTMResult } | null>(null);
+
+export function closeImportSongModal(): void {
+  importSongModal.set(null);
+}
 
 let currentLibraryTab = "all";
 let playlistSeq = 0;
@@ -98,6 +103,21 @@ function toArtist(a: GenArtist): Artist {
   };
 }
 
+function toPlaylist(p: GenPlaylist): Playlist {
+  return {
+    id: p.id,
+    libraryId: p.libraryId,
+    name: p.name,
+    description: p.description ?? "",
+    remoteId: p.remoteId ?? "",
+    owned: p.owned ?? true,
+    trackCount: p.trackCount,
+    coverId: p.coverId ?? "",
+    customCover: p.customCover ?? false,
+    coverIds: p.coverIds ?? [],
+  };
+}
+
 function toShelf(s: GenShelf): Shelf {
   return {
     id: s.id,
@@ -108,16 +128,7 @@ function toShelf(s: GenShelf): Shelf {
     items: (s.items ?? []).map(toTrack),
     albums: (s.albums ?? []).map(toAlbum),
     artists: (s.artists ?? []).map(toArtist),
-    playlists: (s.playlists ?? []).map((p: GenPlaylist) => ({
-      id: p.id,
-      libraryId: p.libraryId,
-      name: p.name,
-      description: p.description ?? "",
-      trackCount: p.trackCount,
-      coverId: p.coverId ?? "",
-      customCover: p.customCover ?? false,
-      coverIds: p.coverIds ?? [],
-    })),
+    playlists: (s.playlists ?? []).map(toPlaylist),
     cursor: s.cursor ?? "",
     total: s.total ?? 0,
   };
@@ -293,16 +304,7 @@ export async function openPlaylist(target: Playlist | string): Promise<void> {
       const lists = (await PlayerService.Playlists(libId)) ?? [];
       const found = lists.find((p) => p.id === id);
       if (found) {
-        meta = {
-          id: found.id,
-          libraryId: found.libraryId,
-          name: found.name,
-          description: found.description ?? "",
-          trackCount: found.trackCount,
-          coverId: found.coverId ?? "",
-          customCover: found.customCover ?? false,
-          coverIds: found.coverIds ?? [],
-        };
+        meta = toPlaylist(found);
       }
     } catch {
       // Fall through to the minimal placeholder below; the feed call will report any error.
@@ -408,16 +410,7 @@ export async function loadLibrary(
       PlayerService.Playlists(id).catch(() => []),
     ]);
     const mappedPage = toPage(page);
-    const mappedLists = (lists ?? []).map((p) => ({
-      id: p.id,
-      libraryId: p.libraryId,
-      name: p.name,
-      description: p.description ?? "",
-      trackCount: p.trackCount,
-      coverId: p.coverId ?? "",
-      customCover: p.customCover ?? false,
-      coverIds: p.coverIds ?? [],
-    }));
+    const mappedLists = (lists ?? []).map(toPlaylist);
     libraryTabCache.set(cacheKey, mappedPage);
     libraryPlaylistsCache.set(id, mappedLists);
     if (seq !== librarySeq) {
@@ -562,6 +555,10 @@ export async function importYTM(hit: YTMResult): Promise<boolean> {
   }
   try {
     const res = await PlayerService.ImportYTM(id, hit);
+    if (res.needsTarget) {
+      importSongModal.set({ libraryId: id, hit });
+      return true;
+    }
     const name = get(libraries).find((l) => l.id === id)?.name ?? "the library";
     const songs = res.tracks === 1 ? "1 song" : `${res.tracks} songs`;
     showToast({
@@ -584,6 +581,36 @@ export async function importYTM(hit: YTMResult): Promise<boolean> {
 
     return false;
   }
+}
+
+export async function ytmAddTargets(libId: string, videoId: string): Promise<YTMAddTarget[]> {
+  return (await PlayerService.YTMAddTargets(libId, videoId)) ?? [];
+}
+
+export async function importYTMSong(
+  libId: string,
+  hit: YTMResult,
+  target: Partial<YTMSongTarget>,
+): Promise<YTMImport> {
+  const res = await PlayerService.ImportYTMSong(libId, hit, {
+    liked: target.liked ?? false,
+    playlistId: target.playlistId ?? "",
+    newPlaylist: target.newPlaylist ?? "",
+    allowDuplicate: target.allowDuplicate ?? false,
+  });
+  if (res.duplicate) {
+    return res;
+  }
+  const songs = res.tracks === 1 ? "1 song" : `${res.tracks} songs`;
+  showToast({
+    key: "library-import",
+    kind: "message",
+    label: target.liked ? "Saved to Liked Music" : `${res.name}: ${songs}`,
+    icon: CheckCircle,
+  });
+  invalidateLibraryCache(libId);
+  await Promise.all([refreshLibraries(), loadHome(), loadLibrary(currentLibraryTab, { force: true })]);
+  return res;
 }
 
 export async function removeLibrary(id: string): Promise<void> {
@@ -851,7 +878,15 @@ export async function isLiked(path: string): Promise<boolean> {
 export function connectLibrary(): () => void {
   const off = Events.On("molo:library", (ev) => {
     const p = ev.data as { libraryId: string; done: number; total: number; state: string };
+    if (p.libraryId === "" && p.state === "ready") {
+      invalidateLibraryCache();
+      void refreshLibraries().then(() => Promise.all([loadHome(), loadLibrary(currentLibraryTab, { force: true, silent: true })]));
+      return;
+    }
     if (p.libraryId !== get(libraryId)) {
+      if (p.state === "ready") {
+        void refreshLibraries();
+      }
       return;
     }
     libraryProgress.set({ done: p.done, total: p.total, state: p.state });

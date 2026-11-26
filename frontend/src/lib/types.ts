@@ -72,6 +72,8 @@ export interface Playlist {
   libraryId: string;
   name: string;
   description: string;
+  remoteId?: string;
+  owned?: boolean;
   trackCount: number;
   coverIds?: string[];
   creator?: string;

@@ -784,12 +784,28 @@ func (s *smtcSession) close() {
 		}
 	}
 
-	for _, obj := range []interface{ Release() int32 }{
-		s.timeline, s.music2, s.music, s.updater, s.smtc2, s.smtc, s.player,
-	} {
-		if obj != nil {
-			obj.Release()
-		}
+	// Check the concrete pointers: a typed nil stored in an interface is
+	// non-nil, so `obj != nil` alone would call Release on a nil receiver.
+	if s.timeline != nil {
+		s.timeline.Release()
+	}
+	if s.music2 != nil {
+		s.music2.Release()
+	}
+	if s.music != nil {
+		s.music.Release()
+	}
+	if s.updater != nil {
+		s.updater.Release()
+	}
+	if s.smtc2 != nil {
+		s.smtc2.Release()
+	}
+	if s.smtc != nil {
+		s.smtc.Release()
+	}
+	if s.player != nil {
+		s.player.Release()
 	}
 	s.timeline, s.music2, s.music, s.updater, s.smtc2, s.smtc, s.player = nil, nil, nil, nil, nil, nil, nil
 }

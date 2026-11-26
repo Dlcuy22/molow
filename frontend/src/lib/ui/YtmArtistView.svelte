@@ -179,6 +179,7 @@
                 id={artist.coverId}
                 src={artist.bannerUrl ?? ""}
                 alt={artist.name}
+                size={112}
                 fill
                 radius={9999}
                 class="size-full"

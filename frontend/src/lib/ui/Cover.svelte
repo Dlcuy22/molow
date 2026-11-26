@@ -1,5 +1,6 @@
 <script lang="ts">
   import MusicNotes from "phosphor-svelte/lib/MusicNotes";
+  import { artUrl, resizeRemoteArtUrl } from "../artwork";
 
   let {
     id = "",
@@ -19,7 +20,9 @@
     class?: string;
   } = $props();
 
-  const src = $derived(srcOverride || (id !== "" ? `/art/${encodeURIComponent(id)}` : ""));
+  const src = $derived(
+    srcOverride ? resizeRemoteArtUrl(srcOverride, size) : artUrl(id, size),
+  );
   const style = $derived(
     fill
       ? `width:100%;height:auto;aspect-ratio:1;border-radius:${radius}px`

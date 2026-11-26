@@ -2,6 +2,7 @@
   import { Browser } from "@wailsio/runtime";
   import DiscordLogo from "phosphor-svelte/lib/DiscordLogo";
   import Cover from "../ui/Cover.svelte";
+  import { avatarArtUrl } from "../artwork";
   import { discordStatus, player } from "../store";
   import { displayArtist, displayTitle, formatTime, isRemoteRef, ytmVideoId } from "../format";
 
@@ -27,9 +28,7 @@
     snap.duration > 0 ? Math.min(1, Math.max(0, snap.position / snap.duration)) : 0,
   );
 
-  const avatarSrc = $derived(
-    snap.artistId !== "" ? `/art/avatar/${encodeURIComponent(snap.artistId)}` : "",
-  );
+  const avatarSrc = $derived(avatarArtUrl(snap.artistId, 24));
   let avatarFailed = $state(false);
   $effect(() => {
     void avatarSrc;

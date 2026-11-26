@@ -177,7 +177,7 @@
         aria-hidden="true"
       >
         {#if coverId || playlist.album?.imageUrl}
-          <Cover id={coverId} src={playlist.album?.imageUrl ?? ""} fill radius={0} class="block h-full w-full" />
+          <Cover id={coverId} src={playlist.album?.imageUrl ?? ""} size={220} fill radius={0} class="block h-full w-full" />
         {:else}
           <div class="grid h-full w-full place-items-center text-muted">
             {#if isArtist}

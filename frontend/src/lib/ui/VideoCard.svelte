@@ -1,6 +1,7 @@
 <script lang="ts">
   import FilmStrip from "phosphor-svelte/lib/FilmStrip";
   import CardPlayButton from "./CardPlayButton.svelte";
+  import { artUrl, resizeRemoteArtUrl } from "../artwork";
   import { formatTime } from "../format";
   import type { YtmVideo } from "../types";
 
@@ -13,8 +14,9 @@
   } = $props();
 
   const src = $derived(
-    video.thumbnailUrl ||
-      (video.coverId ? `/art/${encodeURIComponent(video.coverId)}` : ""),
+    video.thumbnailUrl
+      ? resizeRemoteArtUrl(video.thumbnailUrl, 240)
+      : artUrl(video.coverId ?? "", 240),
   );
   const meta = $derived.by(() => {
     const parts: string[] = [];

@@ -4,7 +4,8 @@
   import { cubicInOut } from "svelte/easing";
   import MusicNotes from "phosphor-svelte/lib/MusicNotes";
   import { clearToast, TOAST_TTL, toasts } from "../toast";
-  import { cover, player } from "../store";
+  import { player } from "../store";
+  import { artUrl } from "../artwork";
   import { displayTitle } from "../format";
   import Toast from "./Toast.svelte";
 
@@ -17,6 +18,7 @@
   // The art card reads the track from the live snapshot, so a track change
   // updates the title in place while the card is up.
   const nowPlaying = $derived(displayTitle($player.title, $player.path));
+  const toastCover = $derived(artUrl($player.coverId, 96));
 
   const reduced =
     typeof window !== "undefined" &&
@@ -112,8 +114,8 @@
         <div class="border border-line bg-surface">
           <div class="flex flex-col items-center gap-2 px-4 py-3">
             <div class="grid size-24 place-items-center overflow-hidden bg-hover">
-              {#if $cover}
-                <img src={$cover} alt="" decoding="async" class="size-full object-cover" />
+              {#if toastCover}
+                <img src={toastCover} alt="" decoding="async" class="size-full object-cover" />
               {:else}
                 <MusicNotes size="40" class="text-muted" aria-hidden="true" />
               {/if}

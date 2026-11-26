@@ -4,6 +4,7 @@
   import MusicNote from "phosphor-svelte/lib/MusicNote";
   import Pause from "phosphor-svelte/lib/Pause";
   import { commands, previewConfig, searchYTM } from "../store";
+  import { artUrl, ytmSearchArtUrl } from "../artwork";
   import { importYTM, libraries, libraryId } from "../library";
   import { matchQueue, hasTags, isPlaylistKind, playlistIDFromQuery, ytmKindLabel, ytmPlaylistResult, ytmResultRow, ytmSubtitle } from "../search";
   import { formatTime, isRemoteRef, subtitle } from "../format";
@@ -169,17 +170,10 @@
   /** rowCoverSrc returns the Wails asset URL for a palette row's thumbnail. */
   function rowCoverSrc(row: PaletteRow): string {
     if (row.ytm) {
-      return row.ytm.videoId !== ""
-        ? `/art/ytm-search/${encodeURIComponent(row.ytm.videoId)}`
-        : "";
-    }
-    if (row.coverId === "") {
-      return "";
+      return ytmSearchArtUrl(row.ytm.videoId, 32);
     }
 
-    return row.path !== ""
-      ? `/art/${encodeURIComponent(row.coverId)}?path=${encodeURIComponent(row.path)}`
-      : `/art/${encodeURIComponent(row.coverId)}`;
+    return artUrl(row.coverId, 32, undefined, row.path);
   }
 
   // previewingPath is the row the Go preview is currently sounding, or "".

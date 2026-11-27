@@ -182,10 +182,12 @@ type PlayerService struct {
 
 	// libMu guards the catalogue handle and the source registry. A scan runs on
 	// its own goroutine, so the map is read while a scan writes progress.
-	libMu    sync.Mutex
-	libStore *sqlite.Store
-	libs     map[string]library.Source
-	scanning map[string]bool
+	libMu        sync.Mutex
+	libStore     *sqlite.Store
+	libs         map[string]library.Source
+	scanning     map[string]bool
+	localWatcher *localFolderWatcher
+	localSyncers map[string]*ytmSyncer
 
 	// Auth lifecycle guards: authGen invalidates in-flight Set-Cookie writes from
 	// a previous sign-in/sign-out generation, authExpired reports a revoked session,
@@ -382,6 +384,7 @@ func (s *PlayerService) ServiceShutdown() error {
 	s.stopDiscord()
 	s.stopSystemMedia()
 	s.stopYTMSyncers()
+	s.stopLocalSyncers()
 	s.wg.Wait()
 	if s.preview != nil {
 		s.preview.close()

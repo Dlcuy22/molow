@@ -177,6 +177,50 @@ describe("menuItemsFor playlist", () => {
 
     expect(labels(items)).toEqual(["Open"]);
   });
+
+  it("offers Watch folder toggle on folder-backed playlists in local libraries", () => {
+    const toggled: boolean[] = [];
+    const list = playlist({ sourcePath: "/music/rock", watched: true });
+    const items = menuItemsFor(
+      { kind: "playlist", id: list.id, label: list.name, libraryId: list.libraryId, playlist: list },
+      deps({
+        libraryKindFor: () => "local",
+        togglePlaylistWatch: (_pl, next) => toggled.push(next),
+      }),
+    );
+
+    const watch = items.find((i) => i.label === "Watch folder");
+    expect(watch?.checked).toBe(true);
+    watch?.run?.();
+    expect(toggled).toEqual([false]);
+  });
+
+  it("offers Watch remote playlist toggle on YTM playlists imported into local libraries", () => {
+    const list = playlist({ remoteId: "PLytm", watched: false });
+    const items = menuItemsFor(
+      { kind: "playlist", id: list.id, label: list.name, libraryId: list.libraryId, playlist: list },
+      deps({ libraryKindFor: () => "local" }),
+    );
+
+    const watch = items.find((i) => i.label === "Watch remote playlist");
+    expect(watch?.checked).toBe(false);
+  });
+
+  it("omits watch toggles on plain local playlists and KindYTM libraries", () => {
+    const plain = playlist();
+    const plainItems = menuItemsFor(
+      { kind: "playlist", id: plain.id, label: plain.name, libraryId: plain.libraryId, playlist: plain },
+      deps({ libraryKindFor: () => "local" }),
+    );
+    expect(labels(plainItems)).toEqual(["Open", "Rename", "Delete"]);
+
+    const ytmList = playlist({ libraryId: "ytm:UC1", remoteId: "PLytm", watched: false });
+    const ytmItems = menuItemsFor(
+      { kind: "playlist", id: ytmList.id, label: ytmList.name, libraryId: ytmList.libraryId, playlist: ytmList },
+      deps({ libraryKindFor: () => "ytm" }),
+    );
+    expect(labels(ytmItems)).toEqual(["Open", "Rename", "Delete"]);
+  });
 });
 
 describe("menuItemsFor catalogue", () => {
@@ -198,5 +242,14 @@ describe("menuItemsFor library", () => {
     );
 
     expect(labels(items)).toEqual(["Open", "Edit", "Rescan files", "Remove from Molow"]);
+  });
+
+  it("uses Refresh library for ytm libraries", () => {
+    const items = menuItemsFor(
+      { kind: "library", id: "ytm:UC1", label: "YTM", libraryId: "ytm:UC1" },
+      deps({ libraryKindFor: () => "ytm" }),
+    );
+
+    expect(labels(items)).toEqual(["Open", "Edit", "Refresh library", "Remove from Molow"]);
   });
 });

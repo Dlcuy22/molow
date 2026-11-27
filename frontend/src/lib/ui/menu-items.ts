@@ -23,6 +23,8 @@ export interface MenuDeps {
   editLibrary: (libraryID: string) => void;
   rescanLibrary: (libraryID: string) => void;
   removeLibrary: (libraryID: string) => void;
+  libraryKindFor?: (libraryID: string) => string;
+  togglePlaylistWatch?: (playlist: Playlist, watched: boolean) => void;
 }
 
 function isBuiltInLiked(list: Playlist): boolean {
@@ -109,9 +111,24 @@ function playlistItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
   if (isBuiltInLiked(list)) {
     return [{ kind: "item", label: "Open", run: () => deps.openPlaylist(list.id) }];
   }
+
+  const isLocal = deps.libraryKindFor?.(list.libraryId) === "local";
+  const hasWatchedSource = isLocal && (Boolean(list.sourcePath) || Boolean(list.remoteId));
+  const watchRow: MenuItem[] = hasWatchedSource
+    ? [
+        {
+          kind: "item",
+          label: list.sourcePath ? "Watch folder" : "Watch remote playlist",
+          checked: Boolean(list.watched),
+          run: () => deps.togglePlaylistWatch?.(list, !list.watched),
+        },
+      ]
+    : [];
+
   if (list.owned === false) {
     return [
       { kind: "item", label: "Open", run: () => deps.openPlaylist(list.id) },
+      ...watchRow,
       { kind: "separator" },
       { kind: "item", label: "Remove from library", danger: true, run: () => deps.deletePlaylist(list) },
     ];
@@ -119,6 +136,7 @@ function playlistItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
 
   return [
     { kind: "item", label: "Open", run: () => deps.openPlaylist(list.id) },
+    ...watchRow,
     { kind: "item", label: "Rename", run: () => deps.renamePlaylist(list) },
     { kind: "separator" },
     { kind: "item", label: "Delete", danger: true, run: () => deps.deletePlaylist(list) },
@@ -127,11 +145,12 @@ function playlistItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
 
 function libraryItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
   const id = target.libraryId;
+  const refreshLabel = deps.libraryKindFor?.(id) === "ytm" ? "Refresh library" : "Rescan files";
 
   return [
     { kind: "item", label: "Open", run: () => deps.openLibrary(id) },
     { kind: "item", label: "Edit", run: () => deps.editLibrary(id) },
-    { kind: "item", label: "Rescan files", run: () => deps.rescanLibrary(id) },
+    { kind: "item", label: refreshLabel, run: () => deps.rescanLibrary(id) },
     { kind: "separator" },
     { kind: "item", label: "Remove from Molow", danger: true, run: () => deps.removeLibrary(id) },
   ];

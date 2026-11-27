@@ -73,6 +73,8 @@ export interface Playlist {
   name: string;
   description: string;
   remoteId?: string;
+  sourcePath?: string;
+  watched?: boolean;
   owned?: boolean;
   trackCount: number;
   coverIds?: string[];

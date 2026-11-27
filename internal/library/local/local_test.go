@@ -302,3 +302,79 @@ func TestPlaylistFeedReportsTotalAndCursor(t *testing.T) {
 		t.Fatalf("page 2 = %+v, want final item with empty cursor", page2.Shelves)
 	}
 }
+
+func TestCanRefreshAndUnwatchedFolderSnapshot(t *testing.T) {
+	src, store := newTestLocal(t)
+	ext := testExt(t)
+
+	if src.CanRefresh() {
+		t.Fatal("empty local library should not advertise CanRefresh")
+	}
+
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	fileA := filepath.Join(rootA, "01"+ext)
+	fileB := filepath.Join(rootB, "01"+ext)
+	writeFiles(t, fileA, fileB)
+
+	if _, err := store.AddRoot("local:test", rootA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddRoot("local:test", rootB); err != nil {
+		t.Fatal(err)
+	}
+	plA, err := src.CreateFolderPlaylist("rootA", rootA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !src.CanRefresh() {
+		t.Fatal("local library with watched roots should advertise CanRefresh")
+	}
+
+	res, err := src.ImportScan(context.Background(), "")
+	if err != nil {
+		t.Fatalf("initial scan: %v", err)
+	}
+	if res.Count != 2 || len(res.RefsByRoot[rootA]) != 1 || len(res.RefsByRoot[rootB]) != 1 {
+		t.Fatalf("unexpected ScanResult: %+v", res)
+	}
+
+	// Unwatch rootA and delete fileA from disk: rescan must skip rootA and keep
+	// fileA playable as a static snapshot, while still scanning rootB.
+	if _, err := store.SetPlaylistWatched("local:test", plA.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(fileA); err != nil {
+		t.Fatal(err)
+	}
+	res2, err := src.ImportScan(context.Background(), "")
+	if err != nil {
+		t.Fatalf("second scan: %v", err)
+	}
+	if res2.Count != 1 {
+		t.Fatalf("second scan count = %d, want 1 (only rootB)", res2.Count)
+	}
+	if _, ok := res2.RefsByRoot[rootA]; ok {
+		t.Fatalf("unwatched rootA should not appear in RefsByRoot: %+v", res2.RefsByRoot)
+	}
+	trA, okA, err := store.TrackByRef(fileA)
+	if err != nil || !okA || trA.Ref == "" {
+		t.Fatalf("snapshot track in unwatched rootA should stay intact: ok=%v tr=%+v err=%v", okA, trA, err)
+	}
+
+	// Unwatch rootB too -> CanRefresh becomes false.
+	if err := store.SetRootWatched("local:test", rootB, false); err != nil {
+		t.Fatal(err)
+	}
+	if src.CanRefresh() {
+		t.Fatal("CanRefresh should be false once all roots are unwatched")
+	}
+
+	// Watching a remote playlist enables CanRefresh again.
+	if _, err := src.CreateRemotePlaylist("YTM", "PLytm"); err != nil {
+		t.Fatal(err)
+	}
+	if !src.CanRefresh() {
+		t.Fatal("CanRefresh should be true when a remote playlist is watched")
+	}
+}

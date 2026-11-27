@@ -964,3 +964,87 @@ func TestYTMSyncAndRemotePlaylistHelpers(t *testing.T) {
 		t.Fatalf("after ReconcileTombstones = (%+v, %v)", afterReconcile, err)
 	}
 }
+
+func TestWatchSourcesAndScopedMissing(t *testing.T) {
+	s := newTestStore(t)
+	lib, err := s.AddLibrary(library.Library{
+		ID: "local:watch", Kind: library.KindLocal, Name: "Watch",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if has, err := s.HasWatchedSources(lib.ID); err != nil || has {
+		t.Fatalf("empty HasWatchedSources = (%v, %v), want false", has, err)
+	}
+
+	rootA := filepath.Join("/music", "folderA")
+	rootB := filepath.Join("/music", "folderB")
+	if _, err := s.AddRoot(lib.ID, rootA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddRoot(lib.ID, rootB); err != nil {
+		t.Fatal(err)
+	}
+
+	plA, err := s.CreatePlaylistWithSource(lib.ID, "folderA", rootA, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plRemote, err := s.CreatePlaylistWithRemote(lib.ID, "Remote", "PLremote")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plA.Watched || !plRemote.Watched {
+		t.Fatalf("expected watched defaults true: plA=%+v plRemote=%+v", plA, plRemote)
+	}
+
+	if has, err := s.HasWatchedSources(lib.ID); err != nil || !has {
+		t.Fatalf("HasWatchedSources = (%v, %v), want true", has, err)
+	}
+
+	fileA := filepath.Join(rootA, "01.flac")
+	fileB := filepath.Join(rootB, "02.flac")
+	if _, err := s.UpsertTrack(lib.ID, File{Path: fileA, Size: 10, Mtime: 100}, TrackRow{NativeID: "a1", Title: "A1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertTrack(lib.ID, File{Path: fileB, Size: 10, Mtime: 100}, TrackRow{NativeID: "b1", Title: "B1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unwatch folderA -> library_root.watched flips to 0, MarkMissingInRoots for
+	// watched roots leaves fileA intact.
+	updatedA, err := s.SetPlaylistWatched(lib.ID, plA.ID, false)
+	if err != nil || updatedA.Watched {
+		t.Fatalf("SetPlaylistWatched(plA, false) = (%+v, %v)", updatedA, err)
+	}
+	watchedRoots, err := s.WatchedRoots(lib.ID)
+	if err != nil || len(watchedRoots) != 1 || watchedRoots[0] != rootB {
+		t.Fatalf("WatchedRoots = (%+v, %v), want [%q]", watchedRoots, err, rootB)
+	}
+	if err := s.MarkMissingInRoots(lib.ID, watchedRoots, time.Now().Unix()+100); err != nil {
+		t.Fatal(err)
+	}
+	trA, okA, _ := s.TrackByRef(fileA)
+	trB, okB, _ := s.TrackByRef(fileB)
+	if !okA || trA.Ref == "" {
+		t.Fatalf("unwatched fileA should remain playable: ok=%v tr=%+v", okA, trA)
+	}
+	if !okB || trB.Ref != "" {
+		t.Fatalf("watched stale fileB should be marked missing: ok=%v tr=%+v", okB, trB)
+	}
+
+	// Unwatch remote playlist -> HasWatchedSources still true because rootB is watched.
+	if _, err := s.SetPlaylistWatched(lib.ID, plRemote.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if has, err := s.HasWatchedRemotePlaylists(lib.ID); err != nil || has {
+		t.Fatalf("HasWatchedRemotePlaylists = (%v, %v), want false", has, err)
+	}
+	if err := s.SetRootWatched(lib.ID, rootB, false); err != nil {
+		t.Fatal(err)
+	}
+	if has, err := s.HasWatchedSources(lib.ID); err != nil || has {
+		t.Fatalf("HasWatchedSources after unwatching all = (%v, %v), want false", has, err)
+	}
+}

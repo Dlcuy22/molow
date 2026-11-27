@@ -45,6 +45,7 @@ export enum Capability {
     CapPlaylist = "playlist",
     CapPlaylistEdit = "playlist.edit",
     CapSignIn = "signIn",
+    CapRefresh = "refresh",
 };
 
 /**
@@ -118,6 +119,8 @@ export interface Playlist {
     "name": string;
     "description"?: string;
     "remoteId"?: string;
+    "sourcePath"?: string;
+    "watched"?: boolean;
     "trackCount": number;
     "coverId"?: string;
     "customCover"?: boolean;

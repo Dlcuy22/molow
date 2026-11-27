@@ -29,6 +29,7 @@ const (
 	CapPlaylist     Capability = "playlist"
 	CapPlaylistEdit Capability = "playlist.edit"
 	CapSignIn       Capability = "signIn"
+	CapRefresh      Capability = "refresh"
 )
 
 // Status is the one-line health of a library. It is the only place a library's
@@ -128,6 +129,8 @@ type Playlist struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description,omitempty"`
 	RemoteID    string   `json:"remoteId,omitempty"`
+	SourcePath  string   `json:"sourcePath,omitempty"`
+	Watched     bool     `json:"watched,omitempty"`
 	TrackCount  int      `json:"trackCount"`
 	CoverID     string   `json:"coverId,omitempty"`
 	CustomCover bool     `json:"customCover,omitempty"`
@@ -206,6 +209,12 @@ type Authenticator interface {
 	Auth(ctx context.Context) (AuthStatus, error)
 }
 
+// Refreshable marks a source that can refresh from its backing folders or
+// remote service.
+type Refreshable interface {
+	CanRefresh() bool
+}
+
 // AuthStatus is a remote library's session state, mirroring the YTM client's.
 type AuthStatus struct {
 	SignedIn bool   `json:"signedIn"`
@@ -230,6 +239,9 @@ func CapabilitiesOf(s Source) []Capability {
 	}
 	if _, ok := s.(Authenticator); ok {
 		caps = append(caps, CapSignIn)
+	}
+	if r, ok := s.(Refreshable); ok && r.CanRefresh() {
+		caps = append(caps, CapRefresh)
 	}
 
 	return caps

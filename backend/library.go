@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/dlcuy22/molo"
@@ -112,16 +113,28 @@ func (s *PlayerService) initLibraries() {
 			continue
 		}
 		s.registerLocal(row)
-		// Scan on startup, on a worker: the window must open before a large
-		// folder has been walked. A library with no roots has nothing to walk.
 		roots, err := store.Roots(row.ID)
 		if err != nil {
 			s.log.Warn("library: roots", "id", row.ID, "error", err)
 
 			continue
 		}
-		if len(roots) > 0 {
-			_ = s.RescanLibrary(row.ID)
+		for _, root := range roots {
+			_ = store.LinkLegacyFolderPlaylist(row.ID, root, filepath.Base(root))
+		}
+		s.syncWatchedFolderRoots(row.ID)
+		s.registerLocalSyncer(row.ID)
+
+		// Scan on startup, on a worker: the window must open before a large
+		// folder has been walked. Only watched folders are scanned.
+		if watchedRoots, err := store.WatchedRoots(row.ID); err == nil && len(watchedRoots) > 0 {
+			_ = s.scanLibrary(row.ID, "")
+		}
+		if hasRemote, err := store.HasWatchedRemotePlaylists(row.ID); err == nil && hasRemote {
+			at, syncErr := store.SyncTime(row.ID, "local_remote_playlists")
+			if syncErr != nil || at == 0 || time.Since(time.Unix(at, 0)) > ytmOpenStaleAge {
+				s.triggerLocalRemoteSync(row.ID, syncTriggerOpen)
+			}
 		}
 	}
 
@@ -478,6 +491,7 @@ func (s *PlayerService) ImportFolder(libraryID, path string) (library.Library, e
 		// Already watched: nothing new to index, no second playlist.
 		return s.describeLibrary(libraryID)
 	}
+	s.syncWatchedFolderRoots(libraryID)
 	if err := s.scanLibrary(libraryID, abs); err != nil {
 		return library.Library{}, err
 	}
@@ -525,10 +539,19 @@ func (s *PlayerService) RemoveLibrary(id string) error {
 	s.libMu.Lock()
 	store := s.libStore
 	old, _ := s.libs[id].(*ytmSource)
+	localSyn := s.localSyncers[id]
+	delete(s.localSyncers, id)
+	watcher := s.localWatcher
 	delete(s.libs, id)
 	s.libMu.Unlock()
 	if old != nil {
 		old.syncer.stop()
+	}
+	if localSyn != nil {
+		localSyn.stop()
+	}
+	if watcher != nil {
+		watcher.RemoveLibrary(id)
 	}
 	if store == nil {
 		return fmt.Errorf("library: store is not available")
@@ -537,16 +560,37 @@ func (s *PlayerService) RemoveLibrary(id string) error {
 	return store.RemoveLibrary(id)
 }
 
-// RescanLibrary rescans every watched root on a worker (or re-syncs a YTM
-// account library). A scan already running is not duplicated.
+// RescanLibrary rescans watched folders on a worker and triggers sync for any
+// watched remote playlists (or re-syncs a YTM account library).
 func (s *PlayerService) RescanLibrary(id string) error {
-	if src, ok := s.librarySource(id); ok {
-		if _, isYTM := src.(*ytmSource); isYTM {
-			s.triggerYTMSync(id, syncTriggerManual)
-			return nil
+	src, ok := s.librarySource(id)
+	if !ok {
+		return fmt.Errorf("library: unknown id %q", id)
+	}
+	if _, isYTM := src.(*ytmSource); isYTM {
+		s.triggerYTMSync(id, syncTriggerManual)
+		return nil
+	}
+	if _, isLocal := src.(*local.Local); !isLocal {
+		return fmt.Errorf("library: %q cannot refresh", id)
+	}
+
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return fmt.Errorf("library: store is not available")
+	}
+
+	if watchedRoots, err := store.WatchedRoots(id); err == nil && len(watchedRoots) > 0 {
+		if err := s.scanLibrary(id, ""); err != nil {
+			return err
 		}
 	}
-	return s.scanLibrary(id, "")
+	if hasRemote, err := store.HasWatchedRemotePlaylists(id); err == nil && hasRemote {
+		s.triggerLocalRemoteSync(id, syncTriggerManual)
+	}
+	return nil
 }
 
 // scanLibrary runs one scan on a worker, deduped per library. An importRoot
@@ -612,6 +656,7 @@ func (s *PlayerService) scanLibrary(id, importRoot string) error {
 			if importRoot != "" && len(res.Refs) > 0 {
 				s.createImportPlaylist(id, importRoot, res.Refs)
 			}
+			s.reconcileWatchedFolderPlaylists(id, importRoot, res.RefsByRoot)
 			s.refreshLibraryCover(id)
 			s.emitActivity(ActivityEvent{
 				ID:        "local-scan:" + id,
@@ -630,6 +675,39 @@ func (s *PlayerService) scanLibrary(id, importRoot string) error {
 	return nil
 }
 
+// reconcileWatchedFolderPlaylists updates entries of watched folder-backed
+// playlists after a rescan so newly added or removed files appear immediately.
+func (s *PlayerService) reconcileWatchedFolderPlaylists(libraryID, skipRoot string, refsByRoot map[string][]string) {
+	if len(refsByRoot) == 0 {
+		return
+	}
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return
+	}
+	pls, err := store.WatchedFolderPlaylists(libraryID)
+	if err != nil {
+		return
+	}
+	for _, pl := range pls {
+		if pl.SourcePath == "" || pl.SourcePath == skipRoot {
+			continue
+		}
+		refs, scanned := refsByRoot[pl.SourcePath]
+		if !scanned {
+			continue
+		}
+		if err := store.ReplacePlaylistEntries(pl.ID, refs); err != nil {
+			continue
+		}
+		if !pl.CustomCover {
+			s.refreshPlaylistCover(pl.ID)
+		}
+	}
+}
+
 // createImportPlaylist is the one-playlist-per-import rule: the folder's
 // tracks, in walk order, under the folder's name. A failure only costs the
 // playlist; the tracks are already in the catalogue.
@@ -641,7 +719,18 @@ func (s *PlayerService) createImportPlaylist(libraryID, root string, refs []stri
 		return
 	}
 
-	playlist, err := store.CreatePlaylist(libraryID, filepath.Base(root))
+	if existing, ok, err := store.PlaylistBySourcePath(libraryID, root); err == nil && ok {
+		if err := store.ReplacePlaylistEntries(existing.ID, refs); err != nil {
+			s.log.Warn("library: import playlist", "error", err)
+			return
+		}
+		if !existing.CustomCover {
+			s.refreshPlaylistCover(existing.ID)
+		}
+		return
+	}
+
+	playlist, err := store.CreatePlaylistWithSource(libraryID, filepath.Base(root), root, true)
 	if err != nil {
 		s.log.Warn("library: import playlist", "error", err)
 
@@ -825,6 +914,7 @@ func (s *PlayerService) ImportYTM(libraryID string, hit YTMResult) (YTMImport, e
 	}
 	s.refreshPlaylistCover(playlist.ID)
 	s.refreshLibraryCover(libraryID)
+	s.registerLocalSyncer(libraryID)
 	s.emit(eventLibrary, LibraryProgress{LibraryID: libraryID, Done: len(refs), Total: len(refs), State: "ready"})
 	s.emitActivity(ActivityEvent{
 		ID:        actID,
@@ -1305,6 +1395,44 @@ func (s *PlayerService) DeletePlaylist(libraryID, playlistID string) error {
 	}
 
 	return writer.DeletePlaylist(s.ctx, playlistID)
+}
+
+// SetPlaylistWatched toggles automatic watching for a folder-backed or
+// remote-backed playlist inside a local library.
+func (s *PlayerService) SetPlaylistWatched(libraryID, playlistID string, watched bool) (library.Playlist, error) {
+	src, ok := s.librarySource(libraryID)
+	if !ok {
+		return library.Playlist{}, fmt.Errorf("library: unknown id %q", libraryID)
+	}
+	if _, isLocal := src.(*local.Local); !isLocal {
+		return library.Playlist{}, fmt.Errorf("library: %q does not support playlist watch toggles", libraryID)
+	}
+
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return library.Playlist{}, fmt.Errorf("library: store is not available")
+	}
+
+	pl, err := store.SetPlaylistWatched(libraryID, playlistID, watched)
+	if err != nil {
+		return library.Playlist{}, err
+	}
+	if pl.SourcePath != "" {
+		s.syncWatchedFolderRoots(libraryID)
+		if watched {
+			_ = s.scanLibrary(libraryID, "")
+		}
+	}
+	if pl.RemoteID != "" {
+		s.registerLocalSyncer(libraryID)
+		if watched {
+			s.triggerLocalRemoteSync(libraryID, syncTriggerManual)
+		}
+	}
+	s.emit(eventLibrary, LibraryProgress{LibraryID: libraryID, State: "ready"})
+	return pl, nil
 }
 
 // PickLibraryFolder shows the native folder picker and returns the path without

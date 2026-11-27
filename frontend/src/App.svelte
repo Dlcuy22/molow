@@ -52,6 +52,7 @@
     updateLibrary,
     removeLibrary,
     rescanLibrary,
+    setPlaylistWatched,
     importSongModal,
     closeImportSongModal,
   } from "./lib/library";
@@ -587,6 +588,8 @@
     },
     editLibrary: (id) => openEditLibrary(id),
     rescanLibrary: (id) => void rescanLibrary(id),
+    libraryKindFor: (id) => $libraries.find((l) => l.id === id)?.kind ?? "",
+    togglePlaylistWatch: (list, watched) => void setPlaylistWatched(list.libraryId, list.id, watched),
     removeLibrary: (id) => {
       const name = $libraries.find((l) => l.id === id)?.name ?? "this library";
       confirming = {
@@ -1004,6 +1007,7 @@
           playlistPlaying={playlistQueuePlaying}
           onfilter={setFilter}
           onadd={() => (addOpen = !addOpen)}
+          onrefresh={() => void rescanLibrary(activeLibraryInfo?.id)}
           oncreateLibrary={openCreateLibrary}
           onimportFolder={() => void addLibrary()}
           onimportYTM={() => openPalette("ytm", false, "import")}

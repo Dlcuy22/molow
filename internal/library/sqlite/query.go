@@ -377,7 +377,8 @@ func (s *Store) ToggleLiked(ref string) (bool, error) {
 // Playlists lists a library's playlists with their entry counts.
 func (s *Store) Playlists(libraryID string) ([]library.Playlist, error) {
 	rows, err := s.db.Query(
-		`SELECT p.id, p.name, p.description, p.remote_id, p.cover_id, p.custom_cover, p.owned,
+		`SELECT p.id, p.name, p.description, p.remote_id, p.source_path, p.watched,
+		        p.cover_id, p.custom_cover, p.owned,
 		        (SELECT COUNT(*) FROM playlist_entry e WHERE e.playlist_id = p.id)
 		 FROM playlist p WHERE p.library_id = ?
 		 ORDER BY p.updated_at DESC, p.name COLLATE NOCASE`,
@@ -392,13 +393,15 @@ func (s *Store) Playlists(libraryID string) ([]library.Playlist, error) {
 	for rows.Next() {
 		var (
 			p           library.Playlist
+			watched     int
 			customCover int
 			owned       int
 		)
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RemoteID, &p.CoverID, &customCover, &owned, &p.TrackCount); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RemoteID, &p.SourcePath, &watched, &p.CoverID, &customCover, &owned, &p.TrackCount); err != nil {
 			return nil, err
 		}
 		p.LibraryID = libraryID
+		p.Watched = watched != 0
 		p.CustomCover = customCover != 0
 		p.Owned = owned != 0
 		out = append(out, p)
@@ -506,16 +509,26 @@ func (s *Store) PlaylistTrackCount(playlistID string) (int, error) {
 
 // CreatePlaylist adds one and returns it.
 func (s *Store) CreatePlaylist(libraryID, name string) (library.Playlist, error) {
-	return s.CreatePlaylistWithRemote(libraryID, name, "")
+	return s.createPlaylist(libraryID, name, "", "", false, true)
 }
 
 // CreatePlaylistWithRemote adds a playlist that mirrors a remote list, so the
-// row remembers which list it came from. Its entries are added afterwards.
+// row remembers which list it came from. Imported local remote playlists start
+// watched so sync picks up upstream changes.
 func (s *Store) CreatePlaylistWithRemote(libraryID, name, remoteID string) (library.Playlist, error) {
-	return s.createPlaylistWithRemoteOwned(libraryID, name, remoteID, true)
+	return s.createPlaylist(libraryID, name, remoteID, "", remoteID != "", true)
+}
+
+// CreatePlaylistWithSource adds a playlist backed by a watched local folder.
+func (s *Store) CreatePlaylistWithSource(libraryID, name, sourcePath string, watched bool) (library.Playlist, error) {
+	return s.createPlaylist(libraryID, name, "", sourcePath, watched, true)
 }
 
 func (s *Store) createPlaylistWithRemoteOwned(libraryID, name, remoteID string, owned bool) (library.Playlist, error) {
+	return s.createPlaylist(libraryID, name, remoteID, "", false, owned)
+}
+
+func (s *Store) createPlaylist(libraryID, name, remoteID, sourcePath string, watched, owned bool) (library.Playlist, error) {
 	var raw [8]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return library.Playlist{}, err
@@ -526,15 +539,27 @@ func (s *Store) createPlaylistWithRemoteOwned(libraryID, name, remoteID string, 
 	if owned {
 		ownedInt = 1
 	}
+	watchedInt := 0
+	if watched {
+		watchedInt = 1
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO playlist (id, library_id, name, remote_id, owned, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`, id, libraryID, name, remoteID, ownedInt, now, now,
+		`INSERT INTO playlist (id, library_id, name, remote_id, source_path, watched, owned, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, libraryID, name, remoteID, sourcePath, watchedInt, ownedInt, now, now,
 	)
 	if err != nil {
 		return library.Playlist{}, err
 	}
 
-	return library.Playlist{ID: id, LibraryID: libraryID, Name: name, RemoteID: remoteID, Owned: owned}, nil
+	return library.Playlist{
+		ID:         id,
+		LibraryID:  libraryID,
+		Name:       name,
+		RemoteID:   remoteID,
+		SourcePath: sourcePath,
+		Watched:    watched,
+		Owned:      owned,
+	}, nil
 }
 
 // UpsertRemotePlaylist finds a playlist by (libraryID, remoteID), updating its
@@ -567,19 +592,50 @@ func (s *Store) UpsertRemotePlaylist(libraryID, name, remoteID string, owned boo
 	return library.Playlist{ID: id, LibraryID: libraryID, Name: name, RemoteID: remoteID, Owned: owned}, nil
 }
 
+// PlaylistByID returns the playlist row matching (libraryID, playlistID).
+func (s *Store) PlaylistByID(libraryID, playlistID string) (library.Playlist, bool, error) {
+	return s.scanSinglePlaylist(
+		`SELECT p.id, p.name, p.description, p.remote_id, p.source_path, p.watched,
+		        p.cover_id, p.custom_cover, p.owned,
+		        (SELECT COUNT(*) FROM playlist_entry e WHERE e.playlist_id = p.id)
+		 FROM playlist p WHERE p.library_id = ? AND p.id = ? LIMIT 1`,
+		libraryID, playlistID,
+	)
+}
+
+// PlaylistBySourcePath returns the playlist row backed by sourcePath in libraryID.
+func (s *Store) PlaylistBySourcePath(libraryID, sourcePath string) (library.Playlist, bool, error) {
+	return s.scanSinglePlaylist(
+		`SELECT p.id, p.name, p.description, p.remote_id, p.source_path, p.watched,
+		        p.cover_id, p.custom_cover, p.owned,
+		        (SELECT COUNT(*) FROM playlist_entry e WHERE e.playlist_id = p.id)
+		 FROM playlist p WHERE p.library_id = ? AND p.source_path = ? LIMIT 1`,
+		libraryID, sourcePath,
+	)
+}
+
 // PlaylistByRemoteID returns the mirrored playlist row matching (libraryID, remoteID).
 func (s *Store) PlaylistByRemoteID(libraryID, remoteID string) (library.Playlist, bool, error) {
-	var (
-		p           library.Playlist
-		customCover int
-		owned       int
-	)
-	err := s.db.QueryRow(
-		`SELECT p.id, p.name, p.description, p.remote_id, p.cover_id, p.custom_cover, p.owned,
+	return s.scanSinglePlaylist(
+		`SELECT p.id, p.name, p.description, p.remote_id, p.source_path, p.watched,
+		        p.cover_id, p.custom_cover, p.owned,
 		        (SELECT COUNT(*) FROM playlist_entry e WHERE e.playlist_id = p.id)
 		 FROM playlist p WHERE p.library_id = ? AND p.remote_id = ? LIMIT 1`,
 		libraryID, remoteID,
-	).Scan(&p.ID, &p.Name, &p.Description, &p.RemoteID, &p.CoverID, &customCover, &owned, &p.TrackCount)
+	)
+}
+
+func (s *Store) scanSinglePlaylist(query, libraryID, arg string) (library.Playlist, bool, error) {
+	var (
+		p           library.Playlist
+		watched     int
+		customCover int
+		owned       int
+	)
+	err := s.db.QueryRow(query, libraryID, arg).Scan(
+		&p.ID, &p.Name, &p.Description, &p.RemoteID, &p.SourcePath, &watched,
+		&p.CoverID, &customCover, &owned, &p.TrackCount,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return library.Playlist{}, false, nil
 	}
@@ -587,9 +643,148 @@ func (s *Store) PlaylistByRemoteID(libraryID, remoteID string) (library.Playlist
 		return library.Playlist{}, false, err
 	}
 	p.LibraryID = libraryID
+	p.Watched = watched != 0
 	p.CustomCover = customCover != 0
 	p.Owned = owned != 0
 	return p, true, nil
+}
+
+// SetPlaylistWatched toggles automatic watching for a folder-backed or remote-backed
+// playlist and keeps any matching library_root row in sync.
+func (s *Store) SetPlaylistWatched(libraryID, playlistID string, watched bool) (library.Playlist, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return library.Playlist{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var sourcePath, remoteID string
+	err = tx.QueryRow(
+		`SELECT source_path, remote_id FROM playlist WHERE library_id = ? AND id = ? LIMIT 1`,
+		libraryID, playlistID,
+	).Scan(&sourcePath, &remoteID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return library.Playlist{}, fmt.Errorf("playlist: unknown id %q", playlistID)
+	}
+	if err != nil {
+		return library.Playlist{}, err
+	}
+	if sourcePath == "" && remoteID == "" {
+		return library.Playlist{}, fmt.Errorf("playlist: %q has no watched source", playlistID)
+	}
+
+	w := 0
+	if watched {
+		w = 1
+	}
+	if _, err := tx.Exec(
+		`UPDATE playlist SET watched = ?, updated_at = ? WHERE library_id = ? AND id = ?`,
+		w, time.Now().Unix(), libraryID, playlistID,
+	); err != nil {
+		return library.Playlist{}, err
+	}
+	if sourcePath != "" {
+		if _, err := tx.Exec(
+			`UPDATE library_root SET watched = ? WHERE library_id = ? AND path = ?`,
+			w, libraryID, sourcePath,
+		); err != nil {
+			return library.Playlist{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return library.Playlist{}, err
+	}
+
+	pl, _, err := s.PlaylistByID(libraryID, playlistID)
+	return pl, err
+}
+
+// WatchedRemotePlaylists returns watched imported remote playlists in libraryID.
+func (s *Store) WatchedRemotePlaylists(libraryID string) ([]library.Playlist, error) {
+	return s.queryPlaylists(
+		`SELECT p.id, p.name, p.description, p.remote_id, p.source_path, p.watched,
+		        p.cover_id, p.custom_cover, p.owned,
+		        (SELECT COUNT(*) FROM playlist_entry e WHERE e.playlist_id = p.id)
+		 FROM playlist p WHERE p.library_id = ? AND p.remote_id <> '' AND p.watched = 1
+		 ORDER BY p.rowid`,
+		libraryID,
+	)
+}
+
+// WatchedFolderPlaylists returns watched folder-backed playlists in libraryID.
+func (s *Store) WatchedFolderPlaylists(libraryID string) ([]library.Playlist, error) {
+	return s.queryPlaylists(
+		`SELECT p.id, p.name, p.description, p.remote_id, p.source_path, p.watched,
+		        p.cover_id, p.custom_cover, p.owned,
+		        (SELECT COUNT(*) FROM playlist_entry e WHERE e.playlist_id = p.id)
+		 FROM playlist p WHERE p.library_id = ? AND p.source_path <> '' AND p.watched = 1
+		 ORDER BY p.rowid`,
+		libraryID,
+	)
+}
+
+func (s *Store) queryPlaylists(query, libraryID string) ([]library.Playlist, error) {
+	rows, err := s.db.Query(query, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []library.Playlist
+	for rows.Next() {
+		var (
+			p           library.Playlist
+			watched     int
+			customCover int
+			owned       int
+		)
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RemoteID, &p.SourcePath, &watched, &p.CoverID, &customCover, &owned, &p.TrackCount); err != nil {
+			return nil, err
+		}
+		p.LibraryID = libraryID
+		p.Watched = watched != 0
+		p.CustomCover = customCover != 0
+		p.Owned = owned != 0
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// LinkLegacyFolderPlaylist attaches source_path and root watch state to an
+// existing folder-import playlist created before migration 008.
+func (s *Store) LinkLegacyFolderPlaylist(libraryID, root, baseName string) error {
+	if root == "" || baseName == "" {
+		return nil
+	}
+	if _, ok, err := s.PlaylistBySourcePath(libraryID, root); err != nil || ok {
+		return err
+	}
+
+	var id string
+	err := s.db.QueryRow(
+		`SELECT id FROM playlist
+		 WHERE library_id = ? AND source_path = '' AND remote_id = '' AND name = ?
+		 ORDER BY rowid LIMIT 1`,
+		libraryID, baseName,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	watched := 1
+	_ = s.db.QueryRow(
+		`SELECT watched FROM library_root WHERE library_id = ? AND path = ?`,
+		libraryID, root,
+	).Scan(&watched)
+
+	_, err = s.db.Exec(
+		`UPDATE playlist SET source_path = ?, watched = ? WHERE id = ?`,
+		root, watched, id,
+	)
+	return err
 }
 
 // ReplacePlaylistEntries atomically replaces all entries in playlistID with refs

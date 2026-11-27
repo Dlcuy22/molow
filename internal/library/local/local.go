@@ -30,11 +30,12 @@ type ScanProgress struct {
 	Total     int
 }
 
-// ScanResult is what one scan walked: how many files it indexed and, for an
-// import scan, the refs it indexed in walk order.
+// ScanResult is what one scan walked: how many files it indexed, the refs
+// indexed under importRoot, and per-root refs in walk order.
 type ScanResult struct {
-	Count int
-	Refs  []string
+	Count      int
+	Refs       []string
+	RefsByRoot map[string][]string
 }
 
 // Local is one browsable local library over its watched roots.
@@ -72,6 +73,16 @@ func (l *Local) Describe(context.Context) (library.Library, error) {
 	lib.Capabilities = library.CapabilitiesOf(l)
 
 	return lib, nil
+}
+
+// CanRefresh reports whether this local library has at least one watched
+// folder or watched remote playlist.
+func (l *Local) CanRefresh() bool {
+	if l == nil || l.store == nil {
+		return false
+	}
+	ok, err := l.store.HasWatchedSources(l.lib.ID)
+	return err == nil && ok
 }
 
 // Feed answers one tab. Cursor is an offset; a page is small enough that a
@@ -264,6 +275,11 @@ func (l *Local) CreateRemotePlaylist(name, remoteID string) (library.Playlist, e
 	return l.store.CreatePlaylistWithRemote(l.lib.ID, name, remoteID)
 }
 
+// CreateFolderPlaylist adds a watched playlist backed by sourcePath.
+func (l *Local) CreateFolderPlaylist(name, sourcePath string) (library.Playlist, error) {
+	return l.store.CreatePlaylistWithSource(l.lib.ID, name, sourcePath, true)
+}
+
 // ImportRemote writes a track that has no file into this library's catalogue
 // and returns the ref the engine plays it by. A remote row is invisible to the
 // scanner, so this is the only way such a row enters the catalogue.
@@ -366,6 +382,11 @@ func (l *Local) importScan(ctx context.Context, importRoot string) (ScanResult, 
 
 	sortPathsByIndex(paths)
 
+	refsByRoot := make(map[string][]string, len(roots))
+	for _, root := range roots {
+		refsByRoot[root] = nil
+	}
+
 	var refs []string
 	for i, path := range paths {
 		if ctx.Err() != nil {
@@ -377,6 +398,12 @@ func (l *Local) importScan(ctx context.Context, importRoot string) (ScanResult, 
 			last = err
 		} else {
 			seen++
+			for _, root := range roots {
+				if underPath(path, root) {
+					refsByRoot[root] = append(refsByRoot[root], path)
+					break
+				}
+			}
 			if importRoot != "" && underPath(path, importRoot) {
 				refs = append(refs, path)
 			}
@@ -386,7 +413,7 @@ func (l *Local) importScan(ctx context.Context, importRoot string) (ScanResult, 
 		}
 	}
 
-	if err := l.store.MarkMissing(l.lib.ID, start); err != nil {
+	if err := l.store.MarkMissingInRoots(l.lib.ID, roots, start); err != nil {
 		l.setStatus(library.StatusError, err.Error())
 
 		return ScanResult{Count: seen}, err
@@ -399,26 +426,27 @@ func (l *Local) importScan(ctx context.Context, importRoot string) (ScanResult, 
 	if errs > 0 && last != nil {
 		l.setStatus(library.StatusReady, fmt.Sprintf("%d files could not be read", errs))
 
-		return ScanResult{Count: seen, Refs: refs}, nil
+		return ScanResult{Count: seen, Refs: refs, RefsByRoot: refsByRoot}, nil
 	}
 	l.setStatus(library.StatusReady, "")
 
-	return ScanResult{Count: seen, Refs: refs}, nil
+	return ScanResult{Count: seen, Refs: refs, RefsByRoot: refsByRoot}, nil
 }
 
 // roots reads the watched folders from the store, which is the truth: an
 // import adds a root after the Local was built. A row that predates the roots
-// table falls back to its single root column.
+// table falls back to its single root column, while explicitly unwatched roots
+// are skipped.
 func (l *Local) roots() ([]string, error) {
-	roots, err := l.store.Roots(l.lib.ID)
+	allRoots, err := l.store.Roots(l.lib.ID)
 	if err != nil {
 		return nil, err
 	}
-	if len(roots) == 0 && l.lib.Root != "" {
+	if len(allRoots) == 0 && l.lib.Root != "" {
 		return []string{l.lib.Root}, nil
 	}
 
-	return roots, nil
+	return l.store.WatchedRoots(l.lib.ID)
 }
 
 // underPath reports whether path lives under root, comparing the prefix the

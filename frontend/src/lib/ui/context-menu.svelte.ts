@@ -22,6 +22,7 @@ export interface MenuItem {
   label?: string;
   /** Right-aligned secondary text such as a shortcut or track count. */
   hint?: string;
+  checked?: boolean;
   disabled?: boolean;
   danger?: boolean;
   run?: () => void;

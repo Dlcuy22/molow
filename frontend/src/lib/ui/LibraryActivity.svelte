@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fade } from "svelte/transition";
+  import { cubicIn, cubicOut } from "svelte/easing";
   import CheckCircle from "phosphor-svelte/lib/CheckCircle";
   import WarningCircle from "phosphor-svelte/lib/WarningCircle";
   import X from "phosphor-svelte/lib/X";
@@ -37,11 +37,28 @@
   const stepMs = $derived(spinnerStepMs(runningCount, libState.batchPeak));
 
   const visible = $derived(runningCount > 0 || errorCount > 0 || lingerVisible || open);
-  const fadeDuration =
+  const prefersReducedMotion =
     typeof window !== "undefined" &&
-    Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches)
-      ? 0
-      : 180;
+    Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+
+  function activitySlide(
+    node: Element,
+    { duration = 200, easing = cubicOut }: { duration?: number; easing?: (t: number) => number } = {},
+  ) {
+    if (prefersReducedMotion || duration === 0) {
+      return { duration: 0 };
+    }
+    const el = node as HTMLElement;
+    const style = getComputedStyle(el);
+    const width = parseFloat(style.width) || el.offsetWidth;
+    const paddingRight = parseFloat(style.paddingRight) || 0;
+    return {
+      duration,
+      easing,
+      css: (t: number) =>
+        `width: ${(t * width).toFixed(2)}px; padding-right: ${(t * paddingRight).toFixed(2)}px; opacity: ${t}; overflow: hidden;`,
+    };
+  }
   const visibleItems = $derived(
     items.slice(0, expanded ? ACTIVITY_MAX_ITEMS : ACTIVITY_COMPACT_LIMIT),
   );
@@ -171,10 +188,11 @@
 
 {#if visible}
   <div
-    class="relative"
+    class="relative pr-2"
     role="group"
     data-library-activity
-    out:fade={{ duration: fadeDuration }}
+    in:activitySlide={{ duration: 200, easing: cubicOut }}
+    out:activitySlide={{ duration: 180, easing: cubicIn }}
     onmouseenter={handleMouseEnter}
     onmouseleave={handleMouseLeave}
   >
@@ -206,7 +224,7 @@
 
     {#if open}
       <div
-        class="motion-popover absolute right-0 top-10 z-40 origin-top-right rounded-lg border border-line/50 bg-surface shadow-menu {expanded
+        class="motion-popover absolute right-2 top-10 z-40 origin-top-right rounded-lg border border-line/50 bg-surface shadow-menu {expanded
           ? 'w-[380px]'
           : 'w-[320px]'}"
         role="dialog"

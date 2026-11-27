@@ -6,6 +6,7 @@ require (
 	github.com/dlcuy22/molo v1.2.0
 	github.com/dlcuy22/ytm-go v1.8.0
 	github.com/ebitengine/purego v0.11.2
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-ole/go-ole v1.3.0
 	github.com/godbus/dbus/v5 v5.2.4
 	github.com/ikawaha/kagome-dict v1.1.7

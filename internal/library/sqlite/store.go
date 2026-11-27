@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -220,6 +221,70 @@ func (s *Store) Roots(libraryID string) ([]string, error) {
 	}
 
 	return out, rows.Err()
+}
+
+// WatchedRoots lists a library's watched folders with watching enabled, in insertion order.
+func (s *Store) WatchedRoots(libraryID string) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT path FROM library_root WHERE library_id = ? AND watched = 1 ORDER BY rowid`, libraryID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+
+	return out, rows.Err()
+}
+
+// SetRootWatched enables or disables live watching and scanning for path in libraryID.
+func (s *Store) SetRootWatched(libraryID, path string, watched bool) error {
+	w := 0
+	if watched {
+		w = 1
+	}
+	_, err := s.db.Exec(
+		`UPDATE library_root SET watched = ? WHERE library_id = ? AND path = ?`,
+		w, libraryID, path,
+	)
+	return err
+}
+
+// HasWatchedSources reports whether libraryID has at least one watched folder
+// or watched imported remote playlist.
+func (s *Store) HasWatchedSources(libraryID string) (bool, error) {
+	var n int
+	if err := s.db.QueryRow(
+		`SELECT EXISTS(
+			SELECT 1 FROM library_root WHERE library_id = ? AND watched = 1
+			UNION ALL
+			SELECT 1 FROM playlist WHERE library_id = ? AND remote_id <> '' AND watched = 1
+		)`,
+		libraryID, libraryID,
+	).Scan(&n); err != nil {
+		return false, err
+	}
+	return n != 0, nil
+}
+
+// HasWatchedRemotePlaylists reports whether libraryID has any watched remote playlist.
+func (s *Store) HasWatchedRemotePlaylists(libraryID string) (bool, error) {
+	var n int
+	if err := s.db.QueryRow(
+		`SELECT EXISTS(SELECT 1 FROM playlist WHERE library_id = ? AND remote_id <> '' AND watched = 1)`,
+		libraryID,
+	).Scan(&n); err != nil {
+		return false, err
+	}
+	return n != 0, nil
 }
 
 // LibraryLogoCovers returns up to n distinct cover ids, the most recently
@@ -708,6 +773,75 @@ func (s *Store) MarkMissing(libraryID string, scanStart int64) error {
 	)
 
 	return err
+}
+
+// MarkMissingInRoots flags file rows under roots in libraryID that a scan did
+// not see, leaving tracks in unwatched folders untouched.
+func (s *Store) MarkMissingInRoots(libraryID string, roots []string, scanStart int64) error {
+	if len(roots) == 0 {
+		return nil
+	}
+	rows, err := s.db.Query(
+		`SELECT path FROM track_file WHERE library_id = ? AND seen_at < ? AND missing = 0`,
+		libraryID, scanStart,
+	)
+	if err != nil {
+		return err
+	}
+	var stale []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			rows.Close()
+			return err
+		}
+		for _, r := range roots {
+			if pathUnderRoot(p, r) {
+				stale = append(stale, p)
+				break
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, p := range stale {
+		if _, err := tx.Exec(
+			`UPDATE track_file SET missing = 1 WHERE library_id = ? AND path = ?`,
+			libraryID, p,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func pathUnderRoot(path, root string) bool {
+	if root == "" {
+		return false
+	}
+	sep := string(os.PathSeparator)
+	prefix := root + sep
+	if runtime.GOOS == "linux" {
+		return path == root || strings.HasPrefix(path, prefix)
+	}
+	if strings.EqualFold(path, root) {
+		return true
+	}
+	return len(path) > len(prefix) && strings.EqualFold(path[:len(prefix)], prefix)
 }
 
 // TouchScan records a completed scan.

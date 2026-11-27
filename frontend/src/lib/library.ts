@@ -111,6 +111,8 @@ function toPlaylist(p: GenPlaylist): Playlist {
     name: p.name,
     description: p.description ?? "",
     remoteId: p.remoteId ?? "",
+    sourcePath: p.sourcePath ?? "",
+    watched: p.watched ?? false,
     owned: p.owned ?? true,
     trackCount: p.trackCount,
     coverId: p.coverId ?? "",
@@ -356,6 +358,40 @@ export async function openPlaylist(target: Playlist | string): Promise<void> {
     if (seq === playlistSeq) {
       activePlaylistLoading.set(false);
     }
+  }
+}
+
+async function refreshActivePlaylistSilently(target: Playlist): Promise<void> {
+  const seq = playlistSeq;
+  try {
+    const collected: Track[] = [];
+    let cursor = "";
+    for (;;) {
+      const page = toPage(
+        await PlayerService.LibraryFeed(target.libraryId, "playlist:" + target.id, cursor, 200),
+      );
+      if (seq !== playlistSeq || get(activePlaylist)?.id !== target.id) {
+        return;
+      }
+      const shelf = page.shelves[0];
+      if (!shelf || shelf.items.length === 0) {
+        break;
+      }
+      collected.push(...shelf.items);
+      if (!shelf.cursor) {
+        break;
+      }
+      cursor = shelf.cursor;
+    }
+    if (seq !== playlistSeq || get(activePlaylist)?.id !== target.id) {
+      return;
+    }
+    activePlaylistTracks.set(collected);
+    activePlaylist.update((cur) =>
+      cur && cur.id === target.id ? { ...cur, trackCount: collected.length } : cur,
+    );
+  } catch {
+    // Keep the currently visible playlist tracks on a transient background refresh failure.
   }
 }
 
@@ -835,6 +871,36 @@ export async function addToPlaylist(playlistID: string, refs: string[]): Promise
   }
 }
 
+export async function setPlaylistWatched(
+  libraryID: string,
+  playlistID: string,
+  watched: boolean,
+): Promise<void> {
+  try {
+    const updated = toPlaylist(
+      await PlayerService.SetPlaylistWatched(libraryID, playlistID, watched),
+    );
+    libraryPlaylists.update((lists) =>
+      lists.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)),
+    );
+    activePlaylist.update((cur) =>
+      cur && cur.id === updated.id ? { ...cur, ...updated } : cur,
+    );
+    invalidateLibraryCache(libraryID);
+    await Promise.all([
+      refreshLibraries(),
+      loadLibrary(currentLibraryTab, { force: true, silent: true }),
+    ]);
+  } catch (err) {
+    showToast({
+      key: "playlist-watch",
+      kind: "message",
+      label: libraryErrorText(err, "Could not update playlist watch setting"),
+      icon: WarningCircle,
+    });
+  }
+}
+
 export async function renamePlaylist(playlistID: string, name: string): Promise<void> {
   const id = get(libraryId);
   const trimmed = name.trim();
@@ -949,6 +1015,10 @@ export function connectLibrary(): () => void {
     if (p.state === "ready") {
       libraryProgress.set(null);
       invalidateLibraryCache(p.libraryId);
+      const open = get(activePlaylist);
+      if (open && open.libraryId === p.libraryId && !open.album && !open.artist) {
+        void refreshActivePlaylistSilently(open);
+      }
       void Promise.all([
         loadHome(),
         loadLibrary(currentLibraryTab, { force: true, silent: true }),

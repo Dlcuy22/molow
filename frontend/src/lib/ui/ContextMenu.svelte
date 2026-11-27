@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import Check from "phosphor-svelte/lib/Check";
   import {
     closeContextMenu,
     contextMenu,
@@ -52,16 +53,17 @@
     };
   });
 
+  const itemSelector =
+    '[role="menuitem"]:not([aria-disabled="true"]), [role="menuitemcheckbox"]:not([aria-disabled="true"])';
+
   $effect(() => {
     if (placed) {
-      el?.querySelector<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')?.focus();
+      el?.querySelector<HTMLElement>(itemSelector)?.focus();
     }
   });
 
   function rows(): HTMLElement[] {
-    return Array.from(
-      el?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])') ?? [],
-    );
+    return Array.from(el?.querySelectorAll<HTMLElement>(itemSelector) ?? []);
   }
 
   function move(step: 1 | -1) {
@@ -141,12 +143,15 @@
         class:text-fg={!row.danger}
         class:hover:bg-hover={!row.disabled}
         class:text-disabled={row.disabled}
-        role="menuitem"
+        role={row.checked !== undefined ? "menuitemcheckbox" : "menuitem"}
+        aria-checked={row.checked !== undefined ? row.checked : undefined}
         aria-disabled={row.disabled ? "true" : undefined}
         onclick={() => pick(row)}
       >
         <span class="min-w-0 flex-1 truncate">{row.label}</span>
-        {#if row.hint}
+        {#if row.checked}
+          <Check size="13" class="shrink-0 text-fg" aria-hidden="true" />
+        {:else if row.hint}
           <span class="shrink-0 text-[11px] text-muted">{row.hint}</span>
         {/if}
       </button>

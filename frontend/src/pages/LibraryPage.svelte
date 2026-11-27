@@ -2,8 +2,10 @@
   import { fade, scale } from "svelte/transition";
   import { flip } from "svelte/animate";
   import { cubicIn, cubicOut } from "svelte/easing";
+  import ArrowsClockwise from "phosphor-svelte/lib/ArrowsClockwise";
   import CaretDown from "phosphor-svelte/lib/CaretDown";
   import Plus from "phosphor-svelte/lib/Plus";
+  import { activityStore } from "../lib/activity";
   import type { Album, Artist, LibraryInfo, Playlist, Shelf, Track } from "../lib/types";
   import AlbumCard from "../lib/ui/AlbumCard.svelte";
   import BigArtistCard from "../lib/ui/BigArtistCard.svelte";
@@ -28,6 +30,7 @@
     playlistPlaying = false,
     onfilter = (_f: string) => {},
     onadd = () => {},
+    onrefresh = () => {},
     oncreateLibrary = () => {},
     onimportFolder = () => {},
     onimportYTM = () => {},
@@ -59,6 +62,7 @@
     playlistPlaying?: boolean;
     onfilter?: (f: string) => void;
     onadd?: () => void;
+    onrefresh?: () => void;
     oncreateLibrary?: () => void;
     onimportFolder?: () => void;
     onimportYTM?: () => void;
@@ -85,6 +89,20 @@
     { id: "artists", label: "Artists" },
   ];
 
+  const canRefresh = $derived(Boolean(library?.capabilities.includes("refresh")));
+  const isRefreshing = $derived(
+    Boolean(
+      library &&
+        (library.status === "scanning" ||
+          ($activityStore[library.id]?.items.some(
+            (item) => item.state === "running" && (item.kind === "sync" || item.kind === "scan"),
+          ) ??
+            false)),
+    ),
+  );
+  const refreshDesc = $derived(
+    library?.kind === "local" ? "Refresh watched library" : "Refresh from remote library",
+  );
   const albums = $derived(shelves.find((s) => s.kind === "albums")?.albums ?? []);
   const artists = $derived(shelves.find((s) => s.kind === "artists")?.artists ?? []);
   const playlists = $derived(shelves.find((s) => s.kind === "playlists")?.playlists ?? []);
@@ -218,7 +236,30 @@
       {/if}
     </div>
     {#if library}
-      <div class="mt-1.5 flex shrink-0 items-center gap-2">
+      <div class="mt-1.5 flex shrink-0 items-center">
+        {#if canRefresh}
+          <div class="group relative mr-2">
+            <button
+              type="button"
+              class="grid size-8 shrink-0 place-items-center rounded-md border border-line/60 bg-surface text-muted transition-colors hover:bg-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+              aria-label={refreshDesc}
+              data-refresh
+              onclick={onrefresh}
+            >
+              <ArrowsClockwise
+                size="15"
+                class={isRefreshing ? "animate-spin motion-reduce:animate-none" : ""}
+                aria-hidden="true"
+              />
+            </button>
+            <div
+              role="tooltip"
+              class="pointer-events-none absolute right-0 top-10 z-40 whitespace-nowrap rounded-md border border-line/60 bg-surface px-2.5 py-1 text-[11px] font-medium text-fg opacity-0 shadow-menu transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none"
+            >
+              {refreshDesc}
+            </div>
+          </div>
+        {/if}
         <LibraryActivity libraryId={library.id} />
         <button
           class="flex h-8 shrink-0 items-center gap-2 rounded-md bg-fg px-3 text-bg-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"

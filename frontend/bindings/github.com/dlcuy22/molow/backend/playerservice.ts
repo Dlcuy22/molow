@@ -581,8 +581,8 @@ export function RenamePlaylist(libraryID: string, playlistID: string, name: stri
 }
 
 /**
- * RescanLibrary rescans every watched root on a worker (or re-syncs a YTM
- * account library). A scan already running is not duplicated.
+ * RescanLibrary rescans watched folders on a worker and triggers sync for any
+ * watched remote playlists (or re-syncs a YTM account library).
  */
 export function RescanLibrary(id: string): $CancellablePromise<void> {
     return $Call.ByID(967501736, id);
@@ -703,6 +703,14 @@ export function SetLiked(libraryID: string, ref: string, liked: boolean): $Cance
  */
 export function SetPaused(paused: boolean): $CancellablePromise<void> {
     return $Call.ByID(1922866033, paused);
+}
+
+/**
+ * SetPlaylistWatched toggles automatic watching for a folder-backed or
+ * remote-backed playlist inside a local library.
+ */
+export function SetPlaylistWatched(libraryID: string, playlistID: string, watched: boolean): $CancellablePromise<library$0.Playlist> {
+    return $Call.ByID(2513326085, libraryID, playlistID, watched);
 }
 
 /**

@@ -188,13 +188,19 @@ func (s *PlayerService) triggerYTMSync(libraryID string, kind syncTrigger) {
 }
 
 // notifyWindowFocused triggers a staleness-gated pull for signed-in YTM
-// libraries when the app window regains focus.
+// libraries and watched remote playlists in local libraries when the app window
+// regains focus.
 func (s *PlayerService) notifyWindowFocused() {
 	s.libMu.Lock()
 	var syncers []*ytmSyncer
 	for _, srcAny := range s.libs {
 		if src, ok := srcAny.(*ytmSource); ok && src.syncer != nil {
 			syncers = append(syncers, src.syncer)
+		}
+	}
+	for _, syn := range s.localSyncers {
+		if syn != nil {
+			syncers = append(syncers, syn)
 		}
 	}
 	s.libMu.Unlock()
@@ -246,6 +252,9 @@ func (y *ytmSource) syncCtx(ctx context.Context) context.Context {
 	}
 	return context.Background()
 }
+
+// CanRefresh reports that a YTM account library can always manually sync.
+func (y *ytmSource) CanRefresh() bool { return true }
 
 func (y *ytmSource) Describe(context.Context) (library.Library, error) {
 	lib, err := y.store.Library(y.id)

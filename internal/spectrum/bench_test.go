@@ -24,7 +24,7 @@ func benchTone(n int) []float32 {
 
 // BenchmarkFFTScalar is the pre-optimization transform: pure float64 radix-2.
 func BenchmarkFFTScalar(b *testing.B) {
-	a, err := NewAnalyzer(benchSize)
+	a, err := newAnalyzer(benchSize)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func benchRunner(b *testing.B, build func(int) (Transform, error)) *Runner {
 
 // BenchmarkRunnerFrameScalar is the whole visualizer frame before the change.
 func BenchmarkRunnerFrameScalar(b *testing.B) {
-	r := benchRunner(b, func(size int) (Transform, error) { return NewAnalyzer(size) })
+	r := benchRunner(b, func(size int) (Transform, error) { return newAnalyzer(size) })
 	step := r.cfg.SampleRate / 60
 	b.ReportAllocs()
 	b.ResetTimer()

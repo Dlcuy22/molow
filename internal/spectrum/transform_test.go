@@ -30,7 +30,7 @@ func TestTransformSelectsSIMDWhenAvailable(t *testing.T) {
 func TestSIMDMatchesScalarBins(t *testing.T) {
 	const size = 8192
 
-	ref, err := NewAnalyzer(size)
+	ref, err := newAnalyzer(size)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestRunnerSIMDMatchesScalarBars(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.FFT = 8192
 
-	scalarBars := runBarsWith(t, cfg, func(size int) (Transform, error) { return NewAnalyzer(size) })
+	scalarBars := runBarsWith(t, cfg, func(size int) (Transform, error) { return newAnalyzer(size) })
 	simdBars := runBarsWith(t, cfg, func(size int) (Transform, error) { return newSIMDAnalyzer(size) })
 
 	var worst float64

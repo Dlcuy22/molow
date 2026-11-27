@@ -1,12 +1,4 @@
-// This file is a small real-signal FFT for display use. It exists because the
-// player has no spectral analysis and a visualizer needs one: the only other
-// analysis in the tree (package analysis) decodes a file offline, which is the
-// wrong tool for a live feed.
-//
-// The transform is iterative radix-2, which is all a visualizer needs: a
-// 2048-point frame at 30 fps is a rounding error next to the decoder, so a
-// mixed-radix or a lookup-table implementation would be complexity without a
-// user-visible payoff.
+// Scalar iterative radix-2 FFT for display analysis.
 
 package spectrum
 
@@ -15,74 +7,27 @@ import (
 	"math"
 )
 
-// ErrFFTSize reports a transform length that is not a positive power of two, which
-// radix-2 cannot decompose.
 var ErrFFTSize = errors.New("fft: size must be a positive power of two")
 
-// Analyzer transforms fixed-size real frames. It holds its scratch buffers, so
-// a caller that reuses one Analyzer never allocates on the analysis path.
+// Analyzer transforms fixed-size real frames using preallocated scratch buffers.
 type Analyzer struct {
-	size int
-	// window is the Hann window applied before the transform. It trades the
-	// rectangular window's spectral leakage (which smears a tone across every
-	// bin, so a sine reads as a blur) for a slightly wider main lobe, which is
-	// the right trade for a display.
-	window []float64
+	size   int
+	window []float64 // periodic Hann window
 
 	re, im []float64
 
-	// cos/sin are the twiddle factors for the forward transform, precomputed
-	// once so a frame costs only butterflies.
-	cos, sin []float64
+	cos, sin []float64 // precomputed twiddle factors
 	rev      []int
 }
 
-// NewAnalyzer returns an Analyzer for size-point frames. size must be a positive power
-// of two.
-func NewAnalyzer(size int) (*Analyzer, error) {
-	if size < 2 || size&(size-1) != 0 {
-		return nil, ErrFFTSize
-	}
-
-	a := &Analyzer{
-		size:   size,
-		window: make([]float64, size),
-		re:     make([]float64, size),
-		im:     make([]float64, size),
-		cos:    make([]float64, size/2),
-		sin:    make([]float64, size/2),
-		rev:    make([]int, size),
-	}
-	for i := range size {
-		// Periodic Hann, the form that reconstructs cleanly at the frame edges.
-		a.window[i] = 0.5 - 0.5*math.Cos(2*math.Pi*float64(i)/float64(size))
-	}
-	for i := range size {
-		a.rev[i] = reverseBits(i, size)
-	}
-	for i := range size / 2 {
-		angle := -2 * math.Pi * float64(i) / float64(size)
-		a.cos[i] = math.Cos(angle)
-		a.sin[i] = math.Sin(angle)
-	}
-
-	return a, nil
-}
-
-// Size is the frame length the Analyzer accepts.
+// Size returns the frame length the [Analyzer] accepts.
 func (a *Analyzer) Size() int { return a.size }
 
-// Bins is the number of usable magnitude bins, size/2: the DC bin through the
-// Nyquist bin, the spectrum of a real signal being symmetric about Nyquist.
+// Bins returns the number of usable magnitude bins (size/2).
 func (a *Analyzer) Bins() int { return a.size / 2 }
 
-// Magnitudes transforms the first Size samples and writes their magnitudes to
-// out, low frequency first. It returns the number of bins written, which is
-// Bins() when out is long enough.
-//
-// A short input is windowed and zero-padded rather than rejected, so a caller
-// that has not yet buffered a whole frame gets a quieter but valid spectrum
-// instead of an error path on every early call.
+// Magnitudes transforms the first Size samples into out, low frequency first, returning bins written.
+// Short inputs are windowed and zero-padded.
 func (a *Analyzer) Magnitudes(samples []float32, out []float64) int {
 	n := a.size
 	for i := range n {
@@ -100,9 +45,7 @@ func (a *Analyzer) Magnitudes(samples []float32, out []float64) int {
 	for k := range bins {
 		a.re[k] = math.Hypot(a.re[k], a.im[k])
 	}
-	// The magnitude scale of a forward transform grows with N; normalising by
-	// N and the window's coherent gain keeps the result comparable across
-	// frame sizes, so a level change never rides a config change.
+	// Normalize by N and the Hann coherent gain (0.5) so levels stay consistent across FFT sizes.
 	scale := 2 / (float64(n) * 0.5)
 	for k := range bins {
 		out[k] = a.re[k] * scale
@@ -111,8 +54,7 @@ func (a *Analyzer) Magnitudes(samples []float32, out []float64) int {
 	return bins
 }
 
-// transform runs the in-place iterative radix-2 Cooley-Tukey FFT over the
-// prepared re/im buffers.
+// transform runs an in-place iterative radix-2 Cooley-Tukey FFT over re and im.
 func (a *Analyzer) transform() {
 	n := a.size
 	for i := range n {
@@ -143,10 +85,7 @@ func (a *Analyzer) transform() {
 	}
 }
 
-// reverseBits returns the index whose low log2(n) bits are those of i reversed,
-// which is the bit-reversal permutation the iterative transform expects. The
-// source is walked from its low bit up, each step shifting the result left, so
-// the result's high bit is the source's low bit.
+// reverseBits reverses the low log2(n) bits of i for the bit-reversal permutation.
 func reverseBits(i, n int) int {
 	var out int
 	for k := 1; k < n; k <<= 1 {

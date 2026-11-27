@@ -660,10 +660,7 @@ export function SetActiveLibrary(id: string): $CancellablePromise<void> {
 }
 
 /**
- * SetAlbumPlayerOpen reports whether the album player sheet is showing. The
- * visualizer lives only there, so the pump idles while the sheet is closed
- * instead of producing frames for a pane that is not mounted. The frontend
- * calls it when the sheet mounts and unmounts.
+ * SetAlbumPlayerOpen reports whether the album player sheet is visible, idling the visualizer pump when closed.
  */
 export function SetAlbumPlayerOpen(open: boolean): $CancellablePromise<void> {
     return $Call.ByID(4109424515, open);

@@ -8,13 +8,13 @@ import (
 // TestNewRejectsNonPowerOfTwo pins the one precondition radix-2 cannot meet.
 func TestNewRejectsNonPowerOfTwo(t *testing.T) {
 	for _, size := range []int{0, 1, 3, 6, 100, 1000} {
-		if _, err := NewAnalyzer(size); err == nil {
-			t.Errorf("NewAnalyzer(%d) = nil error, want ErrFFTSize", size)
+		if _, err := newAnalyzer(size); err == nil {
+			t.Errorf("newAnalyzer(%d) = nil error, want ErrFFTSize", size)
 		}
 	}
 	for _, size := range []int{2, 4, 8, 1024, 2048} {
-		if _, err := NewAnalyzer(size); err != nil {
-			t.Errorf("NewAnalyzer(%d) = %v, want nil", size, err)
+		if _, err := newAnalyzer(size); err != nil {
+			t.Errorf("newAnalyzer(%d) = %v, want nil", size, err)
 		}
 	}
 }
@@ -29,7 +29,7 @@ func TestSinePeaksInItsBin(t *testing.T) {
 		rate = 48000
 		freq = 6000
 	)
-	a, err := NewAnalyzer(size)
+	a, err := newAnalyzer(size)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestSinePeaksInItsBin(t *testing.T) {
 // signal windowed by Hann has its energy in bins 0 and 1 only (the window's own
 // spectrum is N/2, N/4, 0), so bin 2 and beyond must be essentially empty.
 func TestDCOffsetLandsInBinZero(t *testing.T) {
-	a, err := NewAnalyzer(1024)
+	a, err := newAnalyzer(1024)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestDCOffsetLandsInBinZero(t *testing.T) {
 // TestShortFrameDoesNotPanic covers the early calls before a whole frame is
 // buffered: a partial input is zero-padded, not an error.
 func TestShortFrameDoesNotPanic(t *testing.T) {
-	a, err := NewAnalyzer(64)
+	a, err := newAnalyzer(64)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestShortFrameDoesNotPanic(t *testing.T) {
 // TestShortOutLeaveRoomIsRespected checks the partial-output path, which the
 // visualizer uses when it shows fewer bins than the frame produces.
 func TestShortOutLeaveRoomIsRespected(t *testing.T) {
-	a, err := NewAnalyzer(256)
+	a, err := newAnalyzer(256)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestShortOutLeaveRoomIsRespected(t *testing.T) {
 // TestAnalyzerReuseIsStable guards against scratch state leaking between
 // frames: the same input analyzed twice must give the same answer.
 func TestAnalyzerReuseIsStable(t *testing.T) {
-	a, err := NewAnalyzer(512)
+	a, err := newAnalyzer(512)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestAnalyzerReuseIsStable(t *testing.T) {
 // TestMagnitudesAreNonNegative is the property the visualizer relies on when it
 // maps a bin to a bar height.
 func TestMagnitudesAreNonNegative(t *testing.T) {
-	a, err := NewAnalyzer(1024)
+	a, err := newAnalyzer(1024)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

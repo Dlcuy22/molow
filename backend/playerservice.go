@@ -333,6 +333,7 @@ func (s *PlayerService) ServiceStartup(_ context.Context, _ application.ServiceO
 		// The same switch the provider was built with: the engine consumes the
 		// Upgrade only when this is set, and the provider offers it only when
 		// it is, so the two cannot drift.
+		// TODO: Move ytmSeamlessSwap out from Experimental
 		molo.WithExperimental(molo.Experimental{SourceUpgrade: ytmSeamlessSwap}),
 	)
 	if err != nil {
@@ -642,17 +643,12 @@ func (s *PlayerService) setMainWindowMinimised(hidden bool) {
 	}
 }
 
-// SetAlbumPlayerOpen reports whether the album player sheet is showing. The
-// visualizer lives only there, so the pump idles while the sheet is closed
-// instead of producing frames for a pane that is not mounted. The frontend
-// calls it when the sheet mounts and unmounts.
+// SetAlbumPlayerOpen reports whether the album player sheet is visible, idling the visualizer pump when closed.
 func (s *PlayerService) SetAlbumPlayerOpen(open bool) {
 	s.spectrumMu.Lock()
 	wasOpen := s.albumPlayerOpen
 	s.albumPlayerOpen = open
-	// A pane that mounts subscribes fresh and expects a frame; the runner kept
-	// running nothing while the sheet was closed, so the suppression state
-	// from before it closed no longer describes what is on screen.
+	// Reset frame suppression on reopen so the newly mounted pane receives a frame.
 	if open && !wasOpen {
 		s.spectrumLast = s.spectrumLast[:0]
 		s.spectrumLastSilent = false
@@ -669,10 +665,8 @@ func (s *PlayerService) SetAlbumPlayerOpen(open bool) {
 	}
 }
 
-// suppressSpectrum reports whether bands is not worth emitting, recording it
-// as the last emitted frame when it is. Silence is measured with a small
-// epsilon rather than exact zero because the release decay approaches the
-// floor asymptotically and would otherwise trickle forever.
+// suppressSpectrum skips redundant or near-silent frames (using a small epsilon
+// because release decay approaches zero asymptotically) and records emitted ones.
 func (s *PlayerService) suppressSpectrum(bands []float64) bool {
 	const silentLevel = 0.002
 
@@ -720,9 +714,7 @@ func equalFloats(a, b []float64) bool {
 	return true
 }
 
-// visualizerDelayMs reads the persisted compensation from the settings
-// document. The clamp is repeated here so even a document corrupted in memory
-// cannot hand the runner a value the display cannot hold.
+// visualizerDelayMs returns the clamped visualizer delay from app settings.
 func (s *PlayerService) visualizerDelayMs() int {
 	s.appSettingsMu.Lock()
 	defer s.appSettingsMu.Unlock()
@@ -730,13 +722,9 @@ func (s *PlayerService) visualizerDelayMs() int {
 	return clampVisualizerDelayMs(s.appSettings.General.VisualizerDelayMs)
 }
 
-// rebuildRunner installs a runner for the current spectrum config. The caller
-// holds no lock; the mutex is taken here.
+// rebuildRunner installs a new spectrum runner from the current config; caller must not hold spectrumMu.
 func (s *PlayerService) rebuildRunner() error {
-	// The delay is a persisted preference rather than part of the live shape,
-	// so it is resolved from the document here, and written back into the
-	// shape: any path that builds a runner (startup, a shape change, a settings
-	// save) then leaves the live config and the built runner agreeing on it.
+	// Resolve persisted delay and sync it into spectrumCfg.
 	delay := s.visualizerDelayMs()
 
 	s.spectrumMu.Lock()
@@ -749,10 +737,10 @@ func (s *PlayerService) rebuildRunner() error {
 	if err != nil {
 		return fmt.Errorf("build visualizer: %w", err)
 	}
+	s.logger().Debug("spectrum: using FFT backend", "backend", runner.Backend(), "fft", runner.Config().FFT)
 	s.spectrumMu.Lock()
 	s.runner = runner
-	// A new shape makes the last emitted frame incomparable, so drop it: the
-	// next frame must reach the display even if it reads as silence.
+	// Clear suppression state so the next frame reaches the display.
 	s.spectrumLast = s.spectrumLast[:0]
 	s.spectrumLastSilent = false
 	s.spectrumMu.Unlock()

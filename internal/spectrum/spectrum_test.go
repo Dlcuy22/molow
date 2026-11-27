@@ -795,7 +795,7 @@ func TestFFTChoicesAreValidPowersOfTwo(t *testing.T) {
 		if size < 2 || size&(size-1) != 0 {
 			t.Errorf("choice %d is not a power of two", size)
 		}
-		if _, err := NewAnalyzer(size); err != nil {
+		if _, err := newAnalyzer(size); err != nil {
 			t.Errorf("choice %d rejected by the analyzer: %v", size, err)
 		}
 	}

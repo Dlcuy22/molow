@@ -20,6 +20,10 @@ const (
 // Backdrop crops img to a centered square, scales it to 64x64, tints dark
 // pixels toward the cover's dominant hue (or clamped grey for monochrome art),
 // and applies three separable box-blur passes.
+//
+// Ported from ytm-rs (src/art.rs, https://github.com/grapedjuice/ytm-rs,
+// GPL-3.0-only), following Kawarp's pipeline (MIT, Copyright (c) 2026 Better
+// Lyrics). Adapted for MoLow (Copyright (C) 2026 Asrian Putra).
 func Backdrop(img image.Image) (*image.NRGBA, error) {
 	if img == nil {
 		return nil, ErrNotImage

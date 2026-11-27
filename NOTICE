@@ -1,7 +1,9 @@
 MoLow third-party notices
 =========================
 
-MoLow itself is licensed under the BSD 3-Clause License. See LICENSE.
+Copyright (C) 2026 Asrian Putra.
+MoLow itself is licensed under the GNU General Public License v3.0
+(GPL-3.0-only). See LICENSE.
 
 This file lists the third-party components that are compiled into or shipped
 with a MoLow build, the license each one carries, and what that license asks of
@@ -15,13 +17,30 @@ binary. Every one of them is vendored under the module cache and mirrored in the
 Go module proxy, so the notice obligation is met by not stripping the licenses
 from the source tree.
 
-The two sections below are the ones that need action beyond that.
+The three sections below list the copyleft/derived, Apache-2.0, and permissive
+components included in MoLow.
 
 
 Copyleft components
 -------------------
 
-### github.com/tphakala/go-aac v0.7.0 — LGPL-2.1-or-later
+### ytm-rs (GPL-3.0-only) and Kawarp (MIT)
+
+The animated album-art background in MoLow is ported from ytm-rs
+(https://github.com/grapedjuice/ytm-rs, licensed GPL-3.0-only):
+
+- `frontend/src/lib/backdrop-gl.ts`: WebGL2 animated album-art shader ported
+  from `ytm-rs` (`src/shader.rs`).
+- `internal/artwork/backdrop.go`: 64x64 dark-tint and separable box-blur cover
+  pipeline ported from `ytm-rs` (`src/art.rs`).
+- `frontend/src/lib/components/PlayerBackdrop.svelte`: WebGL2 player backdrop
+  host and texture crossfade loop used in `AlbumPlayer.svelte`.
+
+ytm-rs's animated backdrop is based on Kawarp (MIT, Copyright (c) 2026 Better
+Lyrics, https://github.com/better-lyrics). Keep this attribution and the MIT
+copyright notice intact in any redistribution.
+
+### github.com/tphakala/go-aac v0.7.1 (LGPL-2.1-or-later)
 
 Reached through the engine's `decode` package, so it is linked into every build
 that can play AAC, M4A or MP4.
@@ -38,30 +57,23 @@ If you redistribute a MoLow binary, you must:
 2. State that go-aac is used, under LGPL-2.1-or-later, and name the version.
 3. Make the corresponding source available. Pointing at the upstream module at
    the pinned version satisfies this:
-   https://github.com/tphakala/go-aac/tree/v0.7.0
+   https://github.com/tphakala/go-aac/tree/v0.7.1
 4. Not impose terms that forbid reverse engineering for the purpose of debugging
-   modifications to the LGPL component. The BSD 3-Clause License places no such
-   restriction, so a stock MoLow build already complies.
+   modifications to the LGPL component. GPL-3.0 places no such restriction, so a
+   stock MoLow build already complies.
 
 Go links statically, so there is no separate shared object to swap. If you need
 to replace go-aac with your own build, rebuild MoLow with a `replace` directive
 pointing at your copy; no source change is required.
 
-### github.com/dlcuy22/ytm-go v1.3.0 — MIT
-
-Listed here only because earlier versions (up to and including v1.2.1) were
-GPL-3.0. v1.3.0 relicensed the library to MIT, which is what MoLow requires, so
-the whole distributed work can carry BSD 3-Clause. Do not downgrade below
-v1.3.0: a GPL-3.0 dependency would make the combined binary GPL-3.0.
-
 
 Apache-2.0 component
 --------------------
 
-### github.com/ebitengine/oto/v3 v3.5.0 — Apache-2.0
+### github.com/ebitengine/oto/v3 v3.5.1 (Apache-2.0)
 
-Reached through the engine's audio backend. Apache-2.0 is compatible with BSD
-3-Clause. Redistributing a binary requires shipping the Apache-2.0 license text
+Reached through the engine's audio backend. Apache-2.0 is compatible with
+GPL-3.0. Redistributing a binary requires shipping the Apache-2.0 license text
 and preserving any NOTICE file oto ships.
 
 oto is also what carries the platform audio bindings: WASAPI on Windows,
@@ -71,8 +83,7 @@ PulseAudio on Linux, CoreAudio on macOS.
 Permissive components
 ---------------------
 
-### github.com/ikawaha/kagome v2.11.1 and the IPADIC dictionary — MIT, with the
-mecab-ipadic notice
+### github.com/ikawaha/kagome v2.11.1 and the IPADIC dictionary (MIT, with the mecab-ipadic notice)
 
 The lyric romanizer (`internal/romanize`) uses kagome to segment Japanese lines
 and the `ipa` dictionary package for the readings. Both are MIT.
@@ -90,13 +101,15 @@ notice alongside the LGPL obligations above.
 
 MIT:
 
+- github.com/dlcuy22/molo (standalone audio engine submodule in `molo/`, Copyright 2026 Asrian Putra)
+- github.com/dlcuy22/ytm-go v1.8.0
 - github.com/ikawaha/kagome/v2 v2.11.1, github.com/ikawaha/kagome-dict v1.1.7,
   github.com/ikawaha/kagome-dict/ipa v1.2.6 the Japanese lyric romanizer
 - github.com/tphakala/go-flac v1.1.0
 - github.com/tphakala/go-mp3 v0.1.0
 - github.com/tphakala/go-m4a v0.5.0
 - github.com/tphakala/go-wav v1.1.0
-- github.com/tphakala/go-opus v1.1.0 — the Go port; see below for the reference
+- github.com/tphakala/go-opus v1.3.0: the Go port; see below for the reference
 - github.com/tphakala/simd v1.9.0
 - github.com/wailsapp/wails/v3 v3.0.0-beta.25
 - github.com/go-ole/go-ole v1.3.0
@@ -111,7 +124,7 @@ MIT:
 
 BSD-3-Clause:
 
-- github.com/godbus/dbus/v5 v5.2.2 — MPRIS on Linux
+- github.com/godbus/dbus/v5 v5.2.4: MPRIS on Linux
 - libopus, the reference go-opus is transliterated from. The upstream copyright
   notice names Xiph.Org, Skype Limited, Octasic, Jean-Marc Valin, Timothy B.
   Terriberry, CSIRO, Gregory Maxwell, Mark Borgerding, Erik de Castro Lopo,
@@ -128,13 +141,12 @@ BSD-2-Clause / ISC:
 Notes
 -----
 
-- No component here is GPL-3.0 in the resolved set. That is deliberate and worth
-  re-checking whenever a dependency is bumped: a single GPL library linked in
-  would relicense the whole binary.
-- MoLow's own source is BSD 3-Clause. Clause 3 means neither the copyright
-  holder's name nor the names of contributors may be used to endorse or promote
-  a product derived from it without written permission. Forks that ship under
-  the MoLow name need that permission.
-- This file is a good-faith inventory, not legal advice. If you ship to a store
-  or through a corporate distributor, have the LGPL static-linking position
-  confirmed for that channel.
+- MoLow as a combined work is distributed under GPL-3.0-only, matching the
+  upstream ytm-rs code ported into the backdrop pipeline. Any redistribution
+  of a MoLow binary must make the corresponding source available and keep the
+  copyright, license, and third-party notices intact.
+- The molo audio engine submodule (`molo/`) remains independently licensed
+  under the MIT License (Copyright 2026 Asrian Putra).
+- This file is a good-faith inventory, not legal advice. If you ship to a
+  store or through a corporate distributor, confirm the GPL-3.0 and LGPL
+  distribution obligations for that channel.

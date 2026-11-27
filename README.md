@@ -13,6 +13,7 @@
 - [Downloads](#downloads)
 - [Developing](#developing)
 - [Stack](#stack)
+- [Acknowledgements](#acknowledgements)
 - [License](#license)
 
 ## What is this?
@@ -131,12 +132,16 @@ Done.
 - **Scripting language:** Lua
 - **Frontend & Tooling:** TypeScript + Tailwind CSS + Svelte 5 + Vite + Bun
 
+## Acknowledgements
+
+- [ytm-rs](https://github.com/grapedjuice/ytm-rs) (GPL-3.0-only): the animated album-art backdrop shader in `frontend/src/lib/backdrop-gl.ts`, its WebGL2 player host in `frontend/src/lib/components/PlayerBackdrop.svelte`, and the 64x64 blurred cover pipeline in `internal/artwork/backdrop.go` are ported from ytm-rs.
+- [Better Lyrics](https://github.com/better-lyrics) (MIT): creators of Kawarp, the animated backdrop effect that ytm-rs's shader is based on.
+- [tphakala](https://github.com/tphakala): pure Go audio codec implementations.
+
 ## License
 
-MoLow is released under the [BSD 3-Clause License](LICENSE).
+Copyright (C) 2026 Asrian Putra.
 
-It links two components whose licenses ask more than the BSD notice does, and
-both are listed in [NOTICE](NOTICE): `go-aac` is LGPL-2.1-or-later, so a
-redistributed binary has to ship that license text and point at the library's
-source, and `ebitengine/oto` is Apache-2.0. Everything else, including the molo
-engine and ytm-go, is MIT or BSD.
+MoLow is released under the [GNU General Public License v3.0](LICENSE) (`GPL-3.0-only`).
+
+Third-party licenses and notices, including ytm-rs (GPL-3.0-only), Kawarp from Better Lyrics (MIT), `go-aac` (LGPL-2.1-or-later), and `ebitengine/oto` (Apache-2.0), are listed in [NOTICE](NOTICE). The standalone [molo](https://github.com/dlcuy22/molo) audio engine remains under the MIT License.

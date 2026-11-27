@@ -1,4 +1,7 @@
 <script lang="ts">
+  // Drives the WebGL2 animated backdrop (backdrop-gl.ts) and crossfade loop
+  // used in AlbumPlayer.svelte, ported from ytm-rs's cover backdrop pipeline
+  // (https://github.com/grapedjuice/ytm-rs, GPL-3.0-only).
   import { untrack } from "svelte";
   import { clampBackdropSize, createBackdropGL, type BackdropGL } from "../backdrop-gl";
 

@@ -29,7 +29,10 @@ void main() {
 }
 `;
 
-// Port of BitChord's src/shader.rs (Kawarp domain-warp over a 64x64 blurred cover).
+// Animated album-art backdrop shader ported from ytm-rs (src/shader.rs,
+// https://github.com/grapedjuice/ytm-rs, GPL-3.0-only), which is based on
+// Kawarp (MIT, Copyright (c) 2026 Better Lyrics).
+// Adapted for WebGL2 in MoLow (Copyright (C) 2026 Asrian Putra).
 const FRAGMENT_SRC = `#version 300 es
 precision highp float;
 uniform sampler2D u_a;

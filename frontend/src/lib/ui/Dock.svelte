@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ArrowsOutSimpleIcon from "phosphor-svelte/lib/ArrowsOutSimpleIcon";
   import CaretUp from "phosphor-svelte/lib/CaretUp";
   import Heart from "phosphor-svelte/lib/Heart";
   import Queue from "phosphor-svelte/lib/Queue";
@@ -163,7 +164,21 @@
     class="absolute left-0 top-1/2 flex min-w-0 -translate-y-1/2 items-center gap-3 pl-2"
     style="right: calc(50% + 120px)"
   >
-    <Cover id={heldCoverId} alt="" size={68} radius={8} class="shrink-0" />
+    <button
+      type="button"
+      class="group/cover relative size-[68px] shrink-0 overflow-hidden rounded-[8px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+      aria-label="Open the full player"
+      title="Open the full player"
+      onclick={onexpand}
+    >
+      <Cover id={heldCoverId} alt="" size={68} radius={8} class="shrink-0" />
+      <span
+        class="pointer-events-none absolute inset-0 grid place-items-center bg-black/55 opacity-0 transition-opacity duration-200 ease-out group-hover/cover:opacity-100 group-focus-visible/cover:opacity-100 motion-reduce:transition-none"
+        aria-hidden="true"
+      >
+        <ArrowsOutSimpleIcon size="22" class="text-white" />
+      </span>
+    </button>
     <div class="flex min-w-0 flex-1 flex-col gap-[2px]">
       <Marquee
         text={snap.title || "Nothing playing"}

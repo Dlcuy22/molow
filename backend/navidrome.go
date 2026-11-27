@@ -993,6 +993,16 @@ func (s *PlayerService) UpdateNavidromeLibrary(id, name, description, serverURL,
 	mgr.configMu.Lock()
 	defer mgr.configMu.Unlock()
 
+	// Re-fetch row under configMu so concurrent updates or removals cannot
+	// cause stale config/credential rollbacks.
+	row, err = store.LibraryRow(id)
+	if err != nil {
+		return library.Library{}, err
+	}
+	if row.Kind != library.KindNavidrome {
+		return library.Library{}, fmt.Errorf("library: %q is not a Navidrome library", id)
+	}
+
 	client, err := nd.NewClient(nd.Config{
 		ServerURL: serverURL,
 		Username:  username,

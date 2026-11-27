@@ -256,3 +256,27 @@ func TestNavidromeSourceImplementsCapabilities(t *testing.T) {
 		t.Fatalf("expected CapRefresh in capabilities, got %v", caps)
 	}
 }
+
+func TestNavidromeRejectsUnsafeServerURLSchemes(t *testing.T) {
+	svc, store, _ := newNavidromeTestService(t)
+	badURLs := []string{
+		"",
+		"javascript:alert(1)",
+		"file:///etc/passwd",
+		"ftp://example.com",
+	}
+	for _, raw := range badURLs {
+		if _, err := svc.AddNavidromeLibrary("Bad", "", raw, "user", "pass"); err == nil {
+			t.Fatalf("AddNavidromeLibrary(%q) succeeded, want error", raw)
+		}
+	}
+	rows, err := store.LibraryRows()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.Kind == library.KindNavidrome {
+			t.Fatalf("unexpected Navidrome library persisted on invalid URL: %+v", r)
+		}
+	}
+}

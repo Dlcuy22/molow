@@ -8,6 +8,7 @@ export {
 
 export type {
     AccountInfo,
+    ActivityEvent,
     AppSettings,
     AuthStatus,
     CodecOption,

@@ -9,6 +9,11 @@ import type {} from "../github.com/wailsapp/wails/v3/internal/eventdata.js";
 import "../github.com/wailsapp/wails/v3/internal/eventcreate.js";
 
 /**
+ * Name of the custom event "molo:activity".
+ */
+export const MoloActivity = "molo:activity";
+
+/**
  * Name of the custom event "molo:effect-meters".
  */
 export const MoloEffectMeters = "molo:effect-meters";

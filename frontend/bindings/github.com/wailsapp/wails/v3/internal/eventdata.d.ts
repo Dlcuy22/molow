@@ -12,6 +12,7 @@ import type * as backend$0 from "../../../../dlcuy22/molow/backend/models.js";
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
+            "molo:activity": backend$0.ActivityEvent;
             "molo:effect-meters": backend$0.EffectMetersInfo[] | null;
             "molo:library": backend$0.LibraryProgress;
             "molo:lyrics": string;

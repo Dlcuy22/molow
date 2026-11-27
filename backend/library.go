@@ -27,6 +27,9 @@ import (
 // feed when it names the library it is showing, rather than polling.
 const eventLibrary = "molo:library"
 
+// eventActivity carries per-task progress updates for the library header indicator.
+const eventActivity = "molo:activity"
+
 const (
 	maxLibraryNameRunes = 80
 	maxLibraryDescRunes = 240
@@ -38,6 +41,30 @@ type LibraryProgress struct {
 	Done      int    `json:"done"`
 	Total     int    `json:"total"`
 	State     string `json:"state"`
+}
+
+// ActivityEvent describes a single background or user-initiated library task.
+type ActivityEvent struct {
+	ID        string `json:"id"`
+	LibraryID string `json:"libraryId"`
+	Kind      string `json:"kind"`
+	Title     string `json:"title"`
+	Detail    string `json:"detail,omitempty"`
+	Done      int    `json:"done,omitempty"`
+	Total     int    `json:"total,omitempty"`
+	State     string `json:"state"`
+}
+
+func (s *PlayerService) emitActivity(ev ActivityEvent) {
+	s.emit(eventActivity, ev)
+}
+
+func activityPlaylistTitle(name, fallback string) string {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" || strings.EqualFold(trimmed, "Add YouTube Music playlist") {
+		return fallback
+	}
+	return trimmed
 }
 
 // libraryDBPath is the catalogue database, beside settings.json.
@@ -265,6 +292,16 @@ func (s *PlayerService) registerLocal(row library.Library) {
 	src := local.New(s.libStore, row, s.art, func(p local.ScanProgress) {
 		s.emit(eventLibrary, LibraryProgress{
 			LibraryID: p.LibraryID, Done: p.Done, Total: p.Total, State: "scanning",
+		})
+		s.emitActivity(ActivityEvent{
+			ID:        "local-scan:" + p.LibraryID,
+			LibraryID: p.LibraryID,
+			Kind:      "scan",
+			Title:     firstNonEmpty(row.Name, "Local library"),
+			Detail:    "Scanning files",
+			Done:      p.Done,
+			Total:     p.Total,
+			State:     "running",
 		})
 	})
 	s.libMu.Lock()
@@ -543,16 +580,49 @@ func (s *PlayerService) scanLibrary(id, importRoot string) error {
 			s.libMu.Unlock()
 		}()
 
+		scanTitle := "Local library"
+		scanDetail := "Scanning files"
+		if importRoot != "" {
+			scanTitle = firstNonEmpty(filepath.Base(importRoot), "Local library")
+			scanDetail = "Scanning folder"
+		}
+		s.emitActivity(ActivityEvent{
+			ID:        "local-scan:" + id,
+			LibraryID: id,
+			Kind:      "scan",
+			Title:     scanTitle,
+			Detail:    scanDetail,
+			State:     "running",
+		})
+
 		res, err := scanner.ImportScan(s.ctx, importRoot)
 		state := "ready"
 		if err != nil {
 			state = "error"
 			s.log.Warn("library: scan failed", "id", id, "error", err)
+			s.emitActivity(ActivityEvent{
+				ID:        "local-scan:" + id,
+				LibraryID: id,
+				Kind:      "scan",
+				Title:     scanTitle,
+				Detail:    err.Error(),
+				State:     "error",
+			})
 		} else {
 			if importRoot != "" && len(res.Refs) > 0 {
 				s.createImportPlaylist(id, importRoot, res.Refs)
 			}
 			s.refreshLibraryCover(id)
+			s.emitActivity(ActivityEvent{
+				ID:        "local-scan:" + id,
+				LibraryID: id,
+				Kind:      "scan",
+				Title:     scanTitle,
+				Detail:    fmt.Sprintf("%d tracks", res.Count),
+				Done:      res.Count,
+				Total:     res.Count,
+				State:     "done",
+			})
 		}
 		s.emit(eventLibrary, LibraryProgress{LibraryID: id, Done: res.Count, Total: res.Count, State: state})
 	}()
@@ -641,20 +711,71 @@ func (s *PlayerService) ImportYTM(libraryID string, hit YTMResult) (YTMImport, e
 		if !hit.Playable {
 			return YTMImport{}, fmt.Errorf("ytm: %q is not a track", hit.Title)
 		}
+		actID := "ytm-import:" + hit.VideoID
+		actTitle := firstNonEmpty(name, "YouTube Music song")
+		s.emitActivity(ActivityEvent{
+			ID:        actID,
+			LibraryID: libraryID,
+			Kind:      "import",
+			Title:     actTitle,
+			Detail:    "Importing song",
+			State:     "running",
+		})
 		single := []YTMResult{hit}
 		s.enrichYTMResults(s.ctx, single)
 		hit = single[0]
 		if _, err := s.catalogYTM(dst, hit, s.storeYTMCover(hit.Thumbnail)); err != nil {
+			s.emitActivity(ActivityEvent{
+				ID:        actID,
+				LibraryID: libraryID,
+				Kind:      "import",
+				Title:     actTitle,
+				Detail:    err.Error(),
+				State:     "error",
+			})
 			return YTMImport{}, err
 		}
 		s.refreshLibraryCover(libraryID)
 		s.emit(eventLibrary, LibraryProgress{LibraryID: libraryID, Done: 1, Total: 1, State: "ready"})
+		s.emitActivity(ActivityEvent{
+			ID:        actID,
+			LibraryID: libraryID,
+			Kind:      "import",
+			Title:     actTitle,
+			Detail:    "Added",
+			Done:      1,
+			Total:     1,
+			State:     "done",
+		})
 
 		return YTMImport{Name: name, Tracks: 1}, nil
 	}
 
+	rid := strings.TrimPrefix(ytmPlaylistID(hit.VideoID), "VL")
+	actID := "ytm-import:" + firstNonEmpty(rid, hit.VideoID)
+	actTitle := activityPlaylistTitle(name, "Playlist")
+	s.emitActivity(ActivityEvent{
+		ID:        actID,
+		LibraryID: libraryID,
+		Kind:      "import",
+		Title:     actTitle,
+		Detail:    "Loading playlist",
+		State:     "running",
+	})
+	emitLocalPlaylistErr := func(err error) {
+		s.emitActivity(ActivityEvent{
+			ID:        actID,
+			LibraryID: libraryID,
+			Kind:      "import",
+			Title:     actTitle,
+			Detail:    err.Error(),
+			State:     "error",
+		})
+	}
+
 	rows, name, err := s.ytmProv.playlist(s.ctx, ytmPlaylistID(hit.VideoID))
 	if err != nil {
+		emitLocalPlaylistErr(err)
 		return YTMImport{}, err
 	}
 	// The catalogue's own title wins when it has one: a playlist pasted as an
@@ -663,32 +784,58 @@ func (s *PlayerService) ImportYTM(libraryID string, hit YTMResult) (YTMImport, e
 	if name == "" {
 		name = strings.TrimSpace(hit.Title)
 	}
+	actTitle = activityPlaylistTitle(name, "Playlist")
+	s.emitActivity(ActivityEvent{
+		ID:        actID,
+		LibraryID: libraryID,
+		Kind:      "import",
+		Title:     actTitle,
+		Detail:    "Importing tracks",
+		Total:     len(rows),
+		State:     "running",
+	})
 	s.enrichYTMResults(s.ctx, rows)
 	covers := s.storeYTMCovers(rows)
 	refs := make([]string, 0, len(rows))
 	for i, row := range rows {
 		ref, err := s.catalogYTM(dst, row, covers[i])
 		if err != nil {
+			emitLocalPlaylistErr(err)
 			return YTMImport{}, err
 		}
 		refs = append(refs, ref)
 	}
 	if len(refs) == 0 {
-		return YTMImport{}, fmt.Errorf("ytm: %q has no tracks", name)
+		err := fmt.Errorf("ytm: %q has no tracks", name)
+		emitLocalPlaylistErr(err)
+		return YTMImport{}, err
 	}
 	if name == "" {
 		name = "YouTube Music playlist"
 	}
+	actTitle = name
 	playlist, err := dst.CreateRemotePlaylist(name, hit.VideoID)
 	if err != nil {
+		emitLocalPlaylistErr(err)
 		return YTMImport{}, err
 	}
 	if err := dst.AddToPlaylist(s.ctx, playlist.ID, refs); err != nil {
+		emitLocalPlaylistErr(err)
 		return YTMImport{}, err
 	}
 	s.refreshPlaylistCover(playlist.ID)
 	s.refreshLibraryCover(libraryID)
 	s.emit(eventLibrary, LibraryProgress{LibraryID: libraryID, Done: len(refs), Total: len(refs), State: "ready"})
+	s.emitActivity(ActivityEvent{
+		ID:        actID,
+		LibraryID: libraryID,
+		Kind:      "import",
+		Title:     actTitle,
+		Detail:    fmt.Sprintf("%d tracks", len(refs)),
+		Done:      len(refs),
+		Total:     len(refs),
+		State:     "done",
+	})
 
 	return YTMImport{PlaylistID: playlist.ID, Name: name, Tracks: len(refs)}, nil
 }

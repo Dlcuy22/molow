@@ -783,13 +783,64 @@ func (y *ytmSource) syncStage1(ctx context.Context) ([]library.Playlist, error) 
 	}
 
 	y.syncAccountCover(ctx, ops)
+	y.svc.emitActivity(ActivityEvent{
+		ID:        "ytm-sync-likes:" + y.id,
+		LibraryID: y.id,
+		Kind:      "sync",
+		Title:     "Liked Music",
+		Detail:    "Syncing liked songs",
+		State:     "running",
+	})
 	if err := y.syncLikedSongs(ctx, ops); err != nil {
+		y.svc.emitActivity(ActivityEvent{
+			ID:        "ytm-sync-likes:" + y.id,
+			LibraryID: y.id,
+			Kind:      "sync",
+			Title:     "Liked Music",
+			Detail:    err.Error(),
+			State:     "error",
+		})
 		return nil, err
 	}
+	y.svc.emitActivity(ActivityEvent{
+		ID:        "ytm-sync-likes:" + y.id,
+		LibraryID: y.id,
+		Kind:      "sync",
+		Title:     "Liked Music",
+		Detail:    "Up to date",
+		State:     "done",
+	})
+
+	y.svc.emitActivity(ActivityEvent{
+		ID:        "ytm-sync-playlists:" + y.id,
+		LibraryID: y.id,
+		Kind:      "sync",
+		Title:     "Playlists",
+		Detail:    "Syncing playlists",
+		State:     "running",
+	})
 	playlists, err := y.syncAccountPlaylists(ctx, ops)
 	if err != nil {
+		y.svc.emitActivity(ActivityEvent{
+			ID:        "ytm-sync-playlists:" + y.id,
+			LibraryID: y.id,
+			Kind:      "sync",
+			Title:     "Playlists",
+			Detail:    err.Error(),
+			State:     "error",
+		})
 		return nil, err
 	}
+	y.svc.emitActivity(ActivityEvent{
+		ID:        "ytm-sync-playlists:" + y.id,
+		LibraryID: y.id,
+		Kind:      "sync",
+		Title:     "Playlists",
+		Detail:    fmt.Sprintf("%d playlists", len(playlists)),
+		Done:      len(playlists),
+		Total:     len(playlists),
+		State:     "done",
+	})
 	y.svc.refreshLibraryCover(y.id)
 	return playlists, nil
 }
@@ -1027,6 +1078,18 @@ func (y *ytmSource) hydrateRemainingPlaylists(ctx context.Context, playlists []l
 		return
 	}
 
+	limit := min(len(stale), 50)
+	for _, pl := range stale[:limit] {
+		y.svc.emitActivity(ActivityEvent{
+			ID:        "ytm-hydrate:" + pl.RemoteID,
+			LibraryID: y.id,
+			Kind:      "hydrate",
+			Title:     firstNonEmpty(pl.Name, "Playlist"),
+			Detail:    "Queued",
+			State:     "running",
+		})
+	}
+
 	work := make(chan library.Playlist)
 	var wg sync.WaitGroup
 	workers := ytmHydrateWorkers
@@ -1038,8 +1101,46 @@ func (y *ytmSource) hydrateRemainingPlaylists(ctx context.Context, playlists []l
 		go func() {
 			defer wg.Done()
 			for pl := range work {
-				if err := y.hydratePlaylist(ctx, pl); err == nil {
+				actID := "ytm-hydrate:" + pl.RemoteID
+				actTitle := firstNonEmpty(pl.Name, "Playlist")
+				y.svc.emitActivity(ActivityEvent{
+					ID:        actID,
+					LibraryID: y.id,
+					Kind:      "hydrate",
+					Title:     actTitle,
+					Detail:    "Hydrating tracks",
+					State:     "running",
+				})
+				err := y.hydratePlaylist(ctx, pl)
+				switch {
+				case err == nil:
+					y.svc.emitActivity(ActivityEvent{
+						ID:        actID,
+						LibraryID: y.id,
+						Kind:      "hydrate",
+						Title:     actTitle,
+						Detail:    "Synced",
+						State:     "done",
+					})
 					y.svc.emit(eventLibrary, LibraryProgress{LibraryID: y.id, State: "ready"})
+				case ctx.Err() != nil:
+					y.svc.emitActivity(ActivityEvent{
+						ID:        actID,
+						LibraryID: y.id,
+						Kind:      "hydrate",
+						Title:     actTitle,
+						Detail:    "Stopped",
+						State:     "done",
+					})
+				default:
+					y.svc.emitActivity(ActivityEvent{
+						ID:        actID,
+						LibraryID: y.id,
+						Kind:      "hydrate",
+						Title:     actTitle,
+						Detail:    err.Error(),
+						State:     "error",
+					})
 				}
 			}
 		}()
@@ -1108,12 +1209,15 @@ func (y *ytmSource) hydratePlaylist(ctx context.Context, pl library.Playlist) er
 	if err != nil {
 		return err
 	}
-	rows, _, err := ops.loadPlaylist(ctx, pl.RemoteID)
+	rows, remoteName, err := ops.loadPlaylist(ctx, pl.RemoteID)
 	if err != nil {
 		if errors.Is(err, ytm.ErrSessionExpired) {
 			y.svc.authExpired.Store(true)
 		}
 		return err
+	}
+	if remoteName = strings.TrimSpace(remoteName); remoteName != "" && remoteName != pl.Name && !isYTMBuiltInLikedID(pl.RemoteID) {
+		_ = y.store.RenamePlaylist(y.id, pl.ID, remoteName)
 	}
 
 	y.svc.enrichYTMResults(ctx, rows)
@@ -1163,29 +1267,65 @@ func (y *ytmSource) importPlaylist(ctx context.Context, hit YTMResult) (YTMImpor
 	if rid == "" {
 		return YTMImport{}, fmt.Errorf("ytm: %q has no playlist id", hit.Title)
 	}
+	actID := "ytm-import:" + rid
+	actTitle := activityPlaylistTitle(hit.Title, "Playlist")
+	emitErr := func(err error) {
+		y.svc.emitActivity(ActivityEvent{
+			ID:        actID,
+			LibraryID: y.id,
+			Kind:      "import",
+			Title:     actTitle,
+			Detail:    err.Error(),
+			State:     "error",
+		})
+	}
+	y.svc.emitActivity(ActivityEvent{
+		ID:        actID,
+		LibraryID: y.id,
+		Kind:      "import",
+		Title:     actTitle,
+		Detail:    "Saving to YouTube Music",
+		State:     "running",
+	})
+
 	ops, err := y.signedInOps()
 	if err != nil {
+		emitErr(err)
 		return YTMImport{}, err
 	}
 	if ops.setPlaylistSaved == nil {
-		return YTMImport{}, fmt.Errorf("ytm: saving playlists is not available")
+		err := fmt.Errorf("ytm: saving playlists is not available")
+		emitErr(err)
+		return YTMImport{}, err
 	}
 	if err := ops.setPlaylistSaved(y.syncCtx(ctx), rid, true); err != nil {
 		if errors.Is(err, ytm.ErrSessionExpired) {
 			y.svc.authExpired.Store(true)
 		}
+		emitErr(err)
 		return YTMImport{}, err
 	}
+
+	y.svc.emitActivity(ActivityEvent{
+		ID:        actID,
+		LibraryID: y.id,
+		Kind:      "import",
+		Title:     actTitle,
+		Detail:    "Loading tracks",
+		State:     "running",
+	})
 
 	name := firstNonEmpty(strings.TrimSpace(hit.Title), "Untitled playlist")
 	row, err := y.store.UpsertRemotePlaylist(y.id, name, rid, false)
 	if err != nil {
+		emitErr(err)
 		return YTMImport{}, err
 	}
 	if cid := y.svc.storeYTMCover(hit.Thumbnail); cid != "" {
 		_ = y.store.SetPlaylistCover(row.ID, cid, false)
 	}
 	if err := y.hydratePlaylist(y.syncCtx(ctx), row); err != nil {
+		emitErr(err)
 		return YTMImport{}, err
 	}
 
@@ -1198,6 +1338,16 @@ func (y *ytmSource) importPlaylist(ctx context.Context, hit YTMResult) (YTMImpor
 	}
 	y.svc.refreshLibraryCover(y.id)
 	y.svc.emit(eventLibrary, LibraryProgress{LibraryID: y.id, Done: count, Total: count, State: "ready"})
+	y.svc.emitActivity(ActivityEvent{
+		ID:        actID,
+		LibraryID: y.id,
+		Kind:      "import",
+		Title:     name,
+		Detail:    fmt.Sprintf("%d tracks", count),
+		Done:      count,
+		Total:     count,
+		State:     "done",
+	})
 	return YTMImport{PlaylistID: row.ID, Name: name, Tracks: count}, nil
 }
 
@@ -1313,6 +1463,38 @@ func (s *PlayerService) ImportYTMSong(libraryID string, hit YTMResult, to YTMSon
 	}
 	hit.VideoID = vid
 	ref := library.RemoteRef(library.KindYTM, vid)
+	actID := "ytm-import-song:" + vid
+	actTitle := firstNonEmpty(strings.TrimSpace(hit.Title), "Song")
+	emitSongErr := func(err error) {
+		s.emitActivity(ActivityEvent{
+			ID:        actID,
+			LibraryID: libraryID,
+			Kind:      "import",
+			Title:     actTitle,
+			Detail:    err.Error(),
+			State:     "error",
+		})
+	}
+	emitSongDone := func(detail string, done, total int) {
+		s.emitActivity(ActivityEvent{
+			ID:        actID,
+			LibraryID: libraryID,
+			Kind:      "import",
+			Title:     actTitle,
+			Detail:    detail,
+			Done:      done,
+			Total:     total,
+			State:     "done",
+		})
+	}
+	s.emitActivity(ActivityEvent{
+		ID:        actID,
+		LibraryID: libraryID,
+		Kind:      "import",
+		Title:     actTitle,
+		Detail:    "Adding to YouTube Music",
+		State:     "running",
+	})
 
 	cacheTrack := func() {
 		single := []YTMResult{hit}
@@ -1325,16 +1507,19 @@ func (s *PlayerService) ImportYTMSong(libraryID string, hit YTMResult, to YTMSon
 	case to.Liked:
 		ops, err := ytmSrc.signedInOps()
 		if err != nil {
+			emitSongErr(err)
 			return YTMImport{}, err
 		}
 		if err := ops.setSongLiked(ytmSrc.syncCtx(s.ctx), vid, ytm.SongLikedStatusLiked); err != nil {
 			if errors.Is(err, ytm.ErrSessionExpired) {
 				s.authExpired.Store(true)
 			}
+			emitSongErr(err)
 			return YTMImport{}, err
 		}
 		cacheTrack()
 		if err := s.libStore.SetLiked(ref, true); err != nil {
+			emitSongErr(err)
 			return YTMImport{}, err
 		}
 		if lm, ok, err := s.libStore.PlaylistByRemoteID(libraryID, ytmLikedPlaylistRemoteID); err == nil && ok {
@@ -1343,12 +1528,14 @@ func (s *PlayerService) ImportYTMSong(libraryID string, hit YTMResult, to YTMSon
 		}
 		s.refreshLibraryCover(libraryID)
 		s.emit(eventLibrary, LibraryProgress{LibraryID: libraryID, Done: 1, Total: 1, State: "ready"})
+		emitSongDone("Added", 1, 1)
 		return YTMImport{Name: firstNonEmpty(strings.TrimSpace(hit.Title), "Liked Music"), Tracks: 1}, nil
 
 	case strings.TrimSpace(to.NewPlaylist) != "":
 		title := strings.TrimSpace(to.NewPlaylist)
 		ops, err := ytmSrc.signedInOps()
 		if err != nil {
+			emitSongErr(err)
 			return YTMImport{}, err
 		}
 		remoteID, err := ops.createPlaylist(ytmSrc.syncCtx(s.ctx), ytm.CreatePlaylistOptions{
@@ -1360,10 +1547,12 @@ func (s *PlayerService) ImportYTMSong(libraryID string, hit YTMResult, to YTMSon
 			if errors.Is(err, ytm.ErrSessionExpired) {
 				s.authExpired.Store(true)
 			}
+			emitSongErr(err)
 			return YTMImport{}, err
 		}
 		pl, err := s.libStore.UpsertRemotePlaylist(libraryID, title, remoteID, true)
 		if err != nil {
+			emitSongErr(err)
 			return YTMImport{}, err
 		}
 		cacheTrack()
@@ -1371,24 +1560,33 @@ func (s *PlayerService) ImportYTMSong(libraryID string, hit YTMResult, to YTMSon
 		s.refreshPlaylistCover(pl.ID)
 		s.refreshLibraryCover(libraryID)
 		s.emit(eventLibrary, LibraryProgress{LibraryID: libraryID, Done: 1, Total: 1, State: "ready"})
+		emitSongDone("Added", 1, 1)
 		return YTMImport{PlaylistID: pl.ID, Name: pl.Name, Tracks: 1}, nil
 
 	case strings.TrimSpace(to.PlaylistID) != "":
 		pl, err := ytmSrc.findPlaylist(to.PlaylistID)
 		if err != nil {
+			emitSongErr(err)
 			return YTMImport{}, err
 		}
 		if isYTMBuiltInLikedID(pl.RemoteID) {
-			return YTMImport{}, fmt.Errorf("ytm: Liked Music is managed through likes")
+			err := fmt.Errorf("ytm: Liked Music is managed through likes")
+			emitSongErr(err)
+			return YTMImport{}, err
 		}
 		if !pl.Owned {
-			return YTMImport{}, fmt.Errorf("ytm: this playlist belongs to another account")
+			err := fmt.Errorf("ytm: this playlist belongs to another account")
+			emitSongErr(err)
+			return YTMImport{}, err
 		}
 		if pl.RemoteID == "" {
-			return YTMImport{}, fmt.Errorf("ytm: playlist %q has no remote id", pl.Name)
+			err := fmt.Errorf("ytm: playlist %q has no remote id", pl.Name)
+			emitSongErr(err)
+			return YTMImport{}, err
 		}
 		ops, err := ytmSrc.signedInOps()
 		if err != nil {
+			emitSongErr(err)
 			return YTMImport{}, err
 		}
 		mode := ytm.DedupeAsk
@@ -1397,12 +1595,14 @@ func (s *PlayerService) ImportYTMSong(libraryID string, hit YTMResult, to YTMSon
 		}
 		err = ops.addSongsToPlaylist(ytmSrc.syncCtx(s.ctx), pl.RemoteID, []string{vid}, mode)
 		if errors.Is(err, ytm.ErrDuplicates) {
+			emitSongDone("Already in playlist", 0, 0)
 			return YTMImport{PlaylistID: pl.ID, Name: pl.Name, Duplicate: true}, nil
 		}
 		if err != nil {
 			if errors.Is(err, ytm.ErrSessionExpired) {
 				s.authExpired.Store(true)
 			}
+			emitSongErr(err)
 			return YTMImport{}, err
 		}
 		cacheTrack()
@@ -1410,9 +1610,12 @@ func (s *PlayerService) ImportYTMSong(libraryID string, hit YTMResult, to YTMSon
 		s.refreshPlaylistCover(pl.ID)
 		s.refreshLibraryCover(libraryID)
 		s.emit(eventLibrary, LibraryProgress{LibraryID: libraryID, Done: 1, Total: 1, State: "ready"})
+		emitSongDone("Added", 1, 1)
 		return YTMImport{PlaylistID: pl.ID, Name: pl.Name, Tracks: 1}, nil
 
 	default:
-		return YTMImport{}, fmt.Errorf("ytm: choose a destination for %q", hit.Title)
+		err := fmt.Errorf("ytm: choose a destination for %q", hit.Title)
+		emitSongErr(err)
+		return YTMImport{}, err
 	}
 }

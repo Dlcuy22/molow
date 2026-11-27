@@ -395,12 +395,12 @@ func TestYTMImportAndAddTargets(t *testing.T) {
 	}
 
 	// Importing a playlist into KindYTM saves it on YTM (owned=false) and hydrates tracks.
-	plRes, err := svc.ImportYTM(ytmLibID, YTMResult{VideoID: "VLPLimp", Title: "Imported", Kind: "Playlist"})
-	if err != nil || plRes.Tracks != 1 || len(savedCalls) != 1 || savedCalls[0] != "PLimp" {
+	plRes, err := svc.ImportYTM(ytmLibID, YTMResult{VideoID: "VLPLimp", Title: "Add YouTube Music playlist", Kind: "Playlist"})
+	if err != nil || plRes.Tracks != 1 || plRes.Name != "Remote Mix" || len(savedCalls) != 1 || savedCalls[0] != "PLimp" {
 		t.Fatalf("YTM playlist import = (%+v, %v), saved=%v", plRes, err, savedCalls)
 	}
-	if row, ok, _ := store.PlaylistByRemoteID(ytmLibID, "PLimp"); !ok || row.Owned {
-		t.Fatalf("expected imported foreign playlist owned=false, got (%+v, %v)", row, ok)
+	if row, ok, _ := store.PlaylistByRemoteID(ytmLibID, "PLimp"); !ok || row.Owned || row.Name != "Remote Mix" {
+		t.Fatalf("expected imported foreign playlist owned=false and remote name, got (%+v, %v)", row, ok)
 	}
 
 	// Importing a song into KindYTM asks the UI for a target.

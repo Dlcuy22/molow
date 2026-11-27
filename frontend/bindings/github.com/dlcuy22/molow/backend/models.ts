@@ -14,6 +14,20 @@ export interface AccountInfo {
 }
 
 /**
+ * ActivityEvent describes a single background or user-initiated library task.
+ */
+export interface ActivityEvent {
+    "id": string;
+    "libraryId": string;
+    "kind": string;
+    "title": string;
+    "detail"?: string;
+    "done"?: number;
+    "total"?: number;
+    "state": string;
+}
+
+/**
  * AppSettings is the persisted settings document. It is the whole file: a
  * version tag, the settings grouped by the panel's tabs, and the Discord
  * toggle alongside them. Only Playback has content today; the other groups are

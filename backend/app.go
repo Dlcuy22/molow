@@ -77,6 +77,7 @@ func Run(assets embed.FS) {
 	application.RegisterEvent[[]float64](eventFrame)
 	application.RegisterEvent[[]EffectMetersInfo](eventEffectMeters)
 	application.RegisterEvent[LibraryProgress](eventLibrary)
+	application.RegisterEvent[ActivityEvent](eventActivity)
 	application.RegisterEvent[string](eventLyrics)
 	application.RegisterEvent[AppSettings](eventSettings)
 

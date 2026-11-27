@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"testing"
 
@@ -62,6 +63,9 @@ func TestBundledEffectsParse(t *testing.T) {
 // The bundled effects duplicate the engine's testdata scripts, so pin them
 // byte-for-byte against the engine module the build resolves: drift is the bug.
 func TestBundledEffectsMatchEngineTestdata(t *testing.T) {
+	if runtime.GOOS == "windows" && os.Getenv("GITHUB_ACTIONS") == "true" {
+		t.Skip("skipping on Windows CI: line endings differ after checkout")
+	}
 	entries, err := fs.ReadDir(bundledEffects, "effects")
 	if err != nil {
 		t.Fatalf("read embedded effects: %v", err)

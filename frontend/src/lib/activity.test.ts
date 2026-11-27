@@ -5,6 +5,8 @@ import {
   activityStore,
   clearAllActivities,
   clearFinishedActivities,
+  dismissActivity,
+  formatCompletionMessage,
   resetActivities,
   spinnerStepMs,
   upsertActivity,
@@ -135,5 +137,68 @@ describe("activityStore", () => {
     item = get(activityStore)["ytm:1"]?.items[0];
     expect(item?.onRetry).toBeUndefined();
     expect(item?.retryLabel).toBeUndefined();
+  });
+
+  it("tracks completedAt on done, clears it on running, and formats completion messages", () => {
+    upsertActivity({
+      id: "h1",
+      libraryId: "ytm:1",
+      kind: "hydrate",
+      title: "capek :(",
+      detail: "Hydrating tracks",
+      state: "running",
+    });
+    expect(get(activityStore)["ytm:1"]?.items[0]?.completedAt).toBeUndefined();
+
+    upsertActivity({
+      id: "h1",
+      libraryId: "ytm:1",
+      kind: "hydrate",
+      title: "capek :(",
+      detail: "Synced",
+      state: "done",
+    });
+    const doneItem = get(activityStore)["ytm:1"]!.items[0]!;
+    expect(typeof doneItem.completedAt).toBe("number");
+    expect(formatCompletionMessage(doneItem, "9:23 AM")).toBe("Synced capek :( at 9:23 AM");
+    expect(formatCompletionMessage({ ...doneItem, kind: "import" }, "9:23 AM")).toBe(
+      "Imported capek :( at 9:23 AM",
+    );
+    expect(formatCompletionMessage({ ...doneItem, kind: "scan", title: "Music" }, "9:23 AM")).toBe(
+      "Scanned Music at 9:23 AM",
+    );
+    expect(formatCompletionMessage({ ...doneItem, detail: "Stopped" }, "9:23 AM")).toBe("Stopped");
+
+    upsertActivity({
+      id: "h1",
+      libraryId: "ytm:1",
+      kind: "hydrate",
+      title: "capek :(",
+      detail: "Hydrating tracks",
+      state: "running",
+    });
+    expect(get(activityStore)["ytm:1"]?.items[0]?.completedAt).toBeUndefined();
+  });
+
+  it("dismisses a single activity item without removing sibling items", () => {
+    upsertActivity({
+      id: "e1",
+      libraryId: "ytm:1",
+      kind: "import",
+      title: "Problem 1",
+      detail: "Failed",
+      state: "error",
+    });
+    upsertActivity({
+      id: "e2",
+      libraryId: "ytm:1",
+      kind: "import",
+      title: "Problem 2",
+      detail: "Failed",
+      state: "error",
+    });
+
+    dismissActivity("ytm:1", "e1");
+    expect(get(activityStore)["ytm:1"]?.items.map((x) => x.id)).toEqual(["e2"]);
   });
 });

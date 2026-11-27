@@ -2,11 +2,14 @@
   import { fade } from "svelte/transition";
   import CheckCircle from "phosphor-svelte/lib/CheckCircle";
   import WarningCircle from "phosphor-svelte/lib/WarningCircle";
+  import X from "phosphor-svelte/lib/X";
   import {
     ACTIVITY_COMPACT_LIMIT,
     ACTIVITY_MAX_ITEMS,
     activityStore,
     clearFinishedActivities,
+    dismissActivity,
+    formatCompletionMessage,
     spinnerStepMs,
   } from "../activity";
   import LoadingSpinner from "./LoadingSpinner.svelte";
@@ -45,6 +48,7 @@
   const hiddenCount = $derived(Math.max(0, items.length - ACTIVITY_COMPACT_LIMIT));
 
   const singleRunning = $derived(runningCount === 1 ? runningItems[0] : null);
+  const latestDone = $derived(items.find((item) => item.state === "done") ?? null);
   const triggerLabel = $derived.by(() => {
     if (runningCount === 1 && singleRunning) {
       return singleRunning.title;
@@ -57,7 +61,7 @@
     if (errorCount > 0) {
       return errorCount === 1 ? "You got a problem" : `You have ${errorCount} problems`;
     }
-    return "Done";
+    return latestDone ? formatCompletionMessage(latestDone) : "Done";
   });
 
   function splitRetryText(
@@ -176,7 +180,7 @@
   >
     <button
       type="button"
-      class="flex h-8 max-w-[240px] items-center gap-2 rounded-md border px-2.5 text-[12px] font-medium transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus {hasProblems
+      class="flex h-8 max-w-[300px] items-center gap-2 rounded-md border px-2.5 text-[12px] font-medium transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus {hasProblems
         ? 'border-danger/80 bg-surface text-[#f27468]'
         : 'border-line/60 bg-surface text-fg'}"
       aria-haspopup="dialog"
@@ -196,7 +200,7 @@
         <span class="truncate">{triggerLabel}</span>
       {:else}
         <CheckCircle size={14} weight="fill" class="shrink-0 text-muted" />
-        <span>{triggerLabel}</span>
+        <span class="truncate" title={triggerLabel}>{triggerLabel}</span>
       {/if}
     </button>
 
@@ -226,6 +230,7 @@
             {@const total = item.total ?? 0}
             {@const done = item.done ?? 0}
             {@const ratio = total > 0 ? Math.max(0, Math.min(1, done / total)) : 0}
+            {@const doneMessage = item.state === "done" ? formatCompletionMessage(item) : ""}
             {@const retryParts =
               item.state === "error" && item.onRetry && item.detail
                 ? splitRetryText(item.detail, item.retryLabel ?? "again")
@@ -245,7 +250,11 @@
                 <p class="truncate font-content text-[12px] font-medium leading-snug text-fg" title={item.title}>
                   {item.title}
                 </p>
-                {#if item.detail}
+                {#if item.state === "done"}
+                  <p class="mt-0.5 truncate text-[11px] leading-snug text-muted" title={doneMessage}>
+                    {doneMessage}
+                  </p>
+                {:else if item.detail}
                   <p
                     class="mt-0.5 leading-snug {item.state === 'error'
                       ? 'whitespace-normal break-words text-[11px] text-[#f27468]'
@@ -282,15 +291,32 @@
                 {/if}
               </div>
 
-              <span class="shrink-0 tabular-nums text-[11px] {item.state === 'error' ? 'text-[#f27468]' : 'text-muted'}">
+              <div class="flex shrink-0 items-center gap-1.5">
                 {#if total > 0}
-                  {done}/{total}
-                {:else if item.state === "done"}
-                  Done
-                {:else if item.state === "error"}
-                  Failed
+                  <span class="tabular-nums text-[11px] {item.state === 'error' ? 'text-[#f27468]' : 'text-muted'}">
+                    {done}/{total}
+                  </span>
                 {/if}
-              </span>
+                {#if item.state === "error"}
+                  <button
+                    type="button"
+                    class="grid size-6 shrink-0 place-items-center rounded text-muted transition-colors hover:bg-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+                    aria-label={`Dismiss ${item.title}`}
+                    title="Dismiss"
+                    onclick={() => {
+                      const willBeEmpty = items.length <= 1 && runningCount === 0;
+                      dismissActivity(libraryId, item.id);
+                      if (willBeEmpty) {
+                        pinned = false;
+                        hovered = false;
+                        lingerVisible = false;
+                      }
+                    }}
+                  >
+                    <X size={13} />
+                  </button>
+                {/if}
+              </div>
             </li>
           {/each}
         </ul>

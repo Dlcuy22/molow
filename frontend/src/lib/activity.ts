@@ -25,6 +25,20 @@ export interface ActivityEventPayload {
 
 export interface ActivityItem extends ActivityEventPayload {
   updatedAt: number;
+  completedAt?: number;
+}
+
+export function formatShortTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+export function formatCompletionMessage(item: ActivityItem, timeStr?: string): string {
+  if (item.detail === "Stopped" || item.detail === "Already in playlist") {
+    return item.detail;
+  }
+  const verb = item.kind === "import" ? "Imported" : item.kind === "scan" ? "Scanned" : "Synced";
+  const at = timeStr ?? (item.completedAt ? formatShortTime(item.completedAt) : "");
+  return at ? `${verb} ${item.title} at ${at}` : `${verb} ${item.title}`;
 }
 
 export interface LibraryActivityState {
@@ -110,6 +124,9 @@ export function upsertActivity(payload: ActivityEventPayload): void {
         total: payload.total ?? existing?.total,
         state: payload.state,
         updatedAt: stamp,
+        ...(payload.state === "done"
+          ? { completedAt: existing?.completedAt ?? Date.now() }
+          : {}),
       };
     } else {
       nextItem = {
@@ -173,6 +190,27 @@ export function clearAllActivities(libraryId: string): void {
     return {
       ...all,
       [libraryId]: { items: [], batchPeak: 0 },
+    };
+  });
+}
+
+export function dismissActivity(libraryId: string, id: string): void {
+  if (!libraryId || !id) {
+    return;
+  }
+  activityStore.update((all) => {
+    const prev = all[libraryId];
+    if (!prev) {
+      return all;
+    }
+    const items = prev.items.filter((item) => item.id !== id);
+    const runningCount = items.filter((item) => item.state === "running").length;
+    return {
+      ...all,
+      [libraryId]: {
+        items,
+        batchPeak: runningCount === 0 ? 0 : Math.max(prev.batchPeak, runningCount),
+      },
     };
   });
 }

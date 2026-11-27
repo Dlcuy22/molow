@@ -3,14 +3,19 @@
   import { fade } from "svelte/transition";
   import { Browser } from "@wailsio/runtime";
   import CaretDown from "phosphor-svelte/lib/CaretDown";
+  import CornersOut from "phosphor-svelte/lib/CornersOut";
   import MusicNote from "phosphor-svelte/lib/MusicNote";
   import Pause from "phosphor-svelte/lib/Pause";
   import Play from "phosphor-svelte/lib/Play";
+  import Queue from "phosphor-svelte/lib/Queue";
   import Repeat from "phosphor-svelte/lib/Repeat";
   import RepeatOnce from "phosphor-svelte/lib/RepeatOnce";
   import Shuffle from "phosphor-svelte/lib/Shuffle";
   import SkipBack from "phosphor-svelte/lib/SkipBack";
   import SkipForward from "phosphor-svelte/lib/SkipForward";
+  import SlidersHorizontal from "phosphor-svelte/lib/SlidersHorizontal";
+  import Translate from "phosphor-svelte/lib/Translate";
+  import Waveform from "phosphor-svelte/lib/Waveform";
   import type { Snapshot } from "../../bindings/github.com/dlcuy22/molow/backend/models";
   import type { Lyrics, LyricLine, LyricWord } from "../lib/types";
   import { commands, spectrumConfig, appSettings } from "../lib/store";
@@ -526,6 +531,15 @@
     if (!open) wakeCursor();
     return () => clearTimeout(cursorTimer);
   });
+
+  // TODO: wire album player tool actions once their behavior is defined.
+  const toolSlots = [
+    { id: "lyrics-translate", label: "Lyrics translation (coming soon)", icon: Translate },
+    { id: "visualizer", label: "Visualizer (coming soon)", icon: Waveform },
+    { id: "effects", label: "Audio effects (coming soon)", icon: SlidersHorizontal },
+    { id: "queue", label: "Queue (coming soon)", icon: Queue },
+    { id: "fullscreen", label: "Fullscreen (coming soon)", icon: CornersOut },
+  ] as const;
 </script>
 
 <svelte:window
@@ -827,6 +841,25 @@
       </div>
     {/if}
   {/if}
+
+  <div
+    class="absolute right-[13px] bottom-[13px] z-20 grid h-[45px] w-[180px] grid-cols-5 items-center rounded-full bg-surface/30 px-1.5"
+    role="toolbar"
+    aria-label="Player tools"
+  >
+    {#each toolSlots as tool (tool.id)}
+      {@const Icon = tool.icon}
+      <button
+        type="button"
+        class="dock-btn grid h-9 w-full place-items-center rounded-full text-fg/80 transition-colors hover:bg-hover/80 hover:text-fg focus-visible:ring-2 focus-visible:ring-focus"
+        aria-label={tool.label}
+        aria-disabled="true"
+        title="Coming soon"
+      >
+        <Icon size={21} weight="regular" />
+      </button>
+    {/each}
+  </div>
 </div>
 
 <style>

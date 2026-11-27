@@ -152,7 +152,10 @@ function libraryItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
   const kind = deps.libraryKindFor?.(id) ?? "local";
   const isRemote = kind !== "" && kind !== "local";
   const refreshLabel = isRemote ? "Refresh library" : "Rescan files";
-  const auth = isRemote ? deps.libraryStatusFor?.(id) : undefined;
+  // Auth (Sign in / Sign out) is only relevant for YTM libraries; Navidrome
+  // uses CredentialStore and has no OAuth session flow.
+  const isYTM = kind === "ytm";
+  const auth = isYTM ? deps.libraryStatusFor?.(id) : undefined;
 
   const items: MenuItem[] = [
     { kind: "item", label: "Open", run: () => deps.openLibrary(id) },
@@ -160,7 +163,7 @@ function libraryItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
     { kind: "item", label: refreshLabel, run: () => deps.rescanLibrary(id) },
   ];
 
-  if (isRemote && auth) {
+  if (isYTM && auth) {
     if ((auth.expired || !auth.signedIn) && deps.reSignInLibrary) {
       items.push({
         kind: "item",

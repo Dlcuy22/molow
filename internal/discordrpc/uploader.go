@@ -26,6 +26,7 @@ import (
 	"log/slog"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -290,16 +291,40 @@ func (u *ImageUploader) UploadImage(raw []byte, mime string) (string, error) {
 		return "", fmt.Errorf("upload API returned no url (status=%q)", parsed.Status)
 	}
 
+	pageURL, err := validateTmpfilesURL(parsed.Data.URL)
+	if err != nil {
+		return "", fmt.Errorf("upload API returned invalid url: %w", err)
+	}
+
 	// tmpfiles.org serves the raw file only at a timestamped download link;
 	// the page URL returns HTML, which Discord will not render. Scrape the real
 	// href, and fall back to the legacy /dl/ rewrite if the page changes.
-	if url, err := u.scrapeDownloadURL(parsed.Data.URL); err == nil {
-		return url, nil
+	if dlURL, err := u.scrapeDownloadURL(pageURL); err == nil {
+		return dlURL, nil
 	}
 
-	url := strings.Replace(parsed.Data.URL, "org/", "org/dl/", 1)
+	fallback := strings.Replace(pageURL, "org/", "org/dl/", 1)
 
-	return strings.Replace(url, "http://", "https://", 1), nil
+	return validateTmpfilesURL(fallback)
+}
+
+func validateTmpfilesURL(raw string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", fmt.Errorf("invalid url: %w", err)
+	}
+	if u.Scheme == "http" {
+		u.Scheme = "https"
+	}
+	if u.Scheme != "https" {
+		return "", fmt.Errorf("unsupported scheme %q", u.Scheme)
+	}
+	host := strings.ToLower(u.Hostname())
+	if host != "tmpfiles.org" && !strings.HasSuffix(host, ".tmpfiles.org") {
+		return "", fmt.Errorf("unexpected host %q", host)
+	}
+
+	return u.String(), nil
 }
 
 var dlHrefRe = regexp.MustCompile(`href="([^"]*dl/[^"]+)"`)
@@ -330,11 +355,16 @@ func (u *ImageUploader) scrapeDownloadURL(pageURL string) (string, error) {
 	}
 
 	dl := string(m[1])
-	if !strings.HasPrefix(dl, "http") {
+	if strings.HasPrefix(dl, "//") {
+		dl = "https:" + dl
+	} else if !strings.HasPrefix(dl, "http") {
+		if !strings.HasPrefix(dl, "/") {
+			dl = "/" + dl
+		}
 		dl = "https://tmpfiles.org" + dl
 	}
 
-	return strings.Replace(dl, "http://", "https://", 1), nil
+	return validateTmpfilesURL(dl)
 }
 
 // load reads the persisted hash-to-url map. A missing or corrupt file is

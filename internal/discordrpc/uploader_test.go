@@ -220,3 +220,34 @@ func TestEncodeThumbBoundsTheUpload(t *testing.T) {
 		t.Fatalf("bounds = %dx%d, want both <= %d", b.Dx(), b.Dy(), artwork.MaxEdge)
 	}
 }
+
+func TestValidateTmpfilesURL(t *testing.T) {
+	valid := []struct {
+		in   string
+		want string
+	}{
+		{"https://tmpfiles.org/dl/123/art.jpg", "https://tmpfiles.org/dl/123/art.jpg"},
+		{"http://tmpfiles.org/123/art.jpg", "https://tmpfiles.org/123/art.jpg"},
+		{"https://cdn.tmpfiles.org/dl/123/art.jpg", "https://cdn.tmpfiles.org/dl/123/art.jpg"},
+	}
+	for _, tc := range valid {
+		got, err := validateTmpfilesURL(tc.in)
+		if err != nil || got != tc.want {
+			t.Fatalf("validateTmpfilesURL(%q) = (%q, %v), want (%q, nil)", tc.in, got, err, tc.want)
+		}
+	}
+
+	invalid := []string{
+		"",
+		"javascript:alert(1)",
+		"file:///etc/passwd",
+		"https://evil.example/dl/123/art.jpg",
+		"https://nottmpfiles.org/dl/123/art.jpg",
+		"https://127.0.0.1/dl/123/art.jpg",
+	}
+	for _, raw := range invalid {
+		if got, err := validateTmpfilesURL(raw); err == nil {
+			t.Fatalf("validateTmpfilesURL(%q) = %q, want error", raw, got)
+		}
+	}
+}

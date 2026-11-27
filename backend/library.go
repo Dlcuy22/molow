@@ -18,6 +18,7 @@ import (
 	"github.com/dlcuy22/molow/internal/color"
 	"github.com/dlcuy22/molow/internal/library"
 	"github.com/dlcuy22/molow/internal/library/local"
+	ndlib "github.com/dlcuy22/molow/internal/library/navidrome"
 	"github.com/dlcuy22/molow/internal/library/sqlite"
 	"github.com/dlcuy22/molow/internal/lyrics"
 	ytm "github.com/dlcuy22/ytm-go"
@@ -595,6 +596,9 @@ func (s *PlayerService) RescanLibrary(id string) error {
 		}
 		s.triggerYTMSync(id, syncTriggerManual)
 		return nil
+	}
+	if ndSrc, isND := src.(*ndlib.Source); isND {
+		return s.triggerNavidromeSync(id, ndSrc)
 	}
 	if _, isLocal := src.(*local.Local); !isLocal {
 		return fmt.Errorf("library: %q cannot refresh", id)
@@ -1188,7 +1192,7 @@ func (s *PlayerService) backfillYTMTrackMeta(ref, thumbnailURL, artistID, album 
 
 func (s *PlayerService) resolveRemoteLikeTarget(path string) (library.Likable, string, bool) {
 	kind, libID, nativeID, ok := library.ParseRemoteRef(path)
-	if !ok || kind != library.KindYTM || nativeID == "" {
+	if !ok || (kind != library.KindYTM && kind != library.KindNavidrome) || nativeID == "" {
 		return nil, "", false
 	}
 	if libID == "" {
@@ -1197,7 +1201,16 @@ func (s *PlayerService) resolveRemoteLikeTarget(path string) (library.Likable, s
 		if !exists {
 			return nil, "", false
 		}
-		if _, isYTM := src.(*ytmSource); !isYTM {
+		switch kind {
+		case library.KindYTM:
+			if _, isYTM := src.(*ytmSource); !isYTM {
+				return nil, "", false
+			}
+		case library.KindNavidrome:
+			if _, isND := src.(*ndlib.Source); !isND {
+				return nil, "", false
+			}
+		default:
 			return nil, "", false
 		}
 		libID = activeID

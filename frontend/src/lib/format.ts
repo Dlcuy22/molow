@@ -59,14 +59,19 @@ export function subtitle(artist: string, album: string): string {
  * place that has to learn about a second one.
  */
 export function isRemoteRef(path: string): boolean {
-  return path.startsWith("ytm:");
+  return path.startsWith("ytm:") || path.startsWith("navidrome:");
 }
 
 /** ytmVideoId reads the video id out of a remote reference, or "" when the path
  *  is not a YouTube Music reference. The prefix length lives here so the
  *  watch-link builder and any other consumer stay in step. */
 export function ytmVideoId(path: string): string {
-  return isRemoteRef(path) ? path.slice("ytm:".length) : "";
+  if (!path.startsWith("ytm:")) {
+    return "";
+  }
+  const rest = path.slice("ytm:".length);
+  const sep = rest.indexOf(":");
+  return sep >= 0 ? rest.slice(sep + 1) : rest;
 }
 
 /** displayArtist drops the " - Topic" suffix YouTube's auto-generated artist

@@ -1097,3 +1097,50 @@ func (s *Store) TouchScan(libraryID string) error {
 
 	return err
 }
+
+// DeleteMissingRemoteTracks removes remote tracks in libraryID of kind whose
+// native_id is absent from keepNativeIDs.
+func (s *Store) DeleteMissingRemoteTracks(libraryID string, kind library.Kind, keepNativeIDs map[string]struct{}) error {
+	rows, err := s.db.Query(
+		`SELECT id, native_id FROM track WHERE library_id = ? AND kind = ?`,
+		libraryID, string(kind),
+	)
+	if err != nil {
+		return err
+	}
+	var dropIDs []int64
+	for rows.Next() {
+		var id int64
+		var nativeID string
+		if err := rows.Scan(&id, &nativeID); err != nil {
+			_ = rows.Close()
+
+			return err
+		}
+		if _, keep := keepNativeIDs[nativeID]; !keep {
+			dropIDs = append(dropIDs, id)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(dropIDs) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, id := range dropIDs {
+		if _, err := tx.Exec(`DELETE FROM track WHERE id = ?`, id); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}

@@ -115,14 +115,16 @@
     if (!library || library.kind === "local") {
       return "";
     }
-    if (authStatus?.expired) {
-      return "Session expired. Re-sign in to refresh this library.";
-    }
-    if (library.status === "signedOut" || (authStatus && !authStatus.signedIn)) {
-      return "Signed out of YouTube Music. Sign in to refresh this library.";
-    }
-    if (authStatus?.error) {
-      return authStatus.error;
+    if (library.kind === "ytm") {
+      if (authStatus?.expired) {
+        return "Session expired. Re-sign in to refresh this library.";
+      }
+      if (library.status === "signedOut" || (authStatus && !authStatus.signedIn)) {
+        return "Signed out of YouTube Music. Sign in to refresh this library.";
+      }
+      if (authStatus?.error) {
+        return authStatus.error;
+      }
     }
     return "";
   });

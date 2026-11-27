@@ -27,6 +27,7 @@ export type {
     LogFileClear,
     LyricsCacheClear,
     LyricsSettings,
+    NavidromeConfigInfo,
     Options,
     PlaybackSettings,
     PresetImportResult,

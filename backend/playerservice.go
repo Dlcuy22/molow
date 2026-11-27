@@ -191,6 +191,8 @@ type PlayerService struct {
 	credStore      *CredentialStore
 	ytmMgrMu       sync.Mutex
 	ytmMgr         *ytmManager
+	ndMgrMu        sync.Mutex
+	ndMgr          *navidromeManager
 	sources        *audioRouter
 	playbackObs    playbackTracker
 	ytmOpsOverride func(*ytmAccountOps)
@@ -289,12 +291,22 @@ func (s *PlayerService) ytmManager() *ytmManager {
 	return s.ytmMgr
 }
 
+func (s *PlayerService) navidromeManager() *navidromeManager {
+	s.ndMgrMu.Lock()
+	defer s.ndMgrMu.Unlock()
+	if s.ndMgr == nil {
+		s.ndMgr = newNavidromeManager(s)
+	}
+	return s.ndMgr
+}
+
 func (s *PlayerService) ensureSourceRouter() *audioRouter {
 	if s.sources == nil {
 		s.sources = newAudioRouter()
 	}
 	s.sources.Register(newLocalAdapter(s))
 	s.sources.Register(s.ytmManager())
+	s.sources.Register(s.navidromeManager())
 	return s.sources
 }
 
@@ -831,6 +843,13 @@ func (s *PlayerService) snapshotMeta(snap molo.Snapshot, rows []QueueRow) (title
 			artist = firstNonEmpty(artist, t.Artist)
 			album = firstNonEmpty(album, t.Album)
 		}
+	} else if isNavidromeRef(snap.Path) {
+		if tr, ok := s.catalogNavidromeTrack(snap.Path); ok {
+			title = firstNonEmpty(title, tr.Title)
+			artist = firstNonEmpty(artist, tr.Artist)
+			album = firstNonEmpty(album, tr.Album)
+			coverID = firstNonEmpty(coverID, tr.CoverID)
+		}
 	} else {
 		tags := s.index.lookup(snap.Path)
 		if tags.Title == "" && tags.CoverID == "" {
@@ -876,11 +895,15 @@ func (s *PlayerService) snapshotCoverID(snap molo.Snapshot) string {
 
 			return cat.CoverID
 		}
+	} else if isNavidromeRef(snap.Path) {
+		if tr, ok := s.catalogNavidromeTrack(snap.Path); ok && tr.CoverID != "" && (s.art == nil || s.art.Has(tr.CoverID)) {
+			return tr.CoverID
+		}
 	}
 	if cid := artwork.ID(snap.Meta.Tags.Cover); cid != "" {
 		return cid
 	}
-	if snap.Path != "" && !isYTMRef(snap.Path) {
+	if snap.Path != "" && !isYTMRef(snap.Path) && !isNavidromeRef(snap.Path) {
 		if tags := s.index.lookup(snap.Path); tags.CoverID != "" {
 			return tags.CoverID
 		}
@@ -987,6 +1010,14 @@ func (s *PlayerService) QueueCover(path string) string {
 	// catalogue, already fetched when the row was added or the track opened.
 	if isYTMRef(path) {
 		return s.ytmCover(path)
+	}
+	if isNavidromeRef(path) {
+		if tr, ok := s.catalogNavidromeTrack(path); ok && tr.CoverID != "" && s.art != nil {
+			if url, ok := s.art.DataURL(tr.CoverID); ok {
+				return url
+			}
+		}
+		return ""
 	}
 
 	tags := s.index.lookup(path)
@@ -1937,6 +1968,17 @@ func (s *PlayerService) queueRows(paths []string, active int) []QueueRow {
 				}
 			}
 			rows[i] = ytmQueueRow(i, p, active, s.ytm)
+			continue
+		}
+		if isNavidromeRef(p) {
+			row := QueueRow{Index: i, Path: p, Active: i == active}
+			if tr, ok := s.catalogNavidromeTrack(p); ok {
+				row.Title = tr.Title
+				row.Artist = tr.Artist
+				row.Album = tr.Album
+				row.CoverID = tr.CoverID
+			}
+			rows[i] = row
 			continue
 		}
 		tags := s.index.lookup(p)

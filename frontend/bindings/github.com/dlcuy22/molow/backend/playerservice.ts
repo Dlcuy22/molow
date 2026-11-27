@@ -39,6 +39,14 @@ export function AddEffect(kind: string, impl: string): $CancellablePromise<strin
     return $Call.ByID(532102897, kind, impl);
 }
 
+/**
+ * AddNavidromeLibrary tests the connection, encrypts the password into
+ * CredentialStore, registers the library row, and starts an initial sync.
+ */
+export function AddNavidromeLibrary(name: string, description: string, serverURL: string, username: string, password: string): $CancellablePromise<library$0.Library> {
+    return $Call.ByID(2194448368, name, description, serverURL, username, password);
+}
+
 export function AddToPlaylist(libraryID: string, playlistID: string, refs: string[] | null): $CancellablePromise<void> {
     return $Call.ByID(3005025319, libraryID, playlistID, refs);
 }
@@ -268,6 +276,14 @@ export function EffectPresets(impl: string): $CancellablePromise<$models.EffectP
  */
 export function EffectWindowOpen(): $CancellablePromise<boolean> {
     return $Call.ByID(2250059916);
+}
+
+/**
+ * GetNavidromeConfig returns the non-secret server URL and username for an
+ * existing Navidrome library so the edit dialog can prefill them.
+ */
+export function GetNavidromeConfig(id: string): $CancellablePromise<$models.NavidromeConfigInfo> {
+    return $Call.ByID(4099109502, id);
 }
 
 /**
@@ -822,6 +838,14 @@ export function Stop(): $CancellablePromise<void> {
 }
 
 /**
+ * TestNavidromeConnection verifies that serverURL, username, and password can
+ * authenticate against a Subsonic/Navidrome server.
+ */
+export function TestNavidromeConnection(serverURL: string, username: string, password: string): $CancellablePromise<void> {
+    return $Call.ByID(2842156374, serverURL, username, password);
+}
+
+/**
  * ToggleLike flips a like for a catalogued ref and returns the new state.
  */
 export function ToggleLike(path: string): $CancellablePromise<boolean> {
@@ -841,6 +865,14 @@ export function TogglePause(): $CancellablePromise<void> {
  */
 export function UpdateLibrary(id: string, name: string, description: string): $CancellablePromise<library$0.Library> {
     return $Call.ByID(2641423699, id, name, description);
+}
+
+/**
+ * UpdateNavidromeLibrary updates metadata and/or server credentials for an
+ * existing Navidrome library. An empty password preserves the stored password.
+ */
+export function UpdateNavidromeLibrary(id: string, name: string, description: string, serverURL: string, username: string, password: string): $CancellablePromise<library$0.Library> {
+    return $Call.ByID(468020184, id, name, description, serverURL, username, password);
 }
 
 /**

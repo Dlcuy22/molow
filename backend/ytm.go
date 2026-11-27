@@ -1592,6 +1592,7 @@ type ytmStreamBuffer struct {
 	mu          sync.Mutex
 	cond        *sync.Cond
 	id          string
+	ext         string
 	tracks      *trackcache.Store
 	log         *slog.Logger
 	dir         string
@@ -1710,7 +1711,15 @@ func (b *ytmStreamBuffer) maybeFinalizeLocked() (bool, int64) {
 		return false, 0
 	}
 	if b.err == nil && b.verified && b.tracks != nil && b.written > 0 {
-		promoted, err := b.tracks.CommitFile(b.id, b.path)
+		var (
+			promoted bool
+			err      error
+		)
+		if b.ext != "" {
+			promoted, err = b.tracks.CommitFileExt(b.id, b.ext, b.path)
+		} else {
+			promoted, err = b.tracks.CommitFile(b.id, b.path)
+		}
 		if err != nil {
 			if b.log != nil {
 				b.log.Warn("trackcache: store failed", "id", b.id, "error", err)

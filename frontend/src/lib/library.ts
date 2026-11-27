@@ -7,7 +7,13 @@ import { Events } from "@wailsio/runtime";
 import CheckCircle from "phosphor-svelte/lib/CheckCircle";
 import WarningCircle from "phosphor-svelte/lib/WarningCircle";
 import { PlayerService } from "../../bindings/github.com/dlcuy22/molow/backend";
-import type { YTMAddTarget, YTMImport, YTMResult, YTMSongTarget } from "../../bindings/github.com/dlcuy22/molow/backend/models";
+import type {
+  NavidromeConfigInfo,
+  YTMAddTarget,
+  YTMImport,
+  YTMResult,
+  YTMSongTarget,
+} from "../../bindings/github.com/dlcuy22/molow/backend/models";
 import type {
   Album as GenAlbum,
   Artist as GenArtist,
@@ -580,6 +586,68 @@ export async function updateLibrary(
     return { info, error: "" };
   } catch (err) {
     return { info: null, error: libraryErrorText(err, "Could not update that library") };
+  }
+}
+
+export async function testNavidromeConnection(
+  serverUrl: string,
+  username: string,
+  password: string,
+): Promise<string> {
+  try {
+    await PlayerService.TestNavidromeConnection(serverUrl, username, password);
+    return "";
+  } catch (err) {
+    return libraryErrorText(err, "Could not connect to Navidrome server");
+  }
+}
+
+export async function getNavidromeConfig(id: string): Promise<NavidromeConfigInfo> {
+  return await PlayerService.GetNavidromeConfig(id);
+}
+
+export async function addNavidromeLibrary(
+  name: string,
+  description: string,
+  serverUrl: string,
+  username: string,
+  password: string,
+): Promise<{ info: LibraryInfo | null; error: string }> {
+  try {
+    const info = toInfo(
+      await PlayerService.AddNavidromeLibrary(name, description, serverUrl, username, password),
+    );
+    invalidateLibraryCache(info.id);
+    await refreshLibraries();
+    closePlaylist();
+    setActiveLibraryId(info.id);
+    await Promise.all([loadHome(), loadLibrary("all", { force: true })]);
+
+    return { info, error: "" };
+  } catch (err) {
+    return { info: null, error: libraryErrorText(err, "Could not add Navidrome library") };
+  }
+}
+
+export async function updateNavidromeLibrary(
+  id: string,
+  name: string,
+  description: string,
+  serverUrl: string,
+  username: string,
+  password: string,
+): Promise<{ info: LibraryInfo | null; error: string }> {
+  try {
+    const info = toInfo(
+      await PlayerService.UpdateNavidromeLibrary(id, name, description, serverUrl, username, password),
+    );
+    invalidateLibraryCache(info.id);
+    await refreshLibraries();
+    await Promise.all([loadHome(), loadLibrary("all", { force: true })]);
+
+    return { info, error: "" };
+  } catch (err) {
+    return { info: null, error: libraryErrorText(err, "Could not update Navidrome library") };
   }
 }
 

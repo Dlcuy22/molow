@@ -12,11 +12,12 @@
   } from "../auth";
   import type { LibraryInfo } from "../types";
 
-  type LibraryKindOption = "local" | "ytm";
+  type LibraryKindOption = "local" | "ytm" | "navidrome";
 
   const LIBRARY_TYPES: { value: LibraryKindOption; label: string }[] = [
     { value: "local", label: "Local" },
     { value: "ytm", label: "YouTube Music" },
+    { value: "navidrome", label: "Navidrome" },
   ];
 
   let {
@@ -24,8 +25,12 @@
     initialKind = "local",
     initialName = "",
     initialDescription = "",
+    initialServerUrl = "",
+    initialUsername = "",
     busy = false,
     error = "",
+    ontest,
+    onsubmitnavidrome,
     onsubmit,
     oncreated,
     oncancel,
@@ -34,8 +39,18 @@
     initialKind?: LibraryKindOption;
     initialName?: string;
     initialDescription?: string;
+    initialServerUrl?: string;
+    initialUsername?: string;
     busy?: boolean;
     error?: string;
+    ontest?: (serverUrl: string, username: string, password: string) => Promise<string>;
+    onsubmitnavidrome?: (payload: {
+      name: string;
+      description: string;
+      serverUrl: string;
+      username: string;
+      password: string;
+    }) => void;
     onsubmit: (name: string, description: string) => void;
     oncreated?: (info: LibraryInfo) => void;
     oncancel: () => void;
@@ -45,15 +60,24 @@
   let name = $state("");
   let description = $state("");
   let cookieInput = $state("");
+  let serverUrl = $state("");
+  let username = $state("");
+  let password = $state("");
+  let testing = $state(false);
+  let testMessage = $state("");
+  let testFailed = $state(false);
   let nameField = $state<HTMLInputElement | null>(null);
 
   onMount(() => {
-    kind = mode === "edit" ? "local" : initialKind;
+    kind = initialKind;
     name = initialName;
     description = initialDescription;
+    serverUrl = initialServerUrl;
+    username = initialUsername;
+    password = "";
     authError.set("");
     keyringError.set("");
-    if (mode === "create" && kind === "ytm") {
+    if (kind === "ytm" || kind === "navidrome") {
       void checkKeyring();
     }
     if (nameField) {
@@ -70,13 +94,17 @@
     }
     kind = next;
     authError.set("");
-    if (next === "ytm") {
+    testMessage = "";
+    testFailed = false;
+    if (next === "ytm" || next === "navidrome") {
       void checkKeyring();
     }
   }
 
-  const effectiveBusy = $derived(busy || (mode === "create" && kind === "ytm" && $authBusy));
-  const blockedByKeyring = $derived(mode === "create" && kind === "ytm" && $keyringError !== "");
+  const effectiveBusy = $derived(busy || testing || (mode === "create" && kind === "ytm" && $authBusy));
+  const blockedByKeyring = $derived(
+    (kind === "navidrome" || (mode === "create" && kind === "ytm")) && $keyringError !== "",
+  );
   const displayError = $derived(
     mode === "create" && kind === "ytm" ? $authError || error : error,
   );
@@ -84,10 +112,14 @@
   const title = $derived(mode === "edit" ? "Edit library" : "Create a library");
   const subtitle = $derived(
     mode === "edit"
-      ? "Update this library's name or description."
+      ? kind === "navidrome"
+        ? "Update this Navidrome library's metadata or server connection."
+        : "Update this library's name or description."
       : kind === "ytm"
         ? "Connect a YouTube Music account to mirror Liked Music and playlists."
-        : "Store and organize local albums and watched folders.",
+        : kind === "navidrome"
+          ? "Connect a remote Navidrome / Subsonic server to stream and sync."
+          : "Store and organize local albums and watched folders.",
   );
   const submitLabel = $derived(
     mode === "edit"
@@ -98,25 +130,78 @@
         ? $authBusy
           ? "Waiting for sign-in..."
           : "Sign in and create"
-        : busy
-          ? "Creating..."
-          : "Create library",
+        : kind === "navidrome"
+          ? busy
+            ? "Connecting..."
+            : "Connect & sync"
+          : busy
+            ? "Creating..."
+            : "Create library",
   );
 
   const trimmedName = $derived(name.trim());
   const trimmedDesc = $derived(description.trim());
+  const trimmedUrl = $derived(serverUrl.trim());
+  const trimmedUser = $derived(username.trim());
   const unchanged = $derived(
-    mode === "edit" && trimmedName === initialName.trim() && trimmedDesc === initialDescription.trim(),
+    mode === "edit" &&
+      trimmedName === initialName.trim() &&
+      trimmedDesc === initialDescription.trim() &&
+      (kind !== "navidrome" ||
+        (trimmedUrl === initialServerUrl.trim() &&
+          trimmedUser === initialUsername.trim() &&
+          password === "")),
   );
   const canSubmit = $derived(
     mode === "create" && kind === "ytm"
       ? !effectiveBusy && !blockedByKeyring
-      : !effectiveBusy && trimmedName !== "" && !unchanged,
+      : kind === "navidrome"
+        ? !effectiveBusy &&
+          !blockedByKeyring &&
+          trimmedName !== "" &&
+          trimmedUrl !== "" &&
+          trimmedUser !== "" &&
+          (mode === "edit" || password !== "") &&
+          !unchanged
+        : !effectiveBusy && trimmedName !== "" && !unchanged,
   );
 
   function submitLocal() {
     if ((mode === "edit" || kind === "local") && canSubmit) {
       onsubmit(trimmedName, trimmedDesc);
+    }
+  }
+
+  function submitNavidrome() {
+    if (kind === "navidrome" && canSubmit && onsubmitnavidrome) {
+      onsubmitnavidrome({
+        name: trimmedName,
+        description: trimmedDesc,
+        serverUrl: trimmedUrl,
+        username: trimmedUser,
+        password,
+      });
+    }
+  }
+
+  async function runConnectionTest() {
+    if (!ontest || effectiveBusy || trimmedUrl === "" || trimmedUser === "" || password === "") {
+      return;
+    }
+    testing = true;
+    testMessage = "";
+    testFailed = false;
+    try {
+      const err = await ontest(trimmedUrl, trimmedUser, password);
+      if (err === "") {
+        testMessage = "Connected successfully.";
+        testFailed = false;
+      } else {
+        testMessage = err;
+        testFailed = true;
+      }
+    } finally {
+      testing = false;
     }
   }
 
@@ -154,6 +239,10 @@
     }
     if (mode === "create" && kind === "ytm") {
       void submitYTMBrowser();
+      return;
+    }
+    if (kind === "navidrome") {
+      submitNavidrome();
       return;
     }
     submitLocal();
@@ -273,6 +362,73 @@
             />
           </span>
         </label>
+      {/if}
+
+      {#if kind === "navidrome"}
+        <label class="flex flex-col gap-1.5 text-[12px] font-medium text-fg">
+          <span>Server URL</span>
+          <input
+            bind:value={serverUrl}
+            class="h-8 rounded-[6px] border border-line bg-bg px-2.5 text-[12px] font-normal text-fg placeholder:text-muted/70 transition-colors hover:border-muted focus:border-muted focus:outline-none"
+            type="url"
+            placeholder="https://music.example.com"
+            autocomplete="off"
+            spellcheck="false"
+            required
+            disabled={effectiveBusy}
+          />
+        </label>
+
+        <div class="grid grid-cols-2 gap-2.5">
+          <label class="flex flex-col gap-1.5 text-[12px] font-medium text-fg">
+            <span>Username</span>
+            <input
+              bind:value={username}
+              class="h-8 rounded-[6px] border border-line bg-bg px-2.5 text-[12px] font-normal text-fg placeholder:text-muted/70 transition-colors hover:border-muted focus:border-muted focus:outline-none"
+              type="text"
+              placeholder="username"
+              autocomplete="off"
+              spellcheck="false"
+              required
+              disabled={effectiveBusy}
+            />
+          </label>
+          <label class="flex flex-col gap-1.5 text-[12px] font-medium text-fg">
+            <span>
+              Password
+              {#if mode === "edit"}
+                <span class="font-normal text-muted">(optional)</span>
+              {/if}
+            </span>
+            <input
+              bind:value={password}
+              class="h-8 rounded-[6px] border border-line bg-bg px-2.5 text-[12px] font-normal text-fg placeholder:text-muted/70 transition-colors hover:border-muted focus:border-muted focus:outline-none"
+              type="password"
+              placeholder={mode === "edit" ? "Keep current" : "••••••••"}
+              autocomplete="off"
+              required={mode === "create"}
+              disabled={effectiveBusy}
+            />
+          </label>
+        </div>
+
+        {#if ontest}
+          <div class="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              class="h-7 rounded-[6px] border border-line bg-bg px-2.5 text-[11px] text-fg transition-colors hover:bg-hover disabled:opacity-40"
+              disabled={effectiveBusy || trimmedUrl === "" || trimmedUser === "" || password === ""}
+              onclick={() => void runConnectionTest()}
+            >
+              {testing ? "Testing..." : "Test connection"}
+            </button>
+            {#if testMessage !== ""}
+              <span class="truncate text-[11px] {testFailed ? 'text-danger' : 'text-muted'}">
+                {testMessage}
+              </span>
+            {/if}
+          </div>
+        {/if}
       {/if}
 
       {#if blockedByKeyring}

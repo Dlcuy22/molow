@@ -151,7 +151,7 @@ function libraryItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
   const id = target.libraryId;
   const kind = deps.libraryKindFor?.(id) ?? "local";
   const isRemote = kind !== "" && kind !== "local";
-  const refreshLabel = kind === "ytm" ? "Refresh library" : "Rescan files";
+  const refreshLabel = isRemote ? "Refresh library" : "Rescan files";
   const auth = isRemote ? deps.libraryStatusFor?.(id) : undefined;
 
   const items: MenuItem[] = [

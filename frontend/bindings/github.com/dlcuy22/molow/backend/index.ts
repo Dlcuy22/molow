@@ -7,10 +7,8 @@ export {
 };
 
 export type {
-    AccountInfo,
     ActivityEvent,
     AppSettings,
-    AuthStatus,
     CodecOption,
     CrossfadeSettings,
     DiscordSettings,
@@ -24,6 +22,7 @@ export type {
     EffectStageInfo,
     EffectVisualInfo,
     GeneralSettings,
+    LibraryAuthStatus,
     LibraryProgress,
     LogFileClear,
     LyricsCacheClear,

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dlcuy22/molow/internal/library"
 	ytm "github.com/dlcuy22/ytm-go"
 )
 
@@ -92,11 +93,13 @@ func mergeSetCookies(existing string, setCookieHeaders []string) (string, bool) 
 }
 
 // cookieCapturingTransport inspects YouTube responses for Set-Cookie headers
-// and notifies onSetCookies with the sign-in generation bound to this client.
+// and notifies onSetCookies with the library id and sign-in generation bound
+// to this client.
 type cookieCapturingTransport struct {
 	base         http.RoundTripper
+	libraryID    string
 	gen          uint64
-	onSetCookies func(gen uint64, setCookies []string)
+	onSetCookies func(libraryID string, gen uint64, setCookies []string)
 }
 
 func (t *cookieCapturingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -107,22 +110,23 @@ func (t *cookieCapturingTransport) RoundTrip(req *http.Request) (*http.Response,
 	resp, err := base.RoundTrip(req)
 	if resp != nil && req != nil && req.URL != nil && isYouTubeCookieHost(req.URL.Hostname()) {
 		if setCookies := resp.Header.Values("Set-Cookie"); len(setCookies) > 0 && t.onSetCookies != nil {
-			t.onSetCookies(t.gen, setCookies)
+			t.onSetCookies(t.libraryID, t.gen, setCookies)
 		}
 	}
 	return resp, err
 }
 
-func (s *PlayerService) clientWithCookieCapture(creds *Credentials, gen uint64) (*ytm.Client, error) {
-	return s.clientWithCookieCaptureBase(creds, gen, newYTMHTTPClient().Transport)
+func (m *ytmManager) clientWithCookieCapture(libraryID string, creds *Credentials, gen uint64) (*ytm.Client, error) {
+	return m.clientWithCookieCaptureBase(libraryID, creds, gen, newYTMHTTPClient().Transport)
 }
 
-func (s *PlayerService) clientWithCookieCaptureBase(creds *Credentials, gen uint64, base http.RoundTripper) (*ytm.Client, error) {
+func (m *ytmManager) clientWithCookieCaptureBase(libraryID string, creds *Credentials, gen uint64, base http.RoundTripper) (*ytm.Client, error) {
 	httpClient := &http.Client{
 		Transport: &cookieCapturingTransport{
 			base:         base,
+			libraryID:    libraryID,
 			gen:          gen,
-			onSetCookies: s.applyRotatedCookies,
+			onSetCookies: m.applyRotatedCookies,
 		},
 		Timeout: ytmHeaderTimeout,
 	}
@@ -130,28 +134,42 @@ func (s *PlayerService) clientWithCookieCaptureBase(creds *Credentials, gen uint
 	if err != nil {
 		return nil, err
 	}
-	if s.log != nil {
-		client.SetLogger(s.log)
-	}
+	client.SetLogger(m.log())
 	return client, nil
 }
 
-// applyRotatedCookies persists Set-Cookie updates into credentials.enc only if
-// the caller still belongs to the active sign-in generation.
-func (s *PlayerService) applyRotatedCookies(gen uint64, setCookies []string) {
-	if len(setCookies) == 0 || gen == 0 || s.authGen.Load() != gen {
+// applyRotatedCookies persists Set-Cookie updates strictly into libraryID's own
+// credential file and only if the caller still belongs to that session's active
+// sign-in generation.
+func (m *ytmManager) applyRotatedCookies(libraryID string, gen uint64, setCookies []string) {
+	if len(setCookies) == 0 || gen == 0 || libraryID == "" || m == nil {
+		return
+	}
+	sess := m.session(libraryID)
+	if sess == nil || sess.authGen.Load() != gen {
 		return
 	}
 
-	s.cookiePersistMu.Lock()
-	defer s.cookiePersistMu.Unlock()
+	sess.cookiePersistMu.Lock()
+	defer sess.cookiePersistMu.Unlock()
 
-	if s.authGen.Load() != gen {
+	if sess.authGen.Load() != gen {
 		return
 	}
 
-	creds, err := loadCredentials()
-	if err != nil || creds == nil {
+	sess.mu.RLock()
+	credID := sess.credentialID
+	sess.mu.RUnlock()
+	if credID == "" || m.svc == nil {
+		return
+	}
+
+	cs, err := m.svc.credentials()
+	if err != nil {
+		return
+	}
+	var creds Credentials
+	if err := cs.Load(credID, library.KindYTM, &creds); err != nil {
 		return
 	}
 	updated, changed := mergeSetCookies(creds.CookieHeader, setCookies)
@@ -159,58 +177,74 @@ func (s *PlayerService) applyRotatedCookies(gen uint64, setCookies []string) {
 		return
 	}
 	creds.CookieHeader = updated
-	if err := saveCredentials(creds); err != nil {
-		if s.log != nil {
-			s.log.Warn("ytm: persist rotated cookies", "error", err)
-		}
+	if err := cs.Save(credID, library.KindYTM, &creds); err != nil {
+		m.log().Warn("ytm: persist rotated cookies", "library", libraryID, "error", err)
 		return
 	}
 
-	if s.ytmProv != nil {
-		s.ytmProv.apiMu.RLock()
-		liveClient := s.ytmProv.client
-		s.ytmProv.apiMu.RUnlock()
-		if liveClient != nil {
-			_ = clientFromCredentialsInto(liveClient, creds)
-		}
+	sess.mu.RLock()
+	liveClient := sess.client
+	sess.mu.RUnlock()
+	if liveClient != nil {
+		_ = clientFromCredentialsInto(liveClient, &creds)
 	}
 }
 
-// maybeRefreshSession triggers a throttled account probe so Google can issue
-// rotated Set-Cookie headers. Repeated calls within 60 s are skipped, and a
-// revoked session flips authExpired instead of retrying in a loop.
-func (s *PlayerService) maybeRefreshSession(ctx context.Context) error {
-	if s.authExpired.Load() {
+// maybeRefreshSession triggers a throttled account probe for libraryID so
+// Google can issue rotated Set-Cookie headers. Repeated calls within 60 s are
+// skipped, and a revoked session flips that session's authExpired flag instead
+// of retrying in a loop.
+func (m *ytmManager) maybeRefreshSession(ctx context.Context, libraryID string) error {
+	if m == nil || libraryID == "" {
+		return ErrNoCredentials
+	}
+	sess := m.session(libraryID)
+	if sess == nil {
+		return ErrNoCredentials
+	}
+	if sess.authExpired.Load() {
 		return ytm.ErrSessionExpired
 	}
 
-	s.cookieRefreshMu.Lock()
+	sess.cookieRefreshMu.Lock()
 	now := time.Now()
-	if !s.lastCookieRefresh.IsZero() && now.Sub(s.lastCookieRefresh) < minCookieRefreshInterval {
-		s.cookieRefreshMu.Unlock()
+	if !sess.lastCookieRefresh.IsZero() && now.Sub(sess.lastCookieRefresh) < minCookieRefreshInterval {
+		sess.cookieRefreshMu.Unlock()
 		return nil
 	}
-	s.lastCookieRefresh = now
-	s.cookieRefreshMu.Unlock()
+	sess.lastCookieRefresh = now
+	sess.cookieRefreshMu.Unlock()
 
-	creds, err := loadCredentials()
+	sess.mu.RLock()
+	credID := sess.credentialID
+	sess.mu.RUnlock()
+	if credID == "" || m.svc == nil {
+		return ErrNoCredentials
+	}
+
+	cs, err := m.svc.credentials()
 	if err != nil {
 		return err
 	}
-	gen := s.authGen.Load()
-	if gen == 0 {
-		gen = 1
-		s.authGen.CompareAndSwap(0, gen)
+	var creds Credentials
+	if err := cs.Load(credID, library.KindYTM, &creds); err != nil {
+		return err
 	}
 
-	client, err := s.clientWithCookieCapture(creds, gen)
+	gen := sess.authGen.Load()
+	if gen == 0 {
+		gen = 1
+		sess.authGen.CompareAndSwap(0, gen)
+	}
+
+	client, err := m.clientWithCookieCapture(libraryID, &creds, gen)
 	if err != nil {
 		return err
 	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, authProbeTimeout)
 	defer cancel()
-	probe := s.refreshSessionFn
+	probe := m.refreshSessionFn
 	if probe == nil {
 		probe = func(c context.Context, cl *ytm.Client) error {
 			_, err := cl.GetAccountInfo(c)
@@ -219,7 +253,7 @@ func (s *PlayerService) maybeRefreshSession(ctx context.Context) error {
 	}
 	if err := probe(probeCtx, client); err != nil {
 		if errors.Is(err, ytm.ErrSessionExpired) {
-			s.authExpired.Store(true)
+			sess.authExpired.Store(true)
 		}
 		return err
 	}

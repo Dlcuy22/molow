@@ -1,15 +1,15 @@
 <script lang="ts">
   import { appSettings, commands, discordStatus, spectrumConfig, spectrumSchema } from "../../store";
   import {
-    authAccounts,
     authBusy,
-    authStatus,
-    loadAuthStatus,
-    openAuthDialog,
+    connectedLibraries,
+    loadConnectedLibraries,
+    openReauthDialog,
     openSignOutDialog,
-    refreshAuth,
-    switchChannel,
+    refreshLibraryAuth,
+    type LibraryAuthStatus,
   } from "../../auth";
+  import { removeLibrary } from "../../library";
   import { showToast } from "../../toast";
   import Check from "phosphor-svelte/lib/Check";
   import WarningCircle from "phosphor-svelte/lib/WarningCircle";
@@ -35,7 +35,14 @@
     livePreview = false,
     initialTab = "general",
     onclose,
-  }: { open: boolean; livePreview?: boolean; initialTab?: Tab; onclose: () => void } = $props();
+    onaddlibrary,
+  }: {
+    open: boolean;
+    livePreview?: boolean;
+    initialTab?: Tab;
+    onclose: () => void;
+    onaddlibrary?: (kind?: "local" | "ytm") => void;
+  } = $props();
 
   type Tab = "general" | "playback" | "integration" | "stream";
   let tab = $state<Tab>("general");
@@ -69,19 +76,27 @@
 
   $effect(() => {
     if (open && tab === "integration") {
-      void loadAuthStatus();
+      void loadConnectedLibraries();
     }
   });
 
-  const ytmStatusLine = $derived(
-    $authStatus.expired
-      ? "Session expired — sign in again to refresh credentials."
-      : $authStatus.signedIn
-        ? $authStatus.email
-          ? `${$authStatus.name || "Signed in"} (${$authStatus.email})`
-          : $authStatus.name || "Signed in"
-        : "Not signed in",
-  );
+  function connectedStatusLine(lib: LibraryAuthStatus): string {
+    if (lib.expired) {
+      return "Session expired. Re-sign in to restore sync and playback.";
+    }
+    if (!lib.signedIn) {
+      return "Signed out. Cached library kept locally.";
+    }
+    if (lib.accountSubtext) {
+      return `${lib.accountName || "Signed in"} (${lib.accountSubtext})`;
+    }
+    return lib.accountName || "Signed in";
+  }
+
+  async function removeConnectedLibrary(libraryID: string) {
+    await removeLibrary(libraryID);
+    await loadConnectedLibraries();
+  }
 
   // spectrumValue reads one visualizer knob. The panel is built from the schema
   // the engine reports, so a new knob is one Go entry and no frontend change.
@@ -849,47 +864,79 @@
               </div>
             </div>
 
-            <SettingGroup label="YouTube Music" description={null}>
-              <div class="divide-y divide-line">
-                <SettingRow label="Account" description={ytmStatusLine}>
+            <SettingGroup label="Connected Libraries" description={null}>
+              {#if $connectedLibraries.length === 0}
+                <SettingRow
+                  label="Remote sources"
+                  description="No connected remote libraries yet."
+                >
                   {#snippet control()}
-                    {#if $authStatus.expired}
-                      <div class="flex items-center gap-2">
-                        <Button label="Re-sign in" busyLabel="Opening" disabled={$authBusy} onclick={openAuthDialog} />
-                        <Button label="Sign out" busyLabel="Signing out" disabled={$authBusy} onclick={openSignOutDialog} />
-                      </div>
-                    {:else if $authStatus.signedIn}
-                      <div class="flex items-center gap-2">
-                        <Button label="Check" busyLabel="Checking" disabled={$authBusy} onclick={refreshAuth} />
-                        <Button label="Sign out" busyLabel="Signing out" disabled={$authBusy} onclick={openSignOutDialog} />
-                      </div>
-                    {:else}
-                      <Button label="Sign in" busyLabel="Opening" disabled={$authBusy} onclick={openAuthDialog} />
+                    {#if onaddlibrary}
+                      <Button label="Add library" onclick={() => onaddlibrary?.("ytm")} />
                     {/if}
                   {/snippet}
                 </SettingRow>
-
-                {#if $authStatus.signedIn && !$authStatus.expired && $authAccounts.length > 1}
-                  <SettingRow
-                    label="Channel"
-                    description="Active brand channel for this YouTube Music session."
-                  >
-                    {#snippet control()}
-                      <Picker
-                        label={null}
-                        ariaLabel="YouTube Music channel"
-                        value={$authStatus.channelId ?? ""}
-                        options={$authAccounts.map((a) => ({
-                          value: a.channelId ?? "",
-                          label: a.channelHandle ? `${a.name} (${a.channelHandle})` : a.name,
-                        }))}
-                        disabled={$authBusy}
-                        onchange={(id) => void switchChannel(id)}
-                      />
-                    {/snippet}
-                  </SettingRow>
+              {:else}
+                <div class="divide-y divide-line">
+                  {#each $connectedLibraries as lib (lib.libraryId)}
+                    <SettingRow label={lib.libraryName} description={connectedStatusLine(lib)}>
+                      {#snippet control()}
+                        {#if lib.expired}
+                          <div class="flex items-center gap-2">
+                            <Button
+                              label="Re-sign in"
+                              busyLabel="Opening"
+                              disabled={$authBusy}
+                              onclick={() => void openReauthDialog(lib.libraryId, lib.libraryName, lib.kind)}
+                            />
+                            <Button
+                              label="Sign out"
+                              busyLabel="Signing out"
+                              disabled={$authBusy}
+                              onclick={() => openSignOutDialog(lib.libraryId, lib.libraryName)}
+                            />
+                          </div>
+                        {:else if lib.signedIn}
+                          <div class="flex items-center gap-2">
+                            <Button
+                              label="Check"
+                              busyLabel="Checking"
+                              disabled={$authBusy}
+                              onclick={() => void refreshLibraryAuth(lib.libraryId)}
+                            />
+                            <Button
+                              label="Sign out"
+                              busyLabel="Signing out"
+                              disabled={$authBusy}
+                              onclick={() => openSignOutDialog(lib.libraryId, lib.libraryName)}
+                            />
+                          </div>
+                        {:else}
+                          <div class="flex items-center gap-2">
+                            <Button
+                              label="Sign in"
+                              busyLabel="Opening"
+                              disabled={$authBusy}
+                              onclick={() => void openReauthDialog(lib.libraryId, lib.libraryName, lib.kind)}
+                            />
+                            <Button
+                              label="Remove"
+                              busyLabel="Removing"
+                              disabled={$authBusy}
+                              onclick={() => void removeConnectedLibrary(lib.libraryId)}
+                            />
+                          </div>
+                        {/if}
+                      {/snippet}
+                    </SettingRow>
+                  {/each}
+                </div>
+                {#if onaddlibrary}
+                  <div class="mt-2 flex justify-end">
+                    <Button label="Add library" onclick={() => onaddlibrary?.("ytm")} />
+                  </div>
                 {/if}
-              </div>
+              {/if}
             </SettingGroup>
           </div>
         {:else if tab === "stream"}

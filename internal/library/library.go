@@ -6,7 +6,10 @@
 // (absolute paths and ytm:<videoId> today).
 package library
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // Kind names the provider behind a library. One provider can back many
 // libraries: two folders are two local libraries.
@@ -138,12 +141,57 @@ type Playlist struct {
 	Owned       bool     `json:"owned"`
 }
 
-// RemoteRef is the playable reference of a track that has no file: the kind
-// names the provider the engine routes to, and the native id is the provider's
-// identity. The catalogue derives the same string from the row, so a stored
-// ref and a listed one cannot drift.
+// RemoteRef is the unscoped playable reference of a remote track:
+// "<kind>:<nativeId>". Used by Search, Local imports, and legacy queues.
 func RemoteRef(kind Kind, nativeID string) string {
 	return string(kind) + ":" + nativeID
+}
+
+// ScopedRemoteRef builds an instance-scoped playable reference for a track
+// owned by a specific remote library: "<kind>:<libraryId>:<nativeId>".
+// When libraryID is empty, it falls back to RemoteRef.
+func ScopedRemoteRef(kind Kind, libraryID, nativeID string) string {
+	if libraryID == "" {
+		return RemoteRef(kind, nativeID)
+	}
+
+	return string(kind) + ":" + libraryID + ":" + nativeID
+}
+
+// ParseRemoteRef splits either a scoped remote reference
+// ("<kind>:<libraryId>:<nativeId>") or an unscoped remote reference
+// ("<kind>:<nativeId>") into its parts.
+//
+// Filesystem paths (including Windows drive-letter paths like "C:\..."),
+// "local:..." strings, URLs, and malformed empty segments return ok = false.
+func ParseRemoteRef(ref string) (kind Kind, libraryID, nativeID string, ok bool) {
+	kindStr, rest, found := strings.Cut(ref, ":")
+	if !found || len(kindStr) < 2 || rest == "" {
+		return "", "", "", false
+	}
+	switch kindStr {
+	case string(KindLocal), "http", "https", "file":
+		return "", "", "", false
+	}
+	for i := 0; i < len(kindStr); i++ {
+		c := kindStr[i]
+		isLower := c >= 'a' && c <= 'z'
+		isDigit := c >= '0' && c <= '9'
+		if !isLower && !isDigit && c != '_' && c != '-' {
+			return "", "", "", false
+		}
+	}
+
+	seg1, seg2, hasSecond := strings.Cut(rest, ":")
+	if hasSecond {
+		if seg1 == "" || seg2 == "" {
+			return "", "", "", false
+		}
+
+		return Kind(kindStr), seg1, seg2, true
+	}
+
+	return Kind(kindStr), "", rest, true
 }
 
 // Shelf is one horizontal row of a page. Layout says how to draw it; kind says

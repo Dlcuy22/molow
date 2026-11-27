@@ -77,13 +77,15 @@
   import RenameDialog from "./lib/ui/RenameDialog.svelte";
   import ConfirmDialog from "./lib/ui/ConfirmDialog.svelte";
   import {
-    authDialogOpen,
-    authStatus,
+    authDialog,
     closeAuthDialog,
     closeSignOutDialog,
-    loadAuthStatus,
-    openAuthDialog,
-    signOutDialogOpen,
+    connectedLibraries,
+    loadConnectedLibraries,
+    openReauthDialog,
+    openSignOutDialog,
+    signOutDialog,
+    statusForLibrary,
   } from "./lib/auth";
   import { closeContextMenu, contextMenu } from "./lib/ui/context-menu.svelte";
   import { menuItemsFor, type MenuDeps } from "./lib/ui/menu-items";
@@ -117,7 +119,7 @@
   onMount(connect);
   onMount(connectLibrary);
   onMount(() => {
-    void loadAuthStatus();
+    void loadConnectedLibraries();
   });
 
   const snap = $derived($player);
@@ -461,19 +463,22 @@
 
   let renaming = $state<Playlist | null>(null);
   let confirming = $state<{ title: string; body: string; confirmLabel?: string; run: () => void } | null>(null);
-  let libraryDialog = $state<{ mode: "create" } | { mode: "edit"; library: LibraryInfo } | null>(
-    null,
-  );
+  let libraryDialog = $state<
+    { mode: "create"; initialKind: "local" | "ytm" } | { mode: "edit"; library: LibraryInfo } | null
+  >(null);
   let libraryDialogBusy = $state(false);
   let libraryDialogError = $state("");
 
   const activeLibraryInfo = $derived($libraries.find((l) => l.id === $libraryId) ?? null);
+  const activeLibraryAuth = $derived(
+    activeLibraryInfo ? (statusForLibrary($connectedLibraries, activeLibraryInfo.id) ?? null) : null,
+  );
 
-  function openCreateLibrary() {
+  function openCreateLibrary(initialKind: "local" | "ytm" = "local") {
     addOpen = false;
     libraryDialogError = "";
     libraryDialogBusy = false;
-    libraryDialog = { mode: "create" };
+    libraryDialog = { mode: "create", initialKind };
   }
 
   function openEditLibrary(id: string) {
@@ -589,13 +594,26 @@
     editLibrary: (id) => openEditLibrary(id),
     rescanLibrary: (id) => void rescanLibrary(id),
     libraryKindFor: (id) => $libraries.find((l) => l.id === id)?.kind ?? "",
+    libraryStatusFor: (id) => statusForLibrary($connectedLibraries, id),
+    reSignInLibrary: (id) => {
+      const lib = $libraries.find((l) => l.id === id);
+      if (lib) {
+        void openReauthDialog(lib.id, lib.name, lib.kind);
+      }
+    },
+    signOutLibrary: (id) => {
+      const lib = $libraries.find((l) => l.id === id);
+      if (lib) {
+        openSignOutDialog(lib.id, lib.name);
+      }
+    },
     togglePlaylistWatch: (list, watched) => void setPlaylistWatched(list.libraryId, list.id, watched),
     removeLibrary: (id) => {
       const name = $libraries.find((l) => l.id === id)?.name ?? "this library";
       confirming = {
         title: "Remove library",
         body: `${name} leaves Molow. The audio files on disk are not touched.`,
-        run: () => void removeLibrary(id),
+        run: () => void removeLibrary(id).then(() => loadConnectedLibraries()),
       };
     },
   });
@@ -791,8 +809,8 @@
       isModalOpen: () =>
         paletteOpen ||
         settingsOpen ||
-        $authDialogOpen ||
-        $signOutDialogOpen ||
+        $authDialog !== null ||
+        $signOutDialog !== null ||
         $importSongModal !== null ||
         libraryDialog !== null ||
         renaming !== null ||
@@ -818,9 +836,9 @@
       closeContextMenu(true);
     } else if ($importSongModal !== null) {
       closeImportSongModal();
-    } else if ($signOutDialogOpen) {
+    } else if ($signOutDialog !== null) {
       closeSignOutDialog();
-    } else if ($authDialogOpen) {
+    } else if ($authDialog !== null) {
       closeAuthDialog();
     } else if (libraryDialog !== null) {
       closeLibraryDialog();
@@ -864,7 +882,6 @@
       playlists={$libraryPlaylists}
       playlistsLoading={$libraryLoading}
       activePlaylistId={$activePlaylist?.id ?? ""}
-      ytmStatus={$authStatus}
       onswitch={(id) => {
         closeYtmArtist();
         closePlaylist();
@@ -875,15 +892,7 @@
         searchOpen = false;
         void openPlaylist(list);
       }}
-      onnewlibrary={openCreateLibrary}
-      onyoutubeaccount={() => {
-        if ($authStatus.signedIn && !$authStatus.expired) {
-          settingsInitialTab = "integration";
-          settingsOpen = true;
-        } else {
-          void openAuthDialog();
-        }
-      }}
+      onnewlibrary={() => openCreateLibrary("local")}
       onwidthcommit={commitSidebarWidth}
       onnav={(next) => {
         closeYtmArtist();
@@ -1005,10 +1014,20 @@
           currentPath={snap.path}
           playlistActive={playlistQueueActive}
           playlistPlaying={playlistQueuePlaying}
+          authStatus={activeLibraryAuth}
+          onresignin={() => {
+            if (activeLibraryInfo) {
+              void openReauthDialog(
+                activeLibraryInfo.id,
+                activeLibraryInfo.name,
+                activeLibraryInfo.kind,
+              );
+            }
+          }}
           onfilter={setFilter}
           onadd={() => (addOpen = !addOpen)}
-          onrefresh={() => void rescanLibrary(activeLibraryInfo?.id)}
-          oncreateLibrary={openCreateLibrary}
+          onrefresh={() => rescanLibrary(activeLibraryInfo?.id)}
+          oncreateLibrary={() => openCreateLibrary("local")}
           onimportFolder={() => void addLibrary()}
           onimportYTM={() => openPalette("ytm", false, "import")}
           onopenAlbum={openAlbum}
@@ -1119,15 +1138,19 @@
   open={settingsOpen}
   initialTab={settingsInitialTab}
   livePreview={playerOpen}
+  onaddlibrary={(kind) => {
+    settingsOpen = false;
+    openCreateLibrary(kind ?? "ytm");
+  }}
   onclose={() => {
     settingsOpen = false;
     settingsInitialTab = "general";
   }}
 />
-{#if $authDialogOpen}
+{#if $authDialog}
   <YtmAuthDialog />
 {/if}
-{#if $signOutDialogOpen}
+{#if $signOutDialog}
   <SignOutDialog />
 {/if}
 {#if $importSongModal}
@@ -1147,11 +1170,17 @@
 {#if libraryDialog}
   <LibraryDialog
     mode={libraryDialog.mode}
+    initialKind={libraryDialog.mode === "create" ? libraryDialog.initialKind : "local"}
     initialName={libraryDialog.mode === "edit" ? libraryDialog.library.name : ""}
     initialDescription={libraryDialog.mode === "edit" ? libraryDialog.library.description : ""}
     busy={libraryDialogBusy}
     error={libraryDialogError}
     onsubmit={(name, description) => void submitLibraryDialog(name, description)}
+    oncreated={() => {
+      libraryDialog = null;
+      filter = "all";
+      tab = "library";
+    }}
     oncancel={closeLibraryDialog}
   />
 {/if}

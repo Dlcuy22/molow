@@ -175,9 +175,6 @@ func TestYTMSyncerBackoffResetAndExpired(t *testing.T) {
 func TestYTMSourceDescribeBackoffStatus(t *testing.T) {
 	svc, _ := newYTMTestService(t)
 	creds := &Credentials{CookieHeader: "SAPISID=s; SID=id", ChannelID: "UCerr", Name: "Err"}
-	if err := saveCredentials(creds); err != nil {
-		t.Fatal(err)
-	}
 	libID, err := svc.ensureYTMLibrary(creds)
 	if err != nil {
 		t.Fatal(err)

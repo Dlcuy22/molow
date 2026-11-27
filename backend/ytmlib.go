@@ -46,26 +46,21 @@ type ytmAccountOps struct {
 	getAddToPlaylistTargets func(context.Context, string) ([]ytm.AddToPlaylistTarget, error)
 }
 
-func (s *PlayerService) ytmAccountClient() (*ytm.Client, error) {
-	if s.ytmProv != nil {
-		s.ytmProv.apiMu.RLock()
-		c := s.ytmProv.client
-		s.ytmProv.apiMu.RUnlock()
-		if c != nil && c.SignedIn() {
-			return c, nil
-		}
-	}
-	creds, err := loadCredentials()
-	if err != nil {
-		return nil, err
-	}
-	return s.clientWithCookieCapture(creds, s.authGen.Load())
+func (s *PlayerService) ytmAccountClient(libraryID string) (*ytm.Client, error) {
+	return s.ytmManager().sessionClient(libraryID)
 }
 
 func (s *PlayerService) accountOps(client *ytm.Client) ytmAccountOps {
 	ops := ytmAccountOps{
 		loadPlaylist: func(ctx context.Context, id string) ([]YTMResult, string, error) {
-			return s.ytmProv.playlist(ctx, id)
+			p := s.ytmManager().activeProvider()
+			if p == nil {
+				return nil, "", fmt.Errorf("ytm: provider unavailable")
+			}
+			if client != nil {
+				return p.playlistWith(ctx, id, callsFromClient(client, s.logger()))
+			}
+			return p.playlist(ctx, id)
 		},
 	}
 	if client != nil {
@@ -94,9 +89,9 @@ func (s *PlayerService) accountOps(client *ytm.Client) ytmAccountOps {
 func ytmLibraryID(channelID string) string {
 	id := strings.TrimSpace(channelID)
 	if id == "" {
-		return "ytm:default"
+		return "ytm_default"
 	}
-	return "ytm:" + id
+	return "ytm_" + id
 }
 
 func isYTMBuiltInLikedID(remoteID string) bool {
@@ -133,10 +128,10 @@ func newYTMSource(svc *PlayerService, store *sqlite.Store, id string) *ytmSource
 				return at
 			},
 			canSyncFn: func() bool {
-				if svc.authExpired.Load() {
+				if src.isExpired() {
 					return false
 				}
-				_, err := svc.ytmAccountClient()
+				_, err := svc.ytmAccountClient(id)
 				return err == nil || svc.ytmOpsOverride != nil
 			},
 			runFn: func(ctx context.Context) error {
@@ -209,7 +204,8 @@ func (s *PlayerService) notifyWindowFocused() {
 	}
 }
 
-// ensureYTMLibrary upserts the KindYTM library row for creds and registers its source.
+// ensureYTMLibrary upserts the KindYTM library row for creds, stores its
+// encrypted credentials, and registers its source runtime.
 func (s *PlayerService) ensureYTMLibrary(creds *Credentials) (string, error) {
 	if creds == nil {
 		return "", ErrNoCredentials
@@ -222,18 +218,37 @@ func (s *PlayerService) ensureYTMLibrary(creds *Credentials) (string, error) {
 	}
 
 	id := ytmLibraryID(creds.ChannelID)
+	credID := ""
+	if existing, err := store.LibraryRow(id); err == nil && existing.CredentialID != "" {
+		credID = existing.CredentialID
+	} else if cid, err := newCredentialID(); err == nil {
+		credID = cid
+	}
+	cs, csErr := s.credentials()
+	if csErr == nil && credID != "" {
+		if err := cs.Save(credID, library.KindYTM, creds); err != nil {
+			return "", err
+		}
+	}
+
 	name := firstNonEmpty(strings.TrimSpace(creds.Name), strings.TrimSpace(creds.Email), "YouTube Music")
-	row, err := store.AddLibrary(library.Library{
-		ID:          id,
-		Kind:        library.KindYTM,
-		Name:        name,
-		Description: "YouTube Music account",
-		Status:      library.StatusReady,
+	row, err := store.AddLibraryRow(sqlite.LibraryRow{
+		Library: library.Library{
+			ID:          id,
+			Kind:        library.KindYTM,
+			Name:        name,
+			Description: "YouTube Music account",
+			Status:      library.StatusReady,
+		},
+		AccountID:    creds.ChannelID,
+		CredentialID: credID,
+		Config:       encodeYTMConfig(creds),
 	})
 	if err != nil {
 		return "", err
 	}
-	s.registerYTM(row)
+	_, _, _ = s.ytmManager().installSessionCredentials(row, creds)
+	s.registerYTM(row.Library)
 	return row.ID, nil
 }
 
@@ -256,6 +271,24 @@ func (y *ytmSource) syncCtx(ctx context.Context) context.Context {
 // CanRefresh reports that a YTM account library can always manually sync.
 func (y *ytmSource) CanRefresh() bool { return true }
 
+func (y *ytmSource) session() *ytmSession {
+	if y == nil || y.svc == nil {
+		return nil
+	}
+	return y.svc.ytmManager().session(y.id)
+}
+
+func (y *ytmSource) isExpired() bool {
+	sess := y.session()
+	return sess != nil && sess.authExpired.Load()
+}
+
+func (y *ytmSource) markExpired() {
+	if sess := y.session(); sess != nil {
+		sess.authExpired.Store(true)
+	}
+}
+
 func (y *ytmSource) Describe(context.Context) (library.Library, error) {
 	lib, err := y.store.Library(y.id)
 	if err != nil {
@@ -264,17 +297,32 @@ func (y *ytmSource) Describe(context.Context) (library.Library, error) {
 	lib.Kind = library.KindYTM
 	lib.Capabilities = library.CapabilitiesOf(y)
 
+	sess := y.session()
+	var (
+		signedIn   bool
+		sessionErr string
+	)
+	if sess != nil {
+		sess.mu.RLock()
+		signedIn = sess.signedIn
+		sessionErr = sess.sessionErr
+		sess.mu.RUnlock()
+	}
+
 	switch {
 	case y.svc.isScanningLibrary(y.id):
 		lib.Status = library.StatusScanning
-	case y.svc.authExpired.Load():
+	case sess != nil && sess.authExpired.Load():
 		lib.Status = library.StatusExpired
-		lib.Message = "YouTube Music session expired — sign in again to sync or edit."
+		lib.Message = "YouTube Music session expired. Sign in again to sync or edit."
+	case sessionErr != "":
+		lib.Status = library.StatusError
+		lib.Message = sessionErr
+	case !signedIn:
+		lib.Status = library.StatusSignedOut
+		lib.Message = "Signed out. Browsing cached library."
 	default:
-		if creds, err := loadCredentials(); err != nil || creds == nil {
-			lib.Status = library.StatusSignedOut
-			lib.Message = "Signed out — browsing cached library."
-		} else if until, lastErr := y.syncer.backoffStatus(); lastErr != nil && until.After(time.Now()) {
+		if until, lastErr := y.syncer.backoffStatus(); lastErr != nil && until.After(time.Now()) {
 			mins := int(math.Ceil(until.Sub(time.Now()).Minutes()))
 			if mins < 1 {
 				mins = 1
@@ -382,10 +430,10 @@ func (y *ytmSource) Feed(ctx context.Context, tab, cursor string, limit int) (li
 }
 
 func (y *ytmSource) maybeRefreshIfStale() {
-	if y.svc.authExpired.Load() || y.svc.isScanningLibrary(y.id) {
+	if y.isExpired() || y.svc.isScanningLibrary(y.id) {
 		return
 	}
-	if _, err := y.svc.ytmAccountClient(); err != nil && y.svc.ytmOpsOverride == nil {
+	if _, err := y.svc.ytmAccountClient(y.id); err != nil && y.svc.ytmOpsOverride == nil {
 		return
 	}
 	at, err := y.store.SyncTime(y.id, "playlists")
@@ -480,10 +528,10 @@ func (y *ytmSource) findPlaylist(playlistID string) (library.Playlist, error) {
 }
 
 func (y *ytmSource) signedInOps() (ytmAccountOps, error) {
-	if y.svc.authExpired.Load() {
+	if y.isExpired() {
 		return ytmAccountOps{}, ytm.ErrSessionExpired
 	}
-	client, err := y.svc.ytmAccountClient()
+	client, err := y.svc.ytmAccountClient(y.id)
 	if err != nil && y.svc.ytmOpsOverride == nil {
 		return ytmAccountOps{}, err
 	}
@@ -505,18 +553,19 @@ func (y *ytmSource) SetLiked(ctx context.Context, ref string, liked bool) error 
 	}
 	if err := ops.setSongLiked(y.syncCtx(ctx), videoID, status); err != nil {
 		if errors.Is(err, ytm.ErrSessionExpired) {
-			y.svc.authExpired.Store(true)
+			y.markExpired()
 		}
 		return err
 	}
-	if err := y.store.SetLiked(ref, liked); err != nil {
+	scopedRef := library.ScopedRemoteRef(library.KindYTM, y.id, videoID)
+	if err := y.store.SetLiked(scopedRef, liked); err != nil {
 		return err
 	}
 	if lm, ok, err := y.store.PlaylistByRemoteID(y.id, ytmLikedPlaylistRemoteID); err == nil && ok {
 		if liked {
-			_ = y.store.AddToPlaylist(lm.ID, []string{ref})
+			_ = y.store.AddToPlaylist(lm.ID, []string{scopedRef})
 		} else {
-			_ = y.store.RemoveFromPlaylist(lm.ID, []string{ref})
+			_ = y.store.RemoveFromPlaylist(lm.ID, []string{scopedRef})
 		}
 		y.svc.refreshPlaylistCover(lm.ID)
 	}
@@ -534,7 +583,7 @@ func (y *ytmSource) CreatePlaylist(ctx context.Context, name string) (library.Pl
 	})
 	if err != nil {
 		if errors.Is(err, ytm.ErrSessionExpired) {
-			y.svc.authExpired.Store(true)
+			y.markExpired()
 		}
 		return library.Playlist{}, err
 	}
@@ -573,7 +622,7 @@ func (y *ytmSource) AddToPlaylist(ctx context.Context, playlistID string, refs [
 	}
 	if err := ops.addSongsToPlaylist(y.syncCtx(ctx), pl.RemoteID, videoIDs, ytm.DedupeDrop); err != nil {
 		if errors.Is(err, ytm.ErrSessionExpired) {
-			y.svc.authExpired.Store(true)
+			y.markExpired()
 		}
 		return err
 	}
@@ -626,7 +675,7 @@ func (y *ytmSource) RemoveFromPlaylist(ctx context.Context, playlistID string, r
 	remotePl, err := ops.loadPlaylistForEdit(y.syncCtx(ctx), pl.RemoteID)
 	if err != nil {
 		if errors.Is(err, ytm.ErrSessionExpired) {
-			y.svc.authExpired.Store(true)
+			y.markExpired()
 		}
 		return err
 	}
@@ -644,7 +693,7 @@ func (y *ytmSource) RemoveFromPlaylist(ctx context.Context, playlistID string, r
 	if len(actions) > 0 {
 		if err := ops.editPlaylist(y.syncCtx(ctx), pl.RemoteID, actions); err != nil {
 			if errors.Is(err, ytm.ErrSessionExpired) {
-				y.svc.authExpired.Store(true)
+				y.markExpired()
 			}
 			return err
 		}
@@ -674,7 +723,7 @@ func (y *ytmSource) RenamePlaylist(ctx context.Context, playlistID, name string)
 		}})
 		if err != nil {
 			if errors.Is(err, ytm.ErrSessionExpired) {
-				y.svc.authExpired.Store(true)
+				y.markExpired()
 			}
 			return err
 		}
@@ -705,7 +754,7 @@ func (y *ytmSource) DeletePlaylist(ctx context.Context, playlistID string) error
 		}
 		if err != nil {
 			if errors.Is(err, ytm.ErrSessionExpired) {
-				y.svc.authExpired.Store(true)
+				y.markExpired()
 			}
 			return err
 		}
@@ -719,24 +768,6 @@ func ytmNextCursor(shown, total int) string {
 		return ""
 	}
 	return strconv.Itoa(shown)
-}
-
-// syncStartupYTMLibrary ensures a stored YTM session has a library registered
-// on startup and starts a background sync when cached scopes are missing or stale.
-func (s *PlayerService) syncStartupYTMLibrary() {
-	creds, err := loadCredentials()
-	if err != nil || creds == nil {
-		return
-	}
-	id, err := s.ensureYTMLibrary(creds)
-	if err != nil {
-		s.logger().Warn("ytm: ensure library", "error", err)
-		return
-	}
-	at, err := s.libStore.SyncTime(id, "playlists")
-	if err != nil || at == 0 || time.Since(time.Unix(at, 0)) > ytmOpenStaleAge {
-		s.triggerYTMSync(id, syncTriggerOpen)
-	}
 }
 
 func (s *PlayerService) syncYTMLibrary(libraryID string) {
@@ -862,10 +893,11 @@ func (y *ytmSource) syncAccountCover(ctx context.Context, ops ytmAccountOps) {
 	if err != nil {
 		return
 	}
-	creds, _ := loadCredentials()
 	var targetChannel string
-	if creds != nil {
-		targetChannel = creds.ChannelID
+	if sess := y.session(); sess != nil {
+		sess.mu.RLock()
+		targetChannel = sess.config.ChannelID
+		sess.mu.RUnlock()
 	}
 	var avatarURL string
 	for _, a := range accounts {
@@ -924,7 +956,7 @@ func (y *ytmSource) upsertYTMTrack(row YTMResult, coverID string) (string, error
 	}); err != nil {
 		return "", err
 	}
-	return library.RemoteRef(library.KindYTM, row.VideoID), nil
+	return library.ScopedRemoteRef(library.KindYTM, y.id, row.VideoID), nil
 }
 
 func (y *ytmSource) syncLikedSongs(ctx context.Context, ops ytmAccountOps) error {
@@ -934,7 +966,7 @@ func (y *ytmSource) syncLikedSongs(ctx context.Context, ops ytmAccountOps) error
 	songsPage, cont, err := ops.getLikedSongs(ctx)
 	if err != nil {
 		if errors.Is(err, ytm.ErrSessionExpired) {
-			y.svc.authExpired.Store(true)
+			y.markExpired()
 		}
 		return err
 	}
@@ -1003,7 +1035,7 @@ func (y *ytmSource) syncAccountPlaylists(ctx context.Context, ops ytmAccountOps)
 	first, cont, err := ops.getLibraryPlaylists(ctx)
 	if err != nil {
 		if errors.Is(err, ytm.ErrSessionExpired) {
-			y.svc.authExpired.Store(true)
+			y.markExpired()
 		}
 		return nil, err
 	}
@@ -1028,12 +1060,16 @@ func (y *ytmSource) syncAccountPlaylists(ctx context.Context, ops ytmAccountOps)
 		cont = nextCont
 	}
 
-	channelID := strings.TrimPrefix(y.id, "ytm:")
-	if channelID == "default" {
-		channelID = ""
+	var channelID string
+	if sess := y.session(); sess != nil {
+		sess.mu.RLock()
+		channelID = sess.config.ChannelID
+		sess.mu.RUnlock()
 	}
-	if creds, err := loadCredentials(); err == nil && creds != nil && creds.ChannelID != "" {
-		channelID = creds.ChannelID
+	if channelID == "" && y.store != nil {
+		if row, err := y.store.LibraryRow(y.id); err == nil {
+			channelID = recordedYTMChannelID(row)
+		}
 	}
 
 	now := time.Now().Unix()
@@ -1168,7 +1204,7 @@ func (y *ytmSource) hydrateRemainingPlaylists(ctx context.Context, playlists []l
 }
 
 func (y *ytmSource) ensurePlaylistHydrated(ctx context.Context, playlistID string) error {
-	if y.svc.authExpired.Load() {
+	if y.isExpired() {
 		return nil
 	}
 	pl, err := y.findPlaylist(playlistID)
@@ -1221,7 +1257,7 @@ func (y *ytmSource) hydratePlaylist(ctx context.Context, pl library.Playlist) er
 	rows, remoteName, err := ops.loadPlaylist(ctx, pl.RemoteID)
 	if err != nil {
 		if errors.Is(err, ytm.ErrSessionExpired) {
-			y.svc.authExpired.Store(true)
+			y.markExpired()
 		}
 		return err
 	}
@@ -1309,7 +1345,7 @@ func (y *ytmSource) importPlaylist(ctx context.Context, hit YTMResult) (YTMImpor
 	}
 	if err := ops.setPlaylistSaved(y.syncCtx(ctx), rid, true); err != nil {
 		if errors.Is(err, ytm.ErrSessionExpired) {
-			y.svc.authExpired.Store(true)
+			y.markExpired()
 		}
 		emitErr(err)
 		return YTMImport{}, err
@@ -1389,14 +1425,14 @@ func (s *PlayerService) YTMAddTargets(libraryID, videoID string) ([]YTMAddTarget
 			byRemote[pl.RemoteID] = pl
 		}
 	}
-	ref := library.RemoteRef(library.KindYTM, vid)
+	ref := library.ScopedRemoteRef(library.KindYTM, libraryID, vid)
 
 	var remoteTargets []ytm.AddToPlaylistTarget
 	var remoteErr error
 	if ops.getAddToPlaylistTargets != nil {
 		remoteTargets, remoteErr = ops.getAddToPlaylistTargets(ytmSrc.syncCtx(s.ctx), vid)
 		if errors.Is(remoteErr, ytm.ErrSessionExpired) {
-			s.authExpired.Store(true)
+			ytmSrc.markExpired()
 			return nil, remoteErr
 		}
 	}
@@ -1471,7 +1507,7 @@ func (s *PlayerService) ImportYTMSong(libraryID string, hit YTMResult, to YTMSon
 		return YTMImport{}, fmt.Errorf("ytm: %q has no id", hit.Title)
 	}
 	hit.VideoID = vid
-	ref := library.RemoteRef(library.KindYTM, vid)
+	ref := library.ScopedRemoteRef(library.KindYTM, libraryID, vid)
 	actID := "ytm-import-song:" + vid
 	actTitle := firstNonEmpty(strings.TrimSpace(hit.Title), "Song")
 	emitSongErr := func(err error) {
@@ -1521,7 +1557,7 @@ func (s *PlayerService) ImportYTMSong(libraryID string, hit YTMResult, to YTMSon
 		}
 		if err := ops.setSongLiked(ytmSrc.syncCtx(s.ctx), vid, ytm.SongLikedStatusLiked); err != nil {
 			if errors.Is(err, ytm.ErrSessionExpired) {
-				s.authExpired.Store(true)
+				ytmSrc.markExpired()
 			}
 			emitSongErr(err)
 			return YTMImport{}, err
@@ -1554,7 +1590,7 @@ func (s *PlayerService) ImportYTMSong(libraryID string, hit YTMResult, to YTMSon
 		})
 		if err != nil {
 			if errors.Is(err, ytm.ErrSessionExpired) {
-				s.authExpired.Store(true)
+				ytmSrc.markExpired()
 			}
 			emitSongErr(err)
 			return YTMImport{}, err
@@ -1609,7 +1645,7 @@ func (s *PlayerService) ImportYTMSong(libraryID string, hit YTMResult, to YTMSon
 		}
 		if err != nil {
 			if errors.Is(err, ytm.ErrSessionExpired) {
-				s.authExpired.Store(true)
+				ytmSrc.markExpired()
 			}
 			emitSongErr(err)
 			return YTMImport{}, err

@@ -15,15 +15,15 @@ import (
 // refSQL derives a row's playable ref. A local track is played by its file
 // path, which track_file owns so a moved file resolves to its new path without
 // touching a stored ref; a missing file has no ref, which the caller treats as
-// unplayable. A remote row is played by its kind and the provider's own id,
-// which is exactly library.RemoteRef, and the two kinds are listed explicitly
-// so a new one has to be taught to remoteID as well: a ref this query invents
-// but the resolver cannot read would fail at play time instead of at review.
-const refSQL = `CASE t.kind
-	WHEN 'local' THEN COALESCE((SELECT f.path FROM track_file f
-	                            WHERE f.track_id = t.id AND f.missing = 0
-	                            ORDER BY f.path LIMIT 1), '')
-	WHEN 'ytm' THEN 'ytm:' || t.native_id
+// unplayable. Remote tracks in a remote library emit an instance-scoped ref
+// ("<kind>:<libraryId>:<nativeId>"), while remote tracks imported into a local
+// library emit an unscoped ref ("<kind>:<nativeId>").
+const refSQL = `CASE
+	WHEN t.kind = 'local' THEN COALESCE((SELECT f.path FROM track_file f
+	                                     WHERE f.track_id = t.id AND f.missing = 0
+	                                     ORDER BY f.path LIMIT 1), '')
+	WHEN t.kind <> '' AND lib.kind <> 'local' THEN t.kind || ':' || t.library_id || ':' || t.native_id
+	WHEN t.kind <> '' THEN t.kind || ':' || t.native_id
 	ELSE ''
 END`
 
@@ -34,7 +34,9 @@ const trackColumns = `
 	` + refSQL + ` AS ref,
 	(l.ref IS NOT NULL) AS liked`
 
-const trackFrom = ` FROM track t LEFT JOIN like l ON l.ref = (` + refSQL + `)`
+const trackFrom = ` FROM track t
+	JOIN library lib ON lib.id = t.library_id
+	LEFT JOIN like l ON l.ref = (` + refSQL + `)`
 
 func scanTrack(rows *sql.Rows) (library.Track, error) {
 	var t library.Track
@@ -239,6 +241,7 @@ func (s *Store) Search(libraryID, query string, limit int) ([]library.Track, err
 	rows, err := s.db.Query(
 		`SELECT`+trackColumns+
 			` FROM track t
+			  JOIN library lib ON lib.id = t.library_id
 			  JOIN track_fts ON track_fts.rowid = t.id
 			  LEFT JOIN like l ON l.ref = (`+refSQL+`)
 			  WHERE t.library_id = ? AND track_fts MATCH ?
@@ -254,19 +257,6 @@ func (s *Store) Search(libraryID, query string, limit int) ([]library.Track, err
 	return out, err
 }
 
-// remoteID reports the provider id when ref is a remote reference, which is
-// how a ref names a row that has no file. A local ref is a path, and a Windows
-// path carries a colon of its own, so the scheme is matched by its prefix
-// rather than by splitting on the first colon.
-func remoteID(ref string) (library.Kind, string, bool) {
-	kind, id, ok := strings.Cut(ref, ":")
-	if !ok || kind != string(library.KindYTM) || id == "" {
-		return "", "", false
-	}
-
-	return library.KindYTM, id, true
-}
-
 // rowQuerier is the read surface both a store and a transaction expose, so a
 // ref resolves the same way inside and outside a transaction.
 type rowQuerier interface {
@@ -277,7 +267,10 @@ type rowQuerier interface {
 // ensuring playlists in one library never link to tracks owned by another.
 func refTrackIDInLibrary(q rowQuerier, libraryID, ref string) (int64, error) {
 	var id int64
-	if kind, native, ok := remoteID(ref); ok {
+	if kind, refLibID, native, ok := library.ParseRemoteRef(ref); ok {
+		if refLibID != "" && refLibID != libraryID {
+			return 0, sql.ErrNoRows
+		}
 		err := q.QueryRow(
 			`SELECT id FROM track WHERE library_id = ? AND kind = ? AND native_id = ? LIMIT 1`,
 			libraryID, string(kind), native,
@@ -293,22 +286,34 @@ func refTrackIDInLibrary(q rowQuerier, libraryID, ref string) (int64, error) {
 	return id, err
 }
 
-// TrackByRef resolves a playable ref back to its earliest catalogue row.
+// TrackByRef resolves a playable ref back to its catalogue row. Scoped refs
+// match strictly by owning library_id; unscoped remote refs prefer a local
+// import row before falling back to remote libraries.
 func (s *Store) TrackByRef(ref string) (library.Track, bool, error) {
 	var (
 		rows *sql.Rows
 		err  error
 	)
-	if kind, native, ok := remoteID(ref); ok {
-		rows, err = s.db.Query(
-			`SELECT`+trackColumns+trackFrom+
-				` WHERE t.kind = ? AND t.native_id = ? ORDER BY t.id LIMIT 1`,
-			string(kind), native,
-		)
+	if kind, libID, native, ok := library.ParseRemoteRef(ref); ok {
+		if libID != "" {
+			rows, err = s.db.Query(
+				`SELECT`+trackColumns+trackFrom+
+					` WHERE t.library_id = ? AND t.kind = ? AND t.native_id = ? ORDER BY t.id LIMIT 1`,
+				libID, string(kind), native,
+			)
+		} else {
+			rows, err = s.db.Query(
+				`SELECT`+trackColumns+trackFrom+
+					` WHERE t.kind = ? AND t.native_id = ?
+					  ORDER BY (CASE WHEN lib.kind = 'local' THEN 0 ELSE 1 END), t.id LIMIT 1`,
+				string(kind), native,
+			)
+		}
 	} else {
 		rows, err = s.db.Query(
 			`SELECT`+trackColumns+
 				` FROM track t
+				  JOIN library lib ON lib.id = t.library_id
 				  JOIN track_file f ON f.track_id = t.id AND f.path = ?
 				  LEFT JOIN like l ON l.ref = (`+refSQL+`)
 				  ORDER BY t.id LIMIT 1`, ref,
@@ -488,6 +493,7 @@ func (s *Store) PlaylistTracks(playlistID string, limit, offset int) ([]library.
 		`SELECT`+trackColumns+
 			` FROM playlist_entry e
 			  JOIN track t ON t.id = e.track_id
+			  JOIN library lib ON lib.id = t.library_id
 			  LEFT JOIN like l ON l.ref = (`+refSQL+`)
 			  WHERE e.playlist_id = ?
 			  ORDER BY e.position LIMIT ? OFFSET ?`,

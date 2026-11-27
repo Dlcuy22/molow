@@ -24,7 +24,7 @@ func TestLiveExperimentCredentials(t *testing.T) {
 	credPath := filepath.Join(appData, "molow-win-ytm-exp", "credentials.enc")
 	ks := NewWindowsCredentialStore("molow-exp:ytm-credentials-key")
 
-	creds, err := loadCredentialsFrom(credPath, ks)
+	creds, err := loadLegacyCredentialsFrom(credPath, ks)
 	if err != nil {
 		t.Fatalf("loadCredentialsFrom(%s): %v", credPath, err)
 	}

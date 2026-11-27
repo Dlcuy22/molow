@@ -880,7 +880,7 @@ func TestMigration005MigratesTrackFilesAndLikes(t *testing.T) {
 func TestYTMSyncAndRemotePlaylistHelpers(t *testing.T) {
 	s := newTestStore(t)
 	lib, err := s.AddLibrary(library.Library{
-		ID: "ytm:UC123", Kind: library.KindYTM, Name: "Kasaki",
+		ID: "ytm_UC123", Kind: library.KindYTM, Name: "Kasaki",
 	})
 	if err != nil {
 		t.Fatalf("AddLibrary: %v", err)
@@ -918,8 +918,8 @@ func TestYTMSyncAndRemotePlaylistHelpers(t *testing.T) {
 		t.Fatalf("UpsertRemotePlaylist PL2: %v", err)
 	}
 
-	r1 := library.RemoteRef(library.KindYTM, "v1")
-	r2 := library.RemoteRef(library.KindYTM, "v2")
+	r1 := library.ScopedRemoteRef(library.KindYTM, lib.ID, "v1")
+	r2 := library.ScopedRemoteRef(library.KindYTM, lib.ID, "v2")
 	if err := s.ReplacePlaylistEntries(pl1.ID, []string{r2, r1, r2}); err != nil {
 		t.Fatalf("ReplacePlaylistEntries: %v", err)
 	}
@@ -1046,5 +1046,191 @@ func TestWatchSourcesAndScopedMissing(t *testing.T) {
 	}
 	if has, err := s.HasWatchedSources(lib.ID); err != nil || has {
 		t.Fatalf("HasWatchedSources after unwatching all = (%v, %v), want false", has, err)
+	}
+}
+
+func TestMigration009AndNormalizeLegacyLibraryID(t *testing.T) {
+	s := newTestStore(t)
+
+	row, err := s.AddLibraryRow(LibraryRow{
+		Library: library.Library{
+			ID: "ytm:UCold", Kind: library.KindYTM, Name: "Old YTM",
+		},
+		AccountID:    "UCold",
+		CredentialID: "cred_old",
+		Config:       `{"email":"a@b.com"}`,
+	})
+	if err != nil {
+		t.Fatalf("AddLibraryRow: %v", err)
+	}
+	if row.CredentialID != "cred_old" || row.Config != `{"email":"a@b.com"}` {
+		t.Fatalf("row = %+v", row)
+	}
+
+	if _, err := s.UpsertRemoteTrack("ytm:UCold", library.KindYTM, TrackRow{NativeID: "vid1", Title: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	pl, err := s.UpsertRemotePlaylist("ytm:UCold", "Liked Music", "LM", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplacePlaylistEntries(pl.ID, []string{"ytm:vid1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSyncTime("ytm:UCold", "playlists", 12345); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddTombstone("ytm:UCold", "playlist:PLx", 999); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetLiked("ytm:vid1", true); err != nil {
+		t.Fatal(err)
+	}
+
+	// Also put vid1 into a local library plus vid2 only in YTM, so
+	// MigrateUnscopedRemoteLikes preserves local unscoped likes while scoping YTM.
+	if _, err := s.AddLibrary(library.Library{ID: "local:mix", Kind: library.KindLocal, Name: "Local"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertRemoteTrack("local:mix", library.KindYTM, TrackRow{NativeID: "vid1", Title: "One"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertRemoteTrack("ytm:UCold", library.KindYTM, TrackRow{NativeID: "vid2", Title: "Two"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetLiked("ytm:vid2", true); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.NormalizeLegacyLibraryID("ytm:UCold", "ytm_deadbeef"); err != nil {
+		t.Fatalf("NormalizeLegacyLibraryID: %v", err)
+	}
+	if err := s.MigrateUnscopedRemoteLikes("ytm_deadbeef"); err != nil {
+		t.Fatalf("MigrateUnscopedRemoteLikes: %v", err)
+	}
+
+	gotRow, err := s.LibraryRow("ytm_deadbeef")
+	if err != nil {
+		t.Fatalf("LibraryRow(ytm_deadbeef): %v", err)
+	}
+	if gotRow.CredentialID != "cred_old" || gotRow.AccountID != "UCold" || gotRow.TrackCount != 2 {
+		t.Fatalf("normalized row = %+v", gotRow)
+	}
+	if _, err := s.LibraryRow("ytm:UCold"); err == nil {
+		t.Fatal("old library id ytm:UCold still exists")
+	}
+	if at, err := s.SyncTime("ytm_deadbeef", "playlists"); err != nil || at != 12345 {
+		t.Fatalf("SyncTime = (%d, %v), want 12345", at, err)
+	}
+	if active, err := s.ActiveTombstones("ytm_deadbeef", 0); err != nil || !active["playlist:PLx"] {
+		t.Fatalf("ActiveTombstones = (%+v, %v)", active, err)
+	}
+	if pls, err := s.Playlists("ytm_deadbeef"); err != nil || len(pls) != 1 || pls[0].TrackCount != 1 {
+		t.Fatalf("Playlists = (%+v, %v)", pls, err)
+	}
+	if ok, _ := s.Liked("ytm:ytm_deadbeef:vid1"); !ok {
+		t.Fatal("missing migrated scoped like for vid1")
+	}
+	if ok, _ := s.Liked("ytm:vid1"); !ok {
+		t.Fatal("local library unscoped like for vid1 was wrongly removed")
+	}
+	if ok, _ := s.Liked("ytm:ytm_deadbeef:vid2"); !ok {
+		t.Fatal("missing migrated scoped like for vid2")
+	}
+	if ok, _ := s.Liked("ytm:vid2"); ok {
+		t.Fatal("YTM-only unscoped like for vid2 should have been removed")
+	}
+}
+
+func TestScopedRemoteRefsAndPerLibraryLikeIsolation(t *testing.T) {
+	s := newTestStore(t)
+
+	if _, err := s.AddLibrary(library.Library{ID: "ytm_a", Kind: library.KindYTM, Name: "YTM A"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddLibrary(library.Library{ID: "ytm_b", Kind: library.KindYTM, Name: "YTM B"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddLibrary(library.Library{ID: "local_1", Kind: library.KindLocal, Name: "Local"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.UpsertRemoteTrack("ytm_a", library.KindYTM, TrackRow{NativeID: "vidShared", Title: "A Track"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertRemoteTrack("ytm_b", library.KindYTM, TrackRow{NativeID: "vidShared", Title: "B Track"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertRemoteTrack("local_1", library.KindYTM, TrackRow{NativeID: "vidShared", Title: "Local Copy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Remote libraries emit scoped refs; local imports emit unscoped refs.
+	tracksA, _, err := s.Tracks("ytm_a", 10, 0)
+	if err != nil || len(tracksA) != 1 || tracksA[0].Ref != "ytm:ytm_a:vidShared" {
+		t.Fatalf("tracksA = (%+v, %v)", tracksA, err)
+	}
+	tracksB, _, err := s.Tracks("ytm_b", 10, 0)
+	if err != nil || len(tracksB) != 1 || tracksB[0].Ref != "ytm:ytm_b:vidShared" {
+		t.Fatalf("tracksB = (%+v, %v)", tracksB, err)
+	}
+	tracksL, _, err := s.Tracks("local_1", 10, 0)
+	if err != nil || len(tracksL) != 1 || tracksL[0].Ref != "ytm:vidShared" {
+		t.Fatalf("tracksL = (%+v, %v)", tracksL, err)
+	}
+
+	// Like in ytm_a only; ytm_b and local_1 stay unliked.
+	if err := s.SetLiked("ytm:ytm_a:vidShared", true); err != nil {
+		t.Fatal(err)
+	}
+	tracksA, _, _ = s.Tracks("ytm_a", 10, 0)
+	tracksB, _, _ = s.Tracks("ytm_b", 10, 0)
+	tracksL, _, _ = s.Tracks("local_1", 10, 0)
+	if !tracksA[0].Liked || tracksB[0].Liked || tracksL[0].Liked {
+		t.Fatalf("like isolation failed: A=%v B=%v L=%v", tracksA[0].Liked, tracksB[0].Liked, tracksL[0].Liked)
+	}
+
+	// Scoped TrackByRef resolves to the exact owning library; unscoped prefers local.
+	gotB, ok, err := s.TrackByRef("ytm:ytm_b:vidShared")
+	if err != nil || !ok || gotB.LibraryID != "ytm_b" || gotB.Title != "B Track" {
+		t.Fatalf("TrackByRef scoped B = (%+v, %v, %v)", gotB, ok, err)
+	}
+	gotU, ok, err := s.TrackByRef("ytm:vidShared")
+	if err != nil || !ok || gotU.LibraryID != "local_1" {
+		t.Fatalf("TrackByRef unscoped = (%+v, %v, %v)", gotU, ok, err)
+	}
+}
+
+func TestAddLibraryAccountIDFallback(t *testing.T) {
+	s := newTestStore(t)
+
+	if _, err := s.AddLibrary(library.Library{
+		ID:   "ytm_deadbeef01234567",
+		Kind: library.KindYTM,
+		Name: "Modern ID",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	modern, err := s.LibraryRow("ytm_deadbeef01234567")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if modern.AccountID != "" {
+		t.Fatalf("modern AccountID = %q, want empty", modern.AccountID)
+	}
+
+	if _, err := s.AddLibrary(library.Library{
+		ID:   "ytm:UClegacy",
+		Kind: library.KindYTM,
+		Name: "Legacy ID",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := s.LibraryRow("ytm:UClegacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.AccountID != "UClegacy" {
+		t.Fatalf("legacy AccountID = %q, want UClegacy", legacy.AccountID)
 	}
 }

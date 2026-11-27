@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dlcuy22/molow/internal/library"
 	"github.com/dlcuy22/molow/internal/lyrics"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -62,7 +63,8 @@ func (s *PlayerService) syncLyrics(snap Snapshot) {
 	if snap.Path == "" || snap.Duration <= 0 {
 		return
 	}
-	if snap.Title == "" && !isYTMRef(snap.Path) {
+	_, _, nativeRef, isRemote := library.ParseRemoteRef(snap.Path)
+	if snap.Title == "" && !isRemote {
 		// A local track queued but not yet tagged has nothing to search for;
 		// the tags arrive with the same pump.
 		return
@@ -106,6 +108,8 @@ func (s *PlayerService) syncLyrics(snap Snapshot) {
 	var ref string
 	if isYTMRef(snap.Path) {
 		ref = ytmID(snap.Path)
+	} else if isRemote {
+		ref = nativeRef
 	}
 	cancel, done := startLyricsFetch(s, snap.Path, ref, meta)
 	s.lyrics.jobPath = snap.Path
@@ -151,10 +155,10 @@ func startLyricsFetch(s *PlayerService, path, ref string, meta lyrics.TrackMeta)
 			log.Debug("lyrics: chain missed", "path", path, "error", err)
 		}
 		if doc == nil {
-			// For a reference, the catalogue's own sheet closes the chain. It
-			// is not written as a sidecar, so the next session runs the chain
+			// For a remote reference, the source's own lyric tier closes the chain.
+			// It is not written as a sidecar, so the next session runs the chain
 			// again.
-			if tier, ok := s.ytmSheetTier(path); ok {
+			if tier, ok := s.remoteSheetTier(ctx, path); ok {
 				doc = tier
 				log.Debug("lyrics: catalogue tier", "path", path, "lines", len(tier.Lines), "synced", tier.Synced)
 			}
@@ -188,12 +192,28 @@ func startLyricsFetch(s *PlayerService, path, ref string, meta lyrics.TrackMeta)
 	return cancel, done
 }
 
+func (s *PlayerService) remoteSheetTier(ctx context.Context, path string) (*lyrics.Document, bool) {
+	if s.sources != nil {
+		if doc, err := s.sources.FetchLyrics(ctx, path); err == nil && doc != nil {
+			return doc, true
+		}
+	}
+	if s.sources == nil && isYTMRef(path) {
+		return s.ytmSheetTier(path)
+	}
+
+	return nil, false
+}
+
 // sidecarPath returns the lyric file already on disk for path, or "" when the
 // loader would start the chain. It follows the loader's own lookup, so a file
 // that exists costs no network.
 func (s *PlayerService) sidecarPath(path string) string {
 	if isYTMRef(path) {
 		return lyrics.IDPath(ytmID(path), s.lyricsDirs())
+	}
+	if _, _, native, ok := library.ParseRemoteRef(path); ok {
+		return lyrics.IDPath(native, s.lyricsDirs())
 	}
 	doc, err := lyrics.Load(path)
 	if err != nil || doc == nil {
@@ -409,6 +429,9 @@ func (s *PlayerService) instrumentalMarks(path string, doc *lyrics.Document) *ly
 func (s *PlayerService) readLyrics(path string) (*lyrics.Document, error) {
 	if isYTMRef(path) {
 		return lyrics.LoadRef(ytmID(path), s.lyricsDirs())
+	}
+	if _, _, native, ok := library.ParseRemoteRef(path); ok {
+		return lyrics.LoadRef(native, s.lyricsDirs())
 	}
 
 	return lyrics.Load(path)

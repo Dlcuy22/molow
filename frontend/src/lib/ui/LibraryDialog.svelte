@@ -1,32 +1,61 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import CaretDown from "phosphor-svelte/lib/CaretDown";
   import WarningCircle from "phosphor-svelte/lib/WarningCircle";
+  import {
+    authBusy,
+    authError,
+    checkKeyring,
+    createYTMLibraryWithBrowser,
+    createYTMLibraryWithCookie,
+    keyringError,
+  } from "../auth";
+  import type { LibraryInfo } from "../types";
+
+  type LibraryKindOption = "local" | "ytm";
+
+  const LIBRARY_TYPES: { value: LibraryKindOption; label: string }[] = [
+    { value: "local", label: "Local" },
+    { value: "ytm", label: "YouTube Music" },
+  ];
 
   let {
     mode = "create",
+    initialKind = "local",
     initialName = "",
     initialDescription = "",
     busy = false,
     error = "",
     onsubmit,
+    oncreated,
     oncancel,
   }: {
     mode?: "create" | "edit";
+    initialKind?: LibraryKindOption;
     initialName?: string;
     initialDescription?: string;
     busy?: boolean;
     error?: string;
     onsubmit: (name: string, description: string) => void;
+    oncreated?: (info: LibraryInfo) => void;
     oncancel: () => void;
   } = $props();
 
+  let kind = $state<LibraryKindOption>("local");
   let name = $state("");
   let description = $state("");
+  let cookieInput = $state("");
   let nameField = $state<HTMLInputElement | null>(null);
 
   onMount(() => {
+    kind = mode === "edit" ? "local" : initialKind;
     name = initialName;
     description = initialDescription;
+    authError.set("");
+    keyringError.set("");
+    if (mode === "create" && kind === "ytm") {
+      void checkKeyring();
+    }
     if (nameField) {
       nameField.focus();
       if (mode === "edit") {
@@ -35,20 +64,43 @@
     }
   });
 
-  const title = $derived(mode === "edit" ? "Edit library" : "Let's create a library");
+  function selectKind(next: LibraryKindOption) {
+    if (effectiveBusy || kind === next) {
+      return;
+    }
+    kind = next;
+    authError.set("");
+    if (next === "ytm") {
+      void checkKeyring();
+    }
+  }
+
+  const effectiveBusy = $derived(busy || (mode === "create" && kind === "ytm" && $authBusy));
+  const blockedByKeyring = $derived(mode === "create" && kind === "ytm" && $keyringError !== "");
+  const displayError = $derived(
+    mode === "create" && kind === "ytm" ? $authError || error : error,
+  );
+
+  const title = $derived(mode === "edit" ? "Edit library" : "Create a library");
   const subtitle = $derived(
     mode === "edit"
       ? "Update this library's name or description."
-      : "Library is where you store and manage your albums, folders with songs, or YouTube Music tracks and playlists.",
+      : kind === "ytm"
+        ? "Connect a YouTube Music account to mirror Liked Music and playlists."
+        : "Store and organize local albums and watched folders.",
   );
   const submitLabel = $derived(
-    busy
-      ? mode === "edit"
+    mode === "edit"
+      ? busy
         ? "Saving..."
-        : "Creating..."
-      : mode === "edit"
-        ? "Save"
-        : "Create library",
+        : "Save"
+      : kind === "ytm"
+        ? $authBusy
+          ? "Waiting for sign-in..."
+          : "Sign in and create"
+        : busy
+          ? "Creating..."
+          : "Create library",
   );
 
   const trimmedName = $derived(name.trim());
@@ -56,35 +108,77 @@
   const unchanged = $derived(
     mode === "edit" && trimmedName === initialName.trim() && trimmedDesc === initialDescription.trim(),
   );
-  const canSubmit = $derived(!busy && trimmedName !== "" && !unchanged);
+  const canSubmit = $derived(
+    mode === "create" && kind === "ytm"
+      ? !effectiveBusy && !blockedByKeyring
+      : !effectiveBusy && trimmedName !== "" && !unchanged,
+  );
 
-  function submit() {
-    if (canSubmit) {
+  function submitLocal() {
+    if ((mode === "edit" || kind === "local") && canSubmit) {
       onsubmit(trimmedName, trimmedDesc);
     }
   }
 
+  async function submitYTMBrowser() {
+    if (effectiveBusy || blockedByKeyring) {
+      return;
+    }
+    const created = await createYTMLibraryWithBrowser(trimmedName, trimmedDesc);
+    if (created) {
+      if (oncreated) {
+        oncreated(created);
+      } else {
+        oncancel();
+      }
+    }
+  }
+
+  async function submitYTMCookie() {
+    if (effectiveBusy || blockedByKeyring || cookieInput.trim() === "") {
+      return;
+    }
+    const created = await createYTMLibraryWithCookie(trimmedName, trimmedDesc, cookieInput);
+    if (created) {
+      if (oncreated) {
+        oncreated(created);
+      } else {
+        oncancel();
+      }
+    }
+  }
+
+  function submitPrimary() {
+    if (!canSubmit) {
+      return;
+    }
+    if (mode === "create" && kind === "ytm") {
+      void submitYTMBrowser();
+      return;
+    }
+    submitLocal();
+  }
+
   function handleKeydown(e: KeyboardEvent) {
-    // Keep keyboard navigation inside the dialog instead of triggering player shortcuts.
     e.stopPropagation();
-    if (e.key === "Escape" && !busy) {
+    if (e.key === "Escape" && !effectiveBusy) {
       e.preventDefault();
       oncancel();
     } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
-      submit();
+      submitPrimary();
     }
   }
 
   function handleNameKeydown(e: KeyboardEvent) {
     if (e.key === "Enter") {
       e.preventDefault();
-      submit();
+      submitPrimary();
     }
   }
 
   function handleBackdropPointerDown(e: PointerEvent) {
-    if (e.target === e.currentTarget && !busy) {
+    if (e.target === e.currentTarget && !effectiveBusy) {
       oncancel();
     }
   }
@@ -96,7 +190,7 @@
   onpointerdown={handleBackdropPointerDown}
 >
   <div
-    class="motion-dialog w-[min(420px,calc(100vw-32px))] rounded-lg border border-line bg-surface p-5 shadow-menu"
+    class="motion-dialog w-[min(440px,calc(100vw-32px))] rounded-lg border border-line bg-surface p-5 shadow-menu"
     role="dialog"
     aria-modal="true"
     aria-labelledby="library-dialog-title"
@@ -115,23 +209,30 @@
       class="mt-4 flex flex-col gap-3.5"
       onsubmit={(e) => {
         e.preventDefault();
-        submit();
+        submitPrimary();
       }}
     >
       <label class="flex flex-col gap-1.5 text-[12px] font-medium text-fg">
-        <span>Name</span>
+        <span>
+          Name
+          {#if mode === "create" && kind === "ytm"}
+            <span class="font-normal text-muted">(optional)</span>
+          {/if}
+        </span>
         <input
           bind:this={nameField}
           bind:value={name}
           onkeydown={handleNameKeydown}
-          class="h-8 rounded-[6px] border border-line bg-bg px-2.5 text-[12px] font-normal text-fg placeholder:text-muted/70 transition-colors hover:border-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          class="h-8 rounded-[6px] border border-line bg-bg px-2.5 text-[12px] font-normal text-fg placeholder:text-muted/70 transition-colors hover:border-muted focus:border-muted focus:outline-none"
           type="text"
-          placeholder="Library name"
+          placeholder={mode === "create" && kind === "ytm"
+            ? "Uses YouTube account name if blank"
+            : "Library name"}
           autocomplete="off"
           spellcheck="false"
           maxlength="80"
-          required
-          disabled={busy}
+          required={mode === "edit" || kind === "local"}
+          disabled={effectiveBusy}
         />
       </label>
 
@@ -141,36 +242,102 @@
         </span>
         <textarea
           bind:value={description}
-          rows="3"
-          class="resize-none rounded-[6px] border border-line bg-bg px-2.5 py-2 text-[12px] font-normal text-fg placeholder:text-muted/70 transition-colors hover:border-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          rows="2"
+          class="resize-none rounded-[6px] border border-line bg-bg px-2.5 py-2 text-[12px] font-normal text-fg placeholder:text-muted/70 transition-colors hover:border-muted focus:border-muted focus:outline-none"
           placeholder="What you keep in this library"
           maxlength="240"
-          disabled={busy}
+          disabled={effectiveBusy}
         ></textarea>
       </label>
 
-      {#if error !== ""}
+      {#if mode === "create"}
+        <label class="flex flex-col gap-1.5 text-[12px] font-medium text-fg">
+          <span>Type</span>
+          <span class="relative">
+            <select
+              value={kind}
+              disabled={effectiveBusy}
+              class="h-8 w-full appearance-none rounded-[6px] border border-line bg-bg pl-2.5 pr-8 text-[12px] font-normal text-fg transition-colors hover:border-muted focus:border-muted focus:outline-none disabled:opacity-40"
+              onchange={(e) => selectKind(e.currentTarget.value as LibraryKindOption)}
+            >
+              {#each LIBRARY_TYPES as option (option.value)}
+                <option value={option.value} class="bg-surface text-fg">
+                  {option.label}
+                </option>
+              {/each}
+            </select>
+            <CaretDown
+              size="12"
+              class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted"
+              aria-hidden="true"
+            />
+          </span>
+        </label>
+      {/if}
+
+      {#if blockedByKeyring}
+        <div
+          class="flex items-start gap-2 rounded-[6px] border border-danger bg-bg px-3 py-2.5 text-[12px] text-fg"
+          role="alert"
+        >
+          <WarningCircle size="16" class="mt-0.5 shrink-0 text-danger" aria-hidden="true" />
+          <div class="min-w-0">
+            <p class="font-medium">System keyring unavailable</p>
+            <p class="mt-0.5 leading-relaxed text-muted">{$keyringError}</p>
+          </div>
+        </div>
+      {:else if displayError !== ""}
         <div
           class="flex items-start gap-2 rounded-[6px] border border-danger bg-bg px-2.5 py-2 text-[12px] text-fg"
           role="alert"
         >
           <WarningCircle size="16" class="mt-0.5 shrink-0 text-danger" aria-hidden="true" />
-          <span>{error}</span>
+          <span>{displayError}</span>
         </div>
+      {/if}
+
+      {#if mode === "create" && kind === "ytm"}
+        <details class="rounded-[6px] border border-line/70 bg-bg/60">
+          <summary
+            class="cursor-pointer select-none px-3 py-2 text-[12px] text-muted transition-colors hover:text-fg focus:text-fg focus:outline-none"
+          >
+            Having trouble? Paste cookie header
+          </summary>
+          <div class="flex flex-col gap-2.5 border-t border-line/70 p-3">
+            <textarea
+              bind:value={cookieInput}
+              rows="3"
+              class="resize-none rounded-[6px] border border-line bg-surface px-2.5 py-2 text-[11px] font-normal text-fg placeholder:text-muted/70 transition-colors hover:border-muted focus:border-muted focus:outline-none"
+              placeholder="SAPISID=...; SID=...; __Secure-3PSID=..."
+              spellcheck="false"
+              disabled={effectiveBusy || blockedByKeyring}
+            ></textarea>
+            <div class="flex justify-end">
+              <button
+                type="button"
+                class="h-8 rounded-[6px] border border-line bg-surface px-3 text-[12px] text-fg transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-40"
+                disabled={effectiveBusy || blockedByKeyring || cookieInput.trim() === ""}
+                onclick={() => void submitYTMCookie()}
+              >
+                {$authBusy ? "Verifying..." : "Create with cookie"}
+              </button>
+            </div>
+          </div>
+        </details>
       {/if}
 
       <div class="mt-1 flex justify-end gap-2">
         <button
           type="button"
           class="h-8 rounded-[6px] px-3 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-40"
-          disabled={busy}
+          disabled={effectiveBusy}
           onclick={oncancel}
         >
           Cancel
         </button>
         <button
           type="submit"
-          class="h-8 rounded-[6px] bg-fg px-3 text-[12px] font-medium text-bg-dark transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-40"
+          class="h-8 rounded-[6px] bg-fg px-3 text-[12px] font-medium text-bg-dark transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-40"
           disabled={!canSubmit}
         >
           {submitLabel}

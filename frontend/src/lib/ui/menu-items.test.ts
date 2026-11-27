@@ -246,10 +246,83 @@ describe("menuItemsFor library", () => {
 
   it("uses Refresh library for ytm libraries", () => {
     const items = menuItemsFor(
-      { kind: "library", id: "ytm:UC1", label: "YTM", libraryId: "ytm:UC1" },
+      { kind: "library", id: "ytm_1", label: "YTM", libraryId: "ytm_1" },
       deps({ libraryKindFor: () => "ytm" }),
     );
 
     expect(labels(items)).toEqual(["Open", "Edit", "Refresh library", "Remove from Molow"]);
+  });
+
+  it("offers Sign out on signed-in remote libraries without Re-sign in", () => {
+    const signedOut: string[] = [];
+    const items = menuItemsFor(
+      { kind: "library", id: "ytm_1", label: "YTM", libraryId: "ytm_1" },
+      deps({
+        libraryKindFor: () => "ytm",
+        libraryStatusFor: () => ({
+          libraryId: "ytm_1",
+          libraryName: "YTM",
+          kind: "ytm",
+          signedIn: true,
+          expired: false,
+        }),
+        reSignInLibrary: () => {},
+        signOutLibrary: (id) => signedOut.push(id),
+      }),
+    );
+
+    expect(labels(items)).toEqual(["Open", "Edit", "Refresh library", "Sign out", "Remove from Molow"]);
+    items.find((i) => i.label === "Sign out")?.run?.();
+    expect(signedOut).toEqual(["ytm_1"]);
+  });
+
+  it("offers Re-sign in and Sign out on expired remote libraries", () => {
+    const reauth: string[] = [];
+    const items = menuItemsFor(
+      { kind: "library", id: "ytm_1", label: "YTM", libraryId: "ytm_1" },
+      deps({
+        libraryKindFor: () => "ytm",
+        libraryStatusFor: () => ({
+          libraryId: "ytm_1",
+          libraryName: "YTM",
+          kind: "ytm",
+          signedIn: false,
+          expired: true,
+        }),
+        reSignInLibrary: (id) => reauth.push(id),
+        signOutLibrary: () => {},
+      }),
+    );
+
+    expect(labels(items)).toEqual([
+      "Open",
+      "Edit",
+      "Refresh library",
+      "Re-sign in",
+      "Sign out",
+      "Remove from Molow",
+    ]);
+    items.find((i) => i.label === "Re-sign in")?.run?.();
+    expect(reauth).toEqual(["ytm_1"]);
+  });
+
+  it("offers Sign in on signed-out remote libraries without Sign out", () => {
+    const items = menuItemsFor(
+      { kind: "library", id: "ytm_1", label: "YTM", libraryId: "ytm_1" },
+      deps({
+        libraryKindFor: () => "ytm",
+        libraryStatusFor: () => ({
+          libraryId: "ytm_1",
+          libraryName: "YTM",
+          kind: "ytm",
+          signedIn: false,
+          expired: false,
+        }),
+        reSignInLibrary: () => {},
+        signOutLibrary: () => {},
+      }),
+    );
+
+    expect(labels(items)).toEqual(["Open", "Edit", "Refresh library", "Sign in", "Remove from Molow"]);
   });
 });

@@ -3,6 +3,7 @@ package backend
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -32,15 +33,26 @@ func newYTMTestService(t *testing.T) (*PlayerService, *sqlite.Store) {
 	if err != nil {
 		t.Fatalf("artwork.Open: %v", err)
 	}
-	svc := &PlayerService{
-		ctx:      context.Background(),
-		art:      art,
-		ytm:      newYTMIndex(),
-		ytmProv:  newYTMProvider(newYTMIndex(), art, false, nil),
-		libStore: store,
-		libs:     map[string]library.Source{},
-		scanning: map[string]bool{},
+	cs, err := defaultCredentialStore()
+	if err != nil {
+		t.Fatalf("defaultCredentialStore: %v", err)
 	}
+	ytmIdx := newYTMIndex()
+	ytmProv := newYTMProvider(ytmIdx, art, false, nil)
+	svc := &PlayerService{
+		ctx:       context.Background(),
+		art:       art,
+		credStore: cs,
+		ytm:       ytmIdx,
+		ytmProv:   ytmProv,
+		libStore:  store,
+		libs:      map[string]library.Source{},
+		scanning:  map[string]bool{},
+		sources:   newAudioRouter(),
+	}
+	svc.ytmMgr = newYTMManager(svc, ytmProv)
+	svc.sources.Register(newLocalAdapter(svc))
+	svc.sources.Register(svc.ytmMgr)
 	svc.libMu.Lock()
 	for _, srcAny := range svc.libs {
 		if ytmSrc, ok := srcAny.(*ytmSource); ok {
@@ -72,9 +84,6 @@ func TestYTMLibraryAutoCreationAndHybridSync(t *testing.T) {
 		CookieHeader: "SAPISID=s; SID=id",
 		ChannelID:    "UCtest",
 		Name:         "Kasaki Nomaraba",
-	}
-	if err := saveCredentials(creds); err != nil {
-		t.Fatalf("saveCredentials: %v", err)
 	}
 
 	svc.ytmOpsOverride = func(ops *ytmAccountOps) {
@@ -114,8 +123,8 @@ func TestYTMLibraryAutoCreationAndHybridSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureYTMLibrary: %v", err)
 	}
-	if libID != "ytm:UCtest" {
-		t.Fatalf("libID = %q, want ytm:UCtest", libID)
+	if libID != "ytm_UCtest" {
+		t.Fatalf("libID = %q, want ytm_UCtest", libID)
 	}
 
 	src := svc.libs[libID].(*ytmSource)
@@ -137,7 +146,7 @@ func TestYTMLibraryAutoCreationAndHybridSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Feed playlist: %v", err)
 	}
-	if len(page.Shelves) != 1 || len(page.Shelves[0].Items) != 1 || page.Shelves[0].Items[0].Ref != "ytm:vid2" {
+	if len(page.Shelves) != 1 || len(page.Shelves[0].Items) != 1 || page.Shelves[0].Items[0].Ref != library.ScopedRemoteRef(library.KindYTM, libID, "vid2") {
 		t.Fatalf("hydrated playlist page = %+v", page)
 	}
 
@@ -151,17 +160,14 @@ func TestYTMLibraryAutoCreationAndHybridSync(t *testing.T) {
 func TestYTMSignOutKeepOrDeleteLibrary(t *testing.T) {
 	svc, store := newYTMTestService(t)
 	creds := &Credentials{CookieHeader: "SAPISID=s; SID=id", ChannelID: "UCkeep", Name: "Keep Me"}
-	if err := saveCredentials(creds); err != nil {
-		t.Fatal(err)
-	}
 	libID, err := svc.ensureYTMLibrary(creds)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Sign out with deleteLibrary=false -> keeps library with StatusSignedOut.
-	if err := svc.SignOutWithOptions(false); err != nil {
-		t.Fatalf("SignOutWithOptions(false): %v", err)
+	if err := svc.SignOutLibrary(libID, false); err != nil {
+		t.Fatalf("SignOutLibrary(false): %v", err)
 	}
 	libs, err := svc.Libraries()
 	if err != nil || len(libs) != 1 || libs[0].ID != libID || libs[0].Status != library.StatusSignedOut {
@@ -169,14 +175,14 @@ func TestYTMSignOutKeepOrDeleteLibrary(t *testing.T) {
 	}
 
 	// Sign out with deleteLibrary=true -> deletes YTM library from SQLite and registry.
-	if err := svc.SignOutWithOptions(true); err != nil {
-		t.Fatalf("SignOutWithOptions(true): %v", err)
+	if err := svc.SignOutLibrary(libID, true); err != nil {
+		t.Fatalf("SignOutLibrary(true): %v", err)
 	}
 	libs, err = store.Libraries()
 	if err != nil || len(libs) != 0 {
 		t.Fatalf("after delete sign-out libs = (%+v, %v), want empty", libs, err)
 	}
-	if slices.ContainsFunc(libs, func(l library.Library) bool { return strings.HasPrefix(l.ID, "ytm:") }) {
+	if slices.ContainsFunc(libs, func(l library.Library) bool { return strings.HasPrefix(l.ID, "ytm_") }) {
 		t.Fatal("ytm library survived deleteLibrary=true")
 	}
 }
@@ -184,9 +190,6 @@ func TestYTMSignOutKeepOrDeleteLibrary(t *testing.T) {
 func TestYTMRemoteWrites(t *testing.T) {
 	svc, store := newYTMTestService(t)
 	creds := &Credentials{CookieHeader: "SAPISID=s; SID=id", ChannelID: "UCw", Name: "Writer"}
-	if err := saveCredentials(creds); err != nil {
-		t.Fatal(err)
-	}
 	libID, err := svc.ensureYTMLibrary(creds)
 	if err != nil {
 		t.Fatal(err)
@@ -210,21 +213,22 @@ func TestYTMRemoteWrites(t *testing.T) {
 		ops.addSongsToPlaylist = func(context.Context, string, []string, ytm.DedupeMode) error { return nil }
 	}
 
-	if err := src.SetLiked(context.Background(), "ytm:v1", true); err != nil {
+	ref1 := library.ScopedRemoteRef(library.KindYTM, libID, "v1")
+	if err := src.SetLiked(context.Background(), ref1, true); err != nil {
 		t.Fatalf("SetLiked: %v", err)
 	}
 	if len(likedCalls) != 1 || likedCalls[0] != ytm.SongLikedStatusLiked {
 		t.Fatalf("likedCalls = %+v", likedCalls)
 	}
-	if ok, _ := store.Liked("ytm:v1"); !ok {
-		t.Fatal("Liked(ytm:v1) = false, want true")
+	if ok, _ := store.Liked(ref1); !ok {
+		t.Fatalf("Liked(%s) = false, want true", ref1)
 	}
 
 	pl, err := src.CreatePlaylist(context.Background(), "Roadtrip")
 	if err != nil || createdTitle != "Roadtrip" || pl.RemoteID != "PLnew" {
 		t.Fatalf("CreatePlaylist = (%+v, %v)", pl, err)
 	}
-	if err := src.AddToPlaylist(context.Background(), pl.ID, []string{"ytm:v1"}); err != nil {
+	if err := src.AddToPlaylist(context.Background(), pl.ID, []string{ref1}); err != nil {
 		t.Fatalf("AddToPlaylist: %v", err)
 	}
 	if n, _ := store.PlaylistTrackCount(pl.ID); n != 1 {
@@ -235,9 +239,6 @@ func TestYTMRemoteWrites(t *testing.T) {
 func TestYTMOwnershipTombstonesAndLoudErrors(t *testing.T) {
 	svc, store := newYTMTestService(t)
 	creds := &Credentials{CookieHeader: "SAPISID=s; SID=id", ChannelID: "UCme", Name: "Me"}
-	if err := saveCredentials(creds); err != nil {
-		t.Fatal(err)
-	}
 
 	remoteForeignPresent := true
 	var unsavedIDs, deletedIDs []string
@@ -334,9 +335,6 @@ func TestYTMOwnershipTombstonesAndLoudErrors(t *testing.T) {
 func TestYTMImportAndAddTargets(t *testing.T) {
 	svc, store := newYTMTestService(t)
 	creds := &Credentials{CookieHeader: "SAPISID=s; SID=id", ChannelID: "UCimp", Name: "Importer"}
-	if err := saveCredentials(creds); err != nil {
-		t.Fatal(err)
-	}
 	localLib, err := store.AddLibrary(library.Library{ID: "local:main", Kind: library.KindLocal, Name: "Local"})
 	if err != nil {
 		t.Fatal(err)
@@ -448,5 +446,165 @@ func TestYTMImportAndAddTargets(t *testing.T) {
 	likeRes, err := svc.ImportYTMSong(ytmLibID, songHit, YTMSongTarget{Liked: true})
 	if err != nil || likeRes.Tracks != 1 || len(likedCalls) != 1 || likedCalls[0] != "vidX" {
 		t.Fatalf("Liked import = (%+v, %v), likedCalls=%v", likeRes, err, likedCalls)
+	}
+}
+
+func TestMultiAccountYTMLibraries(t *testing.T) {
+	svc, store := newYTMTestService(t)
+	svc.ytmMgr.probeCredsFn = func(context.Context, *ytm.Client) error { return nil }
+	svc.ytmOpsOverride = func(ops *ytmAccountOps) {
+		ops.getAccounts = func(context.Context) ([]ytm.Account, error) { return nil, nil }
+		ops.getLikedSongs = func(context.Context) ([]ytm.Song, *ytm.BuiltInContinuation, error) { return nil, nil, nil }
+		ops.getLibraryPlaylists = func(context.Context) ([]ytm.Playlist, *ytm.BuiltInContinuation, error) { return nil, nil, nil }
+	}
+	svc.ytmMgr.validateCredsFn = func(_ context.Context, creds *Credentials) error {
+		switch creds.CookieHeader {
+		case "SAPISID=acc1; SID=s1":
+			creds.ChannelID = "UCacc1"
+			creds.Name = "Account One"
+			creds.Email = "one@example.invalid"
+		case "SAPISID=acc2; SID=s2":
+			creds.ChannelID = "UCacc2"
+			creds.Name = "Account Two"
+			creds.Email = "two@example.invalid"
+		default:
+			return errors.New("unexpected cookie")
+		}
+		return nil
+	}
+
+	lib1, err := svc.CreateYTMLibraryWithCookie("Personal YTM", "First", "SAPISID=acc1; SID=s1")
+	if err != nil {
+		t.Fatalf("CreateYTMLibraryWithCookie 1: %v", err)
+	}
+	lib2, err := svc.CreateYTMLibraryWithCookie("Work YTM", "Second", "SAPISID=acc2; SID=s2")
+	if err != nil {
+		t.Fatalf("CreateYTMLibraryWithCookie 2: %v", err)
+	}
+	if lib1.ID == lib2.ID || strings.Contains(lib1.ID, ":") || strings.Contains(lib2.ID, ":") {
+		t.Fatalf("unexpected library IDs: %q, %q", lib1.ID, lib2.ID)
+	}
+
+	// Duplicate account creation must be rejected.
+	if _, err := svc.CreateYTMLibraryWithCookie("Dup YTM", "", "SAPISID=acc1; SID=s1"); err == nil {
+		t.Fatal("expected duplicate YTM account creation to fail")
+	}
+
+	// Per-library authExpiry isolation and scoped ref client resolution.
+	sess1 := svc.ytmMgr.session(lib1.ID)
+	sess2 := svc.ytmMgr.session(lib2.ID)
+	if sess1 == nil || sess2 == nil || sess1.client == nil || sess2.client == nil {
+		t.Fatal("missing ytm sessions or clients")
+	}
+	c1, err1 := svc.ytmMgr.clientForRef(library.ScopedRemoteRef(library.KindYTM, lib1.ID, "vid1"))
+	c2, err2 := svc.ytmMgr.clientForRef(library.ScopedRemoteRef(library.KindYTM, lib2.ID, "vid1"))
+	if err1 != nil || err2 != nil || c1 != sess1.client || c2 != sess2.client {
+		t.Fatalf("scoped refs did not resolve cleanly: (%v, %v)", err1, err2)
+	}
+
+	sess1.authExpired.Store(true)
+	if sess2.authExpired.Load() {
+		t.Fatal("expiring account 1 must not expire account 2")
+	}
+	if _, err := svc.ytmMgr.clientForRef(library.ScopedRemoteRef(library.KindYTM, lib1.ID, "vid1")); !errors.Is(err, ytm.ErrSessionExpired) {
+		t.Fatalf("expired lib1 clientForRef err = %v, want ErrSessionExpired", err)
+	}
+	if c2After, err := svc.ytmMgr.clientForRef(library.ScopedRemoteRef(library.KindYTM, lib2.ID, "vid1")); err != nil || c2After != sess2.client {
+		t.Fatalf("lib2 clientForRef after lib1 expiry = (%v, %v)", c2After, err)
+	}
+
+	// Unscoped fallback honors active -> primary -> anonymous.
+	svc.SetActiveLibrary(lib2.ID)
+	if got := svc.ytmMgr.resolveDefaultClient(); got != sess2.client {
+		t.Fatal("active library client should win for unscoped fallback")
+	}
+	if got, err := svc.ytmMgr.clientForRef("ytm:vidOnly"); err != nil || got != sess2.client {
+		t.Fatalf("unscoped ref should use resolveDefaultClient, got (%v, %v)", got, err)
+	}
+
+	// Independent libraries and ConnectedLibraries status.
+	connected := svc.ConnectedLibraries()
+	if len(connected) != 2 {
+		t.Fatalf("ConnectedLibraries len = %d, want 2", len(connected))
+	}
+	for _, st := range connected {
+		if st.LibraryID == lib1.ID && !st.Expired {
+			t.Errorf("expected lib1 expired=true, got %+v", st)
+		}
+		if st.LibraryID == lib2.ID && st.Expired {
+			t.Errorf("expected lib2 expired=false, got %+v", st)
+		}
+	}
+
+	// Keyring-locked RemoveLibrary refuses to delete SQLite metadata so encrypted secrets aren't orphaned.
+	origKS := svc.credStore.ks
+	svc.credStore.ks = &memKeyStore{probeErr: errors.New("keyring unavailable")}
+	if err := svc.RemoveLibrary(lib1.ID); err == nil {
+		t.Fatal("RemoveLibrary succeeded when credential delete failed")
+	}
+	if _, err := store.LibraryRow(lib1.ID); err != nil {
+		t.Fatalf("lib1 row was deleted despite credential delete failure: %v", err)
+	}
+	svc.credStore.ks = origKS
+
+	// SignOutLibrary on lib1 leaves lib2 signed in and healthy.
+	if err := svc.SignOutLibrary(lib1.ID, true); err != nil {
+		t.Fatalf("SignOutLibrary(lib1, true): %v", err)
+	}
+	connected = svc.ConnectedLibraries()
+	if len(connected) != 1 || connected[0].LibraryID != lib2.ID || !connected[0].SignedIn {
+		t.Fatalf("after SignOutLibrary(lib1) connected = %+v, want only signed-in lib2", connected)
+	}
+}
+
+func TestReSignInNormalizesBogusYTMAccountIDAndAllowsEmptyRecordedChannel(t *testing.T) {
+	svc, store := newYTMTestService(t)
+	svc.ytmMgr.probeCredsFn = func(context.Context, *ytm.Client) error { return nil }
+	svc.ytmOpsOverride = func(ops *ytmAccountOps) {
+		ops.getAccounts = func(context.Context) ([]ytm.Account, error) { return nil, nil }
+		ops.getLikedSongs = func(context.Context) ([]ytm.Song, *ytm.BuiltInContinuation, error) { return nil, nil, nil }
+		ops.getLibraryPlaylists = func(context.Context) ([]ytm.Playlist, *ytm.BuiltInContinuation, error) { return nil, nil, nil }
+	}
+	svc.ytmMgr.validateCredsFn = func(_ context.Context, creds *Credentials) error {
+		switch creds.CookieHeader {
+		case "SAPISID=acc1; SID=s1":
+			creds.ChannelID = "UCacc1"
+			creds.Name = "Account One"
+			creds.Email = "one@example.invalid"
+		case "SAPISID=other; SID=s2":
+			creds.ChannelID = "UCother"
+			creds.Name = "Other Account"
+			creds.Email = "other@example.invalid"
+		default:
+			return errors.New("unexpected cookie")
+		}
+		return nil
+	}
+
+	// Legacy intermediate row where account_id literally contains "ytm_UC..."
+	// and config is empty must still allow re-sign-in with channel "UCacc1",
+	// while still rejecting a different channel ("UCother").
+	if _, err := store.AddLibraryRow(sqlite.LibraryRow{
+		Library:   library.Library{ID: "ytm_UCacc1", Kind: library.KindYTM, Name: "Recovered YTM"},
+		AccountID: "ytm_UCacc1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReSignInLibraryWithCookie("ytm_UCacc1", "SAPISID=other; SID=s2"); err == nil {
+		t.Fatal("expected different channel to be rejected on bogus ytm_UC account_id row")
+	}
+	if err := svc.ReSignInLibraryWithCookie("ytm_UCacc1", "SAPISID=acc1; SID=s1"); err != nil {
+		t.Fatalf("ReSignInLibraryWithCookie(ytm_UCacc1): %v", err)
+	}
+
+	// Synthetic ytm_<hex> copied into account_id (not starting with UC) must not block re-sign-in.
+	if _, err := store.AddLibraryRow(sqlite.LibraryRow{
+		Library:   library.Library{ID: "ytm_deadbeef", Kind: library.KindYTM, Name: "Hex YTM"},
+		AccountID: "ytm_deadbeef",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReSignInLibraryWithCookie("ytm_deadbeef", "SAPISID=other; SID=s2"); err != nil {
+		t.Fatalf("ReSignInLibraryWithCookie(ytm_deadbeef): %v", err)
 	}
 }

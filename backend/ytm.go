@@ -64,6 +64,7 @@ import (
 	"github.com/dlcuy22/molo/provider"
 	"github.com/dlcuy22/molo/stream"
 	"github.com/dlcuy22/molow/internal/artwork"
+	"github.com/dlcuy22/molow/internal/library"
 	"github.com/dlcuy22/molow/internal/trackcache"
 	ytm "github.com/dlcuy22/ytm-go"
 )
@@ -133,12 +134,42 @@ const (
 // however it was reached.
 func ytmRef(id string) string { return ytmRefPrefix + ytm.CleanSongID(id) }
 
-// ytmID reads the video id back out of a reference.
-func ytmID(ref string) string { return ytm.CleanSongID(strings.TrimPrefix(ref, ytmRefPrefix)) }
+// ytmID reads the video id back out of either an unscoped ("ytm:<videoId>") or
+// scoped ("ytm:<libraryId>:<videoId>") reference.
+func ytmID(ref string) string {
+	kind, _, nativeID, ok := library.ParseRemoteRef(ref)
+	if !ok || kind != library.KindYTM {
+		return ""
+	}
 
-// isYTMRef reports whether a queue entry belongs to this provider. It is the
-// cheap check the session calls for every queued ref.
-func isYTMRef(ref string) bool { return strings.HasPrefix(ref, ytmRefPrefix) }
+	return ytm.CleanSongID(nativeID)
+}
+
+// ytmRefLibraryID returns the owning library id when ref is a scoped YTM
+// reference ("ytm:<libraryId>:<videoId>"), or "" for unscoped refs.
+func ytmRefLibraryID(ref string) string {
+	kind, libID, _, ok := library.ParseRemoteRef(ref)
+	if !ok || kind != library.KindYTM {
+		return ""
+	}
+
+	return libID
+}
+
+// isYTMRef reports whether a queue entry belongs to YouTube Music.
+func isYTMRef(ref string) bool {
+	kind, _, nativeID, ok := library.ParseRemoteRef(ref)
+
+	return ok && kind == library.KindYTM && nativeID != ""
+}
+
+func canonicalYTMIndexKey(ref string) string {
+	if id := ytmID(ref); id != "" {
+		return ytmRefPrefix + id
+	}
+
+	return ref
+}
 
 // ytmTrack is what the UI knows about one video id: the catalogue metadata and,
 // once it has been fetched, the artwork bytes. It is the row's identity, so it
@@ -266,6 +297,7 @@ func (x *ytmIndex) put(t ytmTrack) {
 // setAlbum records the resolved album name on an existing entry, marking it
 // looked up so a track with no album is not queried again.
 func (x *ytmIndex) setAlbum(ref, album string) {
+	ref = canonicalYTMIndexKey(ref)
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	t, ok := x.entries[ref]
@@ -280,6 +312,7 @@ func (x *ytmIndex) setAlbum(ref, album string) {
 // setArtist records the resolved avatar (and the artist id it belongs to) on an
 // existing entry, leaving the rest alone.
 func (x *ytmIndex) setArtist(ref, artistID, avatarURL string) {
+	ref = canonicalYTMIndexKey(ref)
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	t, ok := x.entries[ref]
@@ -295,6 +328,7 @@ func (x *ytmIndex) setArtist(ref, artistID, avatarURL string) {
 
 // lookup returns the cached track for a reference.
 func (x *ytmIndex) lookup(ref string) (ytmTrack, bool) {
+	ref = canonicalYTMIndexKey(ref)
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	t, ok := x.entries[ref]
@@ -305,6 +339,7 @@ func (x *ytmIndex) lookup(ref string) (ytmTrack, bool) {
 // setThumb records fetched artwork for a reference, leaving the rest of the
 // entry alone.
 func (x *ytmIndex) setThumb(ref string, thumb []byte) {
+	ref = canonicalYTMIndexKey(ref)
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	t, ok := x.entries[ref]
@@ -320,6 +355,10 @@ func (x *ytmIndex) setThumb(ref string, thumb []byte) {
 // not yet in the queue survives the gap between the play command and the
 // control loop installing the queue.
 func (x *ytmIndex) prune(protected map[string]struct{}) {
+	canonicalProtected := make(map[string]struct{}, len(protected))
+	for ref := range protected {
+		canonicalProtected[canonicalYTMIndexKey(ref)] = struct{}{}
+	}
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	if len(x.entries) <= ytmIndexMax {
@@ -329,7 +368,7 @@ func (x *ytmIndex) prune(protected map[string]struct{}) {
 		if len(x.entries) <= ytmIndexMax {
 			return
 		}
-		if _, ok := protected[ref]; ok {
+		if _, ok := canonicalProtected[ref]; ok {
 			continue
 		}
 		delete(x.entries, ref)
@@ -394,15 +433,17 @@ type ytmProvider struct {
 	// apiMu guards the whole set: a sign-in swaps every call at once while a
 	// track may be opening or a search running, so readers take a snapshot
 	// through calls rather than touch the fields directly.
-	apiMu        sync.RWMutex
-	client       *ytm.Client
-	resolve      func(context.Context, string) (*ytm.Streams, error)
-	search       func(context.Context, string, string, bool) (*ytm.SearchResults, error)
-	loadArtist   func(context.Context, string) (*ytm.Artist, error)
-	loadPlaylist func(context.Context, string, *ytm.BuiltInContinuation) (*ytm.Playlist, error)
-	loadMix      func(context.Context, string, *ytm.BuiltInContinuation) (*ytm.Playlist, error)
-	loadSong     func(context.Context, string) (*ytm.Song, error)
-	lyrics       func(context.Context, string) (*ytm.Lyrics, error)
+	apiMu          sync.RWMutex
+	client         *ytm.Client
+	clientResolver func(ref string) (*ytm.Client, error)
+	defaultClient  func() *ytm.Client
+	resolve        func(context.Context, string) (*ytm.Streams, error)
+	search         func(context.Context, string, string, bool) (*ytm.SearchResults, error)
+	loadArtist     func(context.Context, string) (*ytm.Artist, error)
+	loadPlaylist   func(context.Context, string, *ytm.BuiltInContinuation) (*ytm.Playlist, error)
+	loadMix        func(context.Context, string, *ytm.BuiltInContinuation) (*ytm.Playlist, error)
+	loadSong       func(context.Context, string) (*ytm.Song, error)
+	lyrics         func(context.Context, string) (*ytm.Lyrics, error)
 
 	// rotate replaces the anonymous session the client is using. YouTube refuses
 	// a media URL by the visitor that asked for it, so a fresh visitor is what
@@ -432,11 +473,52 @@ type ytmCalls struct {
 	lyrics       func(context.Context, string) (*ytm.Lyrics, error)
 }
 
-// calls reads the current network surface under the lock.
-func (p *ytmProvider) calls() ytmCalls {
-	p.apiMu.RLock()
-	defer p.apiMu.RUnlock()
+func callsFromClient(client *ytm.Client, log *slog.Logger) ytmCalls {
+	if client == nil {
+		return ytmCalls{}
+	}
+	if log != nil {
+		client.SetLogger(log)
+	}
+	return ytmCalls{
+		resolve:    client.GetStream,
+		search:     client.Search,
+		loadArtist: client.LoadArtist,
+		loadPlaylist: func(ctx context.Context, id string, cont *ytm.BuiltInContinuation) (*ytm.Playlist, error) {
+			return client.LoadPlaylist(ctx, id, cont, nil, nil, false)
+		},
+		loadMix:  client.GetMix,
+		loadSong: client.LoadSong,
+		lyrics:   client.GetSongLyricsTimed,
+	}
+}
 
+func overlayCalls(base, over ytmCalls) ytmCalls {
+	if over.resolve != nil {
+		base.resolve = over.resolve
+	}
+	if over.search != nil {
+		base.search = over.search
+	}
+	if over.loadArtist != nil {
+		base.loadArtist = over.loadArtist
+	}
+	if over.loadPlaylist != nil {
+		base.loadPlaylist = over.loadPlaylist
+	}
+	if over.loadMix != nil {
+		base.loadMix = over.loadMix
+	}
+	if over.loadSong != nil {
+		base.loadSong = over.loadSong
+	}
+	if over.lyrics != nil {
+		base.lyrics = over.lyrics
+	}
+	return base
+}
+
+func (p *ytmProvider) overridesLocked() ytmCalls {
 	return ytmCalls{
 		resolve:      p.resolve,
 		search:       p.search,
@@ -446,6 +528,50 @@ func (p *ytmProvider) calls() ytmCalls {
 		loadSong:     p.loadSong,
 		lyrics:       p.lyrics,
 	}
+}
+
+// calls reads the default network surface under the lock, preferring the active
+// or primary YTM library session when managed by ytmManager, while allowing any
+// non-nil test override field to win.
+func (p *ytmProvider) calls() ytmCalls {
+	p.apiMu.RLock()
+	dc := p.defaultClient
+	client := p.client
+	over := p.overridesLocked()
+	log := p.log
+	p.apiMu.RUnlock()
+
+	var base ytmCalls
+	if dc != nil {
+		if c := dc(); c != nil {
+			base = callsFromClient(c, log)
+		}
+	}
+	if base.resolve == nil && client != nil {
+		base = callsFromClient(client, log)
+	}
+	return overlayCalls(base, over)
+}
+
+// callsFor resolves the network surface for a specific YTM ref. Scoped refs
+// use that library's session exclusively; unscoped refs use default fallback.
+func (p *ytmProvider) callsFor(ref string) (ytmCalls, error) {
+	p.apiMu.RLock()
+	resolver := p.clientResolver
+	over := p.overridesLocked()
+	log := p.log
+	p.apiMu.RUnlock()
+
+	if resolver != nil {
+		client, err := resolver(ref)
+		if err != nil {
+			return ytmCalls{}, err
+		}
+		if client != nil {
+			return overlayCalls(callsFromClient(client, log), over), nil
+		}
+	}
+	return p.calls(), nil
 }
 
 // ytmClient builds the client every network call goes through. The library logs
@@ -492,23 +618,15 @@ func newYTMProvider(index *ytmIndex, art *artwork.Store, seamless bool, log *slo
 	return p
 }
 
-// installClient swaps the client and every call bound to it in one step, so a
-// reader that took a snapshot through [ytmProvider.calls] never mixes two
-// sessions.
+// installClient swaps the backing client under apiMu while leaving any explicit
+// test override function fields untouched.
 func (p *ytmProvider) installClient(client *ytm.Client) {
-	client.SetLogger(p.log)
+	if client != nil {
+		client.SetLogger(p.log)
+	}
 	p.apiMu.Lock()
 	defer p.apiMu.Unlock()
 	p.client = client
-	p.resolve = client.GetStream
-	p.search = client.Search
-	p.loadArtist = client.LoadArtist
-	p.loadPlaylist = func(ctx context.Context, id string, cont *ytm.BuiltInContinuation) (*ytm.Playlist, error) {
-		return client.LoadPlaylist(ctx, id, cont, nil, nil, false)
-	}
-	p.loadMix = client.GetMix
-	p.loadSong = client.LoadSong
-	p.lyrics = client.GetSongLyricsTimed
 }
 
 // rotateIdentity replaces the anonymous session. A stream refusal is bound to
@@ -591,7 +709,7 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 			p.setOpenCached(ref, false)
 			p.logger().Debug("trackcache: evicted before open, falling back to network", "id", id)
 
-			dec, err := p.fetchRemoteDecoder(ctx, stop, id)
+			dec, err := p.fetchRemoteDecoder(ctx, stop, ref, id)
 			if err != nil {
 				return nil, err
 			}
@@ -633,7 +751,10 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 		p.logger().Debug("trackcache: miss", "id", id)
 	}
 
-	calls := p.calls()
+	calls, err := p.callsFor(ref)
+	if err != nil {
+		return provider.Source{}, err
+	}
 	streams, err := calls.resolve(ctx, id)
 	if err != nil {
 		return provider.Source{}, err
@@ -654,7 +775,11 @@ func (p *ytmProvider) Open(ctx context.Context, ref string) (provider.Source, er
 	// the expiry refresh and the refusal retry, because both need a URL minted
 	// under the session that is current now.
 	renew := func() (string, time.Time, error) {
-		fresh, err := p.calls().resolve(ctx, id)
+		c, err := p.callsFor(ref)
+		if err != nil {
+			return "", time.Time{}, err
+		}
+		fresh, err := c.resolve(ctx, id)
 		if err != nil {
 			return "", time.Time{}, err
 		}
@@ -831,8 +956,12 @@ func ytmSourceMeta(track ytmTrack) provider.Source {
 	return src
 }
 
-func (p *ytmProvider) fetchRemoteDecoder(ctx context.Context, stop <-chan struct{}, id string) (decode.Decoder, error) {
-	streams, err := p.calls().resolve(ctx, id)
+func (p *ytmProvider) fetchRemoteDecoder(ctx context.Context, stop <-chan struct{}, ref, id string) (decode.Decoder, error) {
+	calls, err := p.callsFor(ref)
+	if err != nil {
+		return nil, err
+	}
+	streams, err := calls.resolve(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -847,7 +976,11 @@ func (p *ytmProvider) fetchRemoteDecoder(ctx context.Context, stop <-chan struct
 		return nil, err
 	}
 	renew := func() (string, time.Time, error) {
-		fresh, rerr := p.calls().resolve(ctx, id)
+		c, rerr := p.callsFor(ref)
+		if rerr != nil {
+			return "", time.Time{}, rerr
+		}
+		fresh, rerr := c.resolve(ctx, id)
 		if rerr != nil {
 			return "", time.Time{}, rerr
 		}
@@ -949,14 +1082,20 @@ func wrapClosingDecoder(dec decode.Decoder, c io.Closer) decode.Decoder {
 // A mix id ("RD…") is walked the same way, but its pages come from the
 // watch-next queue: the browse endpoint refuses the type.
 func (p *ytmProvider) playlist(ctx context.Context, id string) ([]YTMResult, string, error) {
+	return p.playlistWith(ctx, id, p.calls())
+}
+
+func (p *ytmProvider) playlistWith(ctx context.Context, id string, calls ytmCalls) ([]YTMResult, string, error) {
 	var out []YTMResult
 	name := ""
 	seen := make(map[string]struct{})
 	var cont *ytm.BuiltInContinuation
-	calls := p.calls()
 	load := calls.loadPlaylist
 	if ytm.IsMixID(id) {
 		load = calls.loadMix
+	}
+	if load == nil {
+		return nil, "", fmt.Errorf("ytm: playlist loader unavailable")
 	}
 
 	for page := 0; page < ytmPlaylistMaxPages; page++ {
@@ -1062,10 +1201,11 @@ func (p *ytmProvider) hydrateSongMeta(ctx context.Context, ref string) ytmTrack 
 		return t
 	}
 
-	loadSong := p.calls().loadSong
-	if loadSong == nil {
+	calls, err := p.callsFor(ref)
+	if err != nil || calls.loadSong == nil {
 		return t
 	}
+	loadSong := calls.loadSong
 
 	song, err := loadSong(ctx, t.ID)
 	if err != nil || song == nil {

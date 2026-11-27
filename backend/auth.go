@@ -1,13 +1,8 @@
-// Sign in, sign out and channel switching for YouTube Music.
+// Per-library authentication, validation, and account lifecycle for remote
+// music sources (starting with YouTube Music).
 //
-// The session is captured, never negotiated: there is no OAuth path, and the
-// Google login form is never driven. A signed-in browser hands over its cookies,
-// either pasted by the user or harvested from the login window.
-//
-// Validation is a body check, not a status check. A dead session answers HTTP
-// 200 with a signed-out page, so the only trustworthy signal is what the response
-// says about itself.
-
+// Each remote library owns an independent session and encrypted credential
+// record under CredentialStore.
 package backend
 
 import (
@@ -16,9 +11,11 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dlcuy22/molow/backend/loginwin"
 	"github.com/dlcuy22/molow/internal/library"
+	"github.com/dlcuy22/molow/internal/library/sqlite"
 	ytm "github.com/dlcuy22/ytm-go"
 )
 
@@ -26,128 +23,463 @@ import (
 // cold client also fetches a visitor ID first.
 const authProbeTimeout = 45 * time.Second
 
-// AuthStatus is what the UI reads to show the account state.
-type AuthStatus struct {
-	SignedIn  bool   `json:"signedIn"`
-	Name      string `json:"name,omitempty"`
-	Email     string `json:"email,omitempty"`
-	ChannelID string `json:"channelId,omitempty"`
-	// Expired means credentials are stored but the server treated them as
-	// signed out. It is separate from SignedIn so the UI can offer a re-sign-in
-	// instead of an empty library.
-	Expired bool `json:"expired,omitempty"`
+// LibraryAuthStatus summarizes authentication and health state for one remote
+// library row shown in Settings -> Integration and context menus.
+type LibraryAuthStatus struct {
+	LibraryID      string       `json:"libraryId"`
+	LibraryName    string       `json:"libraryName"`
+	Kind           library.Kind `json:"kind"`
+	SignedIn       bool         `json:"signedIn"`
+	Expired        bool         `json:"expired,omitempty"`
+	AccountName    string       `json:"accountName,omitempty"`
+	AccountSubtext string       `json:"accountSubtext,omitempty"`
+	Error          string       `json:"error,omitempty"`
 }
 
-// authMu serialises the sign-in flow, so two calls cannot open two windows or
-// write the file twice.
+// authMu serializes interactive login windows and credential mutations.
 var authMu chan struct{} = make(chan struct{}, 1)
 
 // CheckKeyring probes whether the platform secret store (Credential Manager on
 // Windows, Secret Service daemon on Linux, Keychain on macOS) is reachable and
-// unlocked before opening the sign-in flow.
+// unlocked before opening a sign-in flow.
 func (s *PlayerService) CheckKeyring() error {
 	return getKeyStore().Probe()
 }
 
-// SignInWithCookieHeader signs in from a pasted Cookie: header.
-//
-// The whole header is required, not one field. Measured against the live
-// endpoint: a SAPISID on its own authenticates nothing, because it only seeds the
-// Authorization hash while the session identity lives in the primary cookies.
-// That single-value mistake is the one a user is most likely to make, so the
-// input is checked before any network call.
-func (s *PlayerService) SignInWithCookieHeader(header string) error {
+// CreateYTMLibraryWithBrowser opens an isolated login window, validates the
+// captured cookies, rejects duplicate Google accounts, stores encrypted
+// credentials, and registers the new YouTube Music library.
+func (s *PlayerService) CreateYTMLibraryWithBrowser(name, description string) (library.Library, error) {
 	authMu <- struct{}{}
 	defer func() { <-authMu }()
 
-	if err := getKeyStore().Probe(); err != nil {
+	if err := s.CheckKeyring(); err != nil {
+		return library.Library{}, err
+	}
+
+	creds, err := captureYTMCredentialsFromBrowser()
+	if err != nil {
+		return library.Library{}, err
+	}
+	return s.createYTMLibraryFromCreds(name, description, creds)
+}
+
+// CreateYTMLibraryWithCookie validates a pasted Cookie header, rejects duplicate
+// Google accounts, stores encrypted credentials, and creates the new YouTube
+// Music library.
+func (s *PlayerService) CreateYTMLibraryWithCookie(name, description, cookieHeader string) (library.Library, error) {
+	authMu <- struct{}{}
+	defer func() { <-authMu }()
+
+	if err := s.CheckKeyring(); err != nil {
+		return library.Library{}, err
+	}
+
+	header := normalizeCookieHeader(cookieHeader)
+	if err := checkCookieHeader(header); err != nil {
+		return library.Library{}, err
+	}
+
+	creds := &Credentials{CookieHeader: header, CapturedAt: time.Now()}
+	return s.createYTMLibraryFromCreds(name, description, creds)
+}
+
+// ReSignInLibrary refreshes credentials for an existing YouTube Music library
+// using the isolated browser login window.
+func (s *PlayerService) ReSignInLibrary(libraryID string) error {
+	authMu <- struct{}{}
+	defer func() { <-authMu }()
+
+	row, err := s.requireRemoteLibraryRow(libraryID, library.KindYTM)
+	if err != nil {
+		return err
+	}
+	if err := s.CheckKeyring(); err != nil {
 		return err
 	}
 
-	header = normalizeCookieHeader(header)
+	creds, err := captureYTMCredentialsFromBrowser()
+	if err != nil {
+		return err
+	}
+	return s.applyReSignIn(row, creds)
+}
+
+// ReSignInLibraryWithCookie refreshes credentials for an existing YouTube Music
+// library from a pasted Cookie header.
+func (s *PlayerService) ReSignInLibraryWithCookie(libraryID, cookieHeader string) error {
+	authMu <- struct{}{}
+	defer func() { <-authMu }()
+
+	row, err := s.requireRemoteLibraryRow(libraryID, library.KindYTM)
+	if err != nil {
+		return err
+	}
+	if err := s.CheckKeyring(); err != nil {
+		return err
+	}
+
+	header := normalizeCookieHeader(cookieHeader)
 	if err := checkCookieHeader(header); err != nil {
 		return err
 	}
 
 	creds := &Credentials{CookieHeader: header, CapturedAt: time.Now()}
-	if err := s.completeSignIn(creds); err != nil {
-		return err
-	}
-	if err := saveCredentials(creds); err != nil {
-		return err
-	}
-	s.startYTMLibrarySync(creds)
-	return nil
+	return s.applyReSignIn(row, creds)
 }
 
-// SignIn opens the login window and waits for a session.
-//
-// The window is an isolated browser view on its own cookie jar, because a Wails
-// webview exposes no cookie API and the cookies that matter are HttpOnly. It is
-// closed as soon as the session is captured, and its profile directory is
-// removed, so nothing is left behind.
-func (s *PlayerService) SignIn() error {
+// RefreshLibraryAuth probes the stored session for libraryID against YouTube
+// Music, updates its expired state, and returns the updated LibraryAuthStatus.
+func (s *PlayerService) RefreshLibraryAuth(libraryID string) (LibraryAuthStatus, error) {
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return LibraryAuthStatus{}, fmt.Errorf("library: store is not available")
+	}
+	row, err := store.LibraryRow(libraryID)
+	if err != nil {
+		return LibraryAuthStatus{}, fmt.Errorf("library: unknown id %q", libraryID)
+	}
+	if row.Kind == library.KindLocal {
+		return LibraryAuthStatus{}, fmt.Errorf("auth: %q is not a remote library", libraryID)
+	}
+
+	cs, err := s.credentials()
+	if err != nil {
+		return s.statusForRow(row, err.Error()), err
+	}
+	mgr := s.ytmManager()
+
+	if row.CredentialID == "" {
+		mgr.markSignedOut(row.ID)
+		s.emit(eventLibrary, LibraryProgress{LibraryID: row.ID, State: "ready"})
+		return s.statusForRow(row, ""), nil
+	}
+
+	var creds Credentials
+	if err := cs.Load(row.CredentialID, library.KindYTM, &creds); err != nil {
+		if errors.Is(err, ErrNoCredentials) {
+			mgr.markSignedOut(row.ID)
+			s.emit(eventLibrary, LibraryProgress{LibraryID: row.ID, State: "ready"})
+			return s.statusForRow(row, ""), nil
+		}
+		if sess := mgr.session(row.ID); sess != nil {
+			sess.mu.Lock()
+			sess.sessionErr = err.Error()
+			sess.signedIn = false
+			sess.mu.Unlock()
+		}
+		return s.statusForRow(row, err.Error()), err
+	}
+
+	sess := mgr.ensureSession(row.ID, row.CredentialID, decodeYTMConfig(row.Config))
+	gen := sess.authGen.Load()
+	if gen == 0 {
+		gen = sess.authGen.Add(1)
+	}
+	client, err := mgr.clientWithCookieCapture(row.ID, &creds, gen)
+	if err != nil {
+		sess.authExpired.Store(true)
+		s.emit(eventLibrary, LibraryProgress{LibraryID: row.ID, State: "ready"})
+		return s.statusForRow(row, ""), nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), authProbeTimeout)
+	defer cancel()
+
+	probe := mgr.probeCredsFn
+	if probe == nil {
+		probe = func(c context.Context, cl *ytm.Client) error {
+			_, _, err := cl.GetLikedSongs(c)
+			return err
+		}
+	}
+	if err := probe(ctx, client); err != nil {
+		if errors.Is(err, ytm.ErrSessionExpired) {
+			sess.authExpired.Store(true)
+			s.emit(eventLibrary, LibraryProgress{LibraryID: row.ID, State: "ready"})
+			return s.statusForRow(row, ""), nil
+		}
+		// Transient network error leaves the previous state intact.
+		return s.statusForRow(row, ""), nil
+	}
+
+	_, _, _ = mgr.installSessionCredentials(row, &creds)
+	s.emit(eventLibrary, LibraryProgress{LibraryID: row.ID, State: "ready"})
+	return s.statusForRow(row, ""), nil
+}
+
+// ConnectedLibraries returns status summaries for every configured remote
+// library in creation order.
+func (s *PlayerService) ConnectedLibraries() []LibraryAuthStatus {
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return []LibraryAuthStatus{}
+	}
+	rows, err := store.LibraryRows()
+	if err != nil {
+		return []LibraryAuthStatus{}
+	}
+	out := make([]LibraryAuthStatus, 0, len(rows))
+	for _, row := range rows {
+		if row.Kind == library.KindLocal {
+			continue
+		}
+		out = append(out, s.statusForRow(row, ""))
+	}
+	return out
+}
+
+// SignOutLibrary clears stored credentials for libraryID, preserving the cached
+// SQLite catalogue in signedOut state unless deleteLibrary is true.
+func (s *PlayerService) SignOutLibrary(libraryID string, deleteLibrary bool) error {
 	authMu <- struct{}{}
 	defer func() { <-authMu }()
 
-	if err := getKeyStore().Probe(); err != nil {
-		return err
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return fmt.Errorf("library: store is not available")
 	}
 
-	jarDir, err := loginJarDir()
+	if deleteLibrary {
+		return s.RemoveLibrary(libraryID)
+	}
+
+	row, err := store.LibraryRow(libraryID)
 	if err != nil {
-		return err
+		return fmt.Errorf("library: unknown id %q", libraryID)
 	}
-	// A fresh profile every time: the jar from a previous attempt would make the
-	// capture depend on what happened last, and the window would start already
-	// signed in with no way to tell a stale session from a fresh one.
-	if err := resetLoginJar(jarDir); err != nil {
-		return err
-	}
-	defer resetLoginJar(jarDir)
-
-	session, err := loginwin.Open(loginwin.Options{
-		JarDir:  jarDir,
-		Timeout: 5 * time.Minute,
-	})
-	if err != nil {
-		return err
-	}
-	defer session.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	result, err := session.Wait(ctx)
-	if err != nil {
-		return err
+	if row.Kind == library.KindLocal {
+		return fmt.Errorf("auth: %q is not a remote library", libraryID)
 	}
 
-	creds := credentialsFromLogin(result)
-	if err := checkCookieHeader(creds.CookieHeader); err != nil {
-		return err
+	if row.CredentialID != "" {
+		cs, err := s.credentials()
+		if err != nil {
+			return err
+		}
+		if err := cs.Delete(row.CredentialID); err != nil {
+			return err
+		}
 	}
-	if err := s.completeSignIn(creds); err != nil {
-		return err
-	}
-	if err := saveCredentials(creds); err != nil {
-		return err
-	}
-	s.startYTMLibrarySync(creds)
+
+	s.ytmManager().markSignedOut(libraryID)
+	s.emit(eventLibrary, LibraryProgress{LibraryID: libraryID, State: "ready"})
 	return nil
 }
 
-func (s *PlayerService) startYTMLibrarySync(creds *Credentials) {
-	if id, err := s.ensureYTMLibrary(creds); err == nil {
-		s.triggerYTMSync(id, syncTriggerManual)
+func (s *PlayerService) statusForRow(row sqlite.LibraryRow, overrideErr string) LibraryAuthStatus {
+	cfg := decodeYTMConfig(row.Config)
+	st := LibraryAuthStatus{
+		LibraryID:      row.ID,
+		LibraryName:    row.Name,
+		Kind:           row.Kind,
+		AccountName:    cfg.AccountName,
+		AccountSubtext: cfg.Email,
 	}
+
+	sess := s.ytmManager().session(row.ID)
+	if sess != nil {
+		sess.mu.RLock()
+		st.SignedIn = sess.signedIn
+		if sess.config.AccountName != "" {
+			st.AccountName = sess.config.AccountName
+		}
+		if sess.config.Email != "" {
+			st.AccountSubtext = sess.config.Email
+		}
+		errText := sess.sessionErr
+		sess.mu.RUnlock()
+
+		st.Expired = sess.authExpired.Load()
+		if st.Expired {
+			st.SignedIn = false
+		}
+		if errText != "" {
+			st.Error = errText
+		}
+	} else if row.CredentialID != "" {
+		if cs, err := s.credentials(); err == nil && cs.Exists(row.CredentialID) {
+			st.SignedIn = true
+		}
+	}
+	if overrideErr != "" {
+		st.Error = overrideErr
+	}
+	return st
 }
 
-// completeSignIn validates a captured session and fills in the identity.
-//
-// The order matters: the session is validated before anything is written, so a
-// failed capture can never overwrite a working one.
-func (s *PlayerService) completeSignIn(creds *Credentials) error {
+func (s *PlayerService) requireRemoteLibraryRow(libraryID string, wantKind library.Kind) (sqlite.LibraryRow, error) {
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return sqlite.LibraryRow{}, fmt.Errorf("library: store is not available")
+	}
+	row, err := store.LibraryRow(libraryID)
+	if err != nil {
+		return sqlite.LibraryRow{}, fmt.Errorf("library: unknown id %q", libraryID)
+	}
+	if row.Kind != wantKind {
+		return sqlite.LibraryRow{}, fmt.Errorf("library: %q is not a %s library", libraryID, wantKind)
+	}
+	return row, nil
+}
+
+func (s *PlayerService) createYTMLibraryFromCreds(name, description string, creds *Credentials) (library.Library, error) {
+	description = strings.TrimSpace(description)
+	if utf8.RuneCountInString(description) > maxLibraryDescRunes {
+		return library.Library{}, fmt.Errorf("library: description must be %d characters or fewer", maxLibraryDescRunes)
+	}
+	name = strings.TrimSpace(name)
+	if utf8.RuneCountInString(name) > maxLibraryNameRunes {
+		return library.Library{}, fmt.Errorf("library: name must be %d characters or fewer", maxLibraryNameRunes)
+	}
+
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return library.Library{}, fmt.Errorf("library: store is not available")
+	}
+	cs, err := s.credentials()
+	if err != nil {
+		return library.Library{}, err
+	}
+
+	if err := s.validateYTMSession(creds); err != nil {
+		return library.Library{}, err
+	}
+
+	if dup, found := findDuplicateYTMLibrary(store, cs, creds, ""); found {
+		return library.Library{}, fmt.Errorf("auth: this YouTube Music account is already connected to library %q", dup.Name)
+	}
+
+	if name == "" {
+		name = firstNonEmpty(strings.TrimSpace(creds.Name), strings.TrimSpace(creds.Email), "YouTube Music")
+		if utf8.RuneCountInString(name) > maxLibraryNameRunes {
+			runes := []rune(name)
+			name = string(runes[:maxLibraryNameRunes])
+		}
+	}
+
+	libID, err := newRemoteLibraryID(library.KindYTM)
+	if err != nil {
+		return library.Library{}, fmt.Errorf("library: generate id: %w", err)
+	}
+	credID, err := newCredentialID()
+	if err != nil {
+		return library.Library{}, fmt.Errorf("auth: generate credential id: %w", err)
+	}
+
+	if err := cs.Save(credID, library.KindYTM, creds); err != nil {
+		return library.Library{}, err
+	}
+
+	row, err := store.AddLibraryRow(sqlite.LibraryRow{
+		Library: library.Library{
+			ID:          libID,
+			Kind:        library.KindYTM,
+			Name:        name,
+			Description: description,
+			Status:      library.StatusReady,
+		},
+		AccountID:    creds.ChannelID,
+		CredentialID: credID,
+		Config:       encodeYTMConfig(creds),
+	})
+	if err != nil {
+		_ = cs.Delete(credID)
+		return library.Library{}, err
+	}
+
+	mgr := s.ytmManager()
+	if _, _, err := mgr.installSessionCredentials(row, creds); err != nil {
+		_ = store.RemoveLibrary(row.ID)
+		_ = cs.Delete(credID)
+		return library.Library{}, err
+	}
+	src := s.registerYTM(row.Library)
+	s.triggerYTMSync(row.ID, syncTriggerManual)
+	s.emit(eventLibrary, LibraryProgress{LibraryID: row.ID, State: "ready"})
+
+	if described, err := src.Describe(s.ctx); err == nil {
+		return described, nil
+	}
+	return row.Library, nil
+}
+
+func (s *PlayerService) applyReSignIn(row sqlite.LibraryRow, creds *Credentials) error {
+	s.libMu.Lock()
+	store := s.libStore
+	s.libMu.Unlock()
+	if store == nil {
+		return fmt.Errorf("library: store is not available")
+	}
+	cs, err := s.credentials()
+	if err != nil {
+		return err
+	}
+
+	if err := s.validateYTMSession(creds); err != nil {
+		return err
+	}
+
+	if dup, found := findDuplicateYTMLibrary(store, cs, creds, row.ID); found {
+		return fmt.Errorf("auth: this YouTube Music account is already connected to library %q", dup.Name)
+	}
+	recorded := decodeYTMConfig(row.Config)
+	recordedChannel := recordedYTMChannelID(row)
+	if recorded.Email != "" && creds.Email != "" && !strings.EqualFold(recorded.Email, creds.Email) {
+		return fmt.Errorf("auth: signed-in account does not match library %q", row.Name)
+	}
+	if recordedChannel != "" && creds.ChannelID != "" && recordedChannel != creds.ChannelID {
+		return fmt.Errorf("auth: signed-in channel does not match library %q", row.Name)
+	}
+
+	credID := row.CredentialID
+	if credID == "" {
+		credID, err = newCredentialID()
+		if err != nil {
+			return fmt.Errorf("auth: generate credential id: %w", err)
+		}
+	}
+	if err := cs.Save(credID, library.KindYTM, creds); err != nil {
+		return err
+	}
+	if err := store.UpdateLibraryCredential(row.ID, credID); err != nil {
+		return err
+	}
+	if err := store.UpdateLibraryConfig(row.ID, encodeYTMConfig(creds)); err != nil {
+		return err
+	}
+	row.CredentialID = credID
+	row.Config = encodeYTMConfig(creds)
+
+	if _, _, err := s.ytmManager().installSessionCredentials(row, creds); err != nil {
+		return err
+	}
+	s.registerYTM(row.Library)
+	s.triggerYTMSync(row.ID, syncTriggerManual)
+	s.emit(eventLibrary, LibraryProgress{LibraryID: row.ID, State: "ready"})
+	return nil
+}
+
+func (s *PlayerService) validateYTMSession(creds *Credentials) error {
+	if fn := s.ytmManager().validateCredsFn; fn != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), authProbeTimeout)
+		defer cancel()
+		return fn(ctx, creds)
+	}
+	return validateYTMCredentials(creds)
+}
+
+func validateYTMCredentials(creds *Credentials) error {
 	client, err := clientFromCredentials(creds)
 	if err != nil {
 		return err
@@ -156,9 +488,8 @@ func (s *PlayerService) completeSignIn(creds *Credentials) error {
 	ctx, cancel := context.WithTimeout(context.Background(), authProbeTimeout)
 	defer cancel()
 
-	// A cheap authed read is the probe. It is paged and already signed in, so it
-	// exercises exactly the path the library uses. A status-only check would pass
-	// a dead session, which is why the client's own body verdict decides.
+	// A cheap authed read is the probe. It exercises the exact endpoint path
+	// used by sync and lets ytm-go classify dead cookies as ErrSessionExpired.
 	if _, _, err := client.GetLikedSongs(ctx); err != nil {
 		if errors.Is(err, ytm.ErrSessionExpired) {
 			return fmt.Errorf("auth: the server treated these cookies as signed out")
@@ -166,21 +497,7 @@ func (s *PlayerService) completeSignIn(creds *Credentials) error {
 		return err
 	}
 
-	// The running provider was built with the client from startup, so a fresh
-	// sign-in has to hand it the new session now. Without this, every catalogue
-	// call keeps using the old cookies until the next start, which makes a
-	// re-login look ineffective.
-	gen := s.authGen.Add(1)
-	s.authExpired.Store(false)
-	if rotated, err := s.clientWithCookieCapture(creds, gen); err == nil {
-		client = rotated
-	}
-	s.ytmProv.setClient(client)
-
-	// The identity is a nicety. If the account endpoints fail the session is
-	// still good, so the failure is swallowed rather than rejecting a valid login.
-	accounts, accountsErr := client.GetAccounts(ctx)
-	if accountsErr == nil {
+	if accounts, accountsErr := client.GetAccounts(ctx); accountsErr == nil {
 		for _, a := range accounts {
 			if !a.IsSelected {
 				continue
@@ -197,8 +514,6 @@ func (s *PlayerService) completeSignIn(creds *Credentials) error {
 		creds.Email = info.Email
 	}
 
-	// The visitor ID the client negotiated is worth keeping: it saves a request
-	// on every later start, and it is the one the session was validated with.
 	if creds.VisitorData == "" {
 		if visitor, err := client.GetVisitorID(ctx); err == nil {
 			creds.VisitorData = visitor
@@ -207,226 +522,106 @@ func (s *PlayerService) completeSignIn(creds *Credentials) error {
 	return nil
 }
 
-// SignOut forgets the stored session, keeping any cached YTM library rows on
-// disk in signedOut state.
-func (s *PlayerService) SignOut() error {
-	return s.SignOutWithOptions(false)
-}
-
-// SignOutWithOptions forgets the stored session and optionally deletes all
-// cached YouTube Music libraries from library.db.
-func (s *PlayerService) SignOutWithOptions(deleteLibrary bool) error {
-	authMu <- struct{}{}
-	defer func() { <-authMu }()
-
-	s.authGen.Add(1)
-	s.authExpired.Store(false)
-	s.stopYTMSyncers()
-	if s.ytmProv != nil {
-		s.ytmProv.setClient(ytmClient(s.logger()))
+func findDuplicateYTMLibrary(store *sqlite.Store, cs *CredentialStore, creds *Credentials, excludeLibID string) (sqlite.LibraryRow, bool) {
+	if store == nil || creds == nil {
+		return sqlite.LibraryRow{}, false
 	}
-	if err := clearCredentials(); err != nil {
-		return err
+	targetEmail := strings.TrimSpace(creds.Email)
+	targetChannel := strings.TrimSpace(creds.ChannelID)
+	if targetEmail == "" && targetChannel == "" {
+		return sqlite.LibraryRow{}, false
 	}
 
-	if deleteLibrary && s.libStore != nil {
-		if rows, err := s.libStore.Libraries(); err == nil {
-			for _, row := range rows {
-				if row.Kind == library.KindYTM {
-					_ = s.RemoveLibrary(row.ID)
+	rows, err := store.LibraryRows()
+	if err != nil {
+		return sqlite.LibraryRow{}, false
+	}
+	for _, row := range rows {
+		if row.Kind != library.KindYTM || row.ID == excludeLibID {
+			continue
+		}
+		cfg := decodeYTMConfig(row.Config)
+		existingEmail := strings.TrimSpace(cfg.Email)
+		existingChannel := recordedYTMChannelID(row)
+		if (existingEmail == "" || existingChannel == "") && row.CredentialID != "" && cs != nil {
+			var stored Credentials
+			if err := cs.Load(row.CredentialID, library.KindYTM, &stored); err == nil {
+				if existingEmail == "" {
+					existingEmail = strings.TrimSpace(stored.Email)
+				}
+				if existingChannel == "" {
+					existingChannel = strings.TrimSpace(stored.ChannelID)
 				}
 			}
 		}
-	}
-	s.emit(eventLibrary, LibraryProgress{State: "ready"})
-	return nil
-}
-
-// AuthStatus reports the stored session without touching the network, so the UI
-// can render the account row on startup without waiting on a request.
-//
-// It never claims SignedIn for credentials it has not validated; use RefreshAuth
-// for that.
-func (s *PlayerService) AuthStatus() AuthStatus {
-	creds, err := loadCredentials()
-	if err != nil || creds == nil {
-		return AuthStatus{}
-	}
-	if s.authExpired.Load() {
-		return AuthStatus{
-			Name:      creds.Name,
-			Email:     creds.Email,
-			ChannelID: creds.ChannelID,
-			Expired:   true,
+		if targetEmail != "" && existingEmail != "" && strings.EqualFold(targetEmail, existingEmail) {
+			return row, true
+		}
+		if targetChannel != "" && existingChannel != "" && targetChannel == existingChannel {
+			return row, true
 		}
 	}
-	return AuthStatus{
-		SignedIn:  true,
-		Name:      creds.Name,
-		Email:     creds.Email,
-		ChannelID: creds.ChannelID,
-	}
+	return sqlite.LibraryRow{}, false
 }
 
-// RefreshAuth re-validates the stored session against the server and updates the
-// status. It is the call that notices a revoked session, because a dead one
-// answers HTTP 200 rather than an error status.
-func (s *PlayerService) RefreshAuth() AuthStatus {
-	creds, err := loadCredentials()
-	if err != nil || creds == nil {
-		s.authExpired.Store(false)
-		return AuthStatus{}
+// recordedYTMChannelID returns the YouTube channel ID stored for row, ignoring
+// synthetic ytm_<hex> library IDs that earlier store fallbacks copied into account_id.
+func recordedYTMChannelID(row sqlite.LibraryRow) string {
+	if ch := strings.TrimSpace(decodeYTMConfig(row.Config).ChannelID); ch != "" {
+		return ch
 	}
+	raw := strings.TrimSpace(row.AccountID)
+	switch {
+	case strings.HasPrefix(raw, "ytm:"):
+		raw = strings.TrimPrefix(raw, "ytm:")
+	case strings.HasPrefix(raw, "ytm_"):
+		rest := strings.TrimPrefix(raw, "ytm_")
+		if !strings.HasPrefix(rest, "UC") {
+			return ""
+		}
+		raw = rest
+	}
+	if raw == "" || raw == "default" {
+		return ""
+	}
+	return raw
+}
 
-	client, err := s.clientWithCookieCapture(creds, s.authGen.Load())
+func captureYTMCredentialsFromBrowser() (*Credentials, error) {
+	jarDir, err := loginJarDir()
 	if err != nil {
-		s.authExpired.Store(true)
-		return AuthStatus{
-			Name:      creds.Name,
-			Email:     creds.Email,
-			ChannelID: creds.ChannelID,
-			Expired:   true,
-		}
+		return nil, err
 	}
+	if err := resetLoginJar(jarDir); err != nil {
+		return nil, err
+	}
+	defer resetLoginJar(jarDir)
 
-	ctx, cancel := context.WithTimeout(context.Background(), authProbeTimeout)
+	session, err := loginwin.Open(loginwin.Options{
+		JarDir:  jarDir,
+		Timeout: 5 * time.Minute,
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer session.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	if _, _, err := client.GetLikedSongs(ctx); err != nil {
-		if errors.Is(err, ytm.ErrSessionExpired) {
-			s.authExpired.Store(true)
-			return AuthStatus{
-				Name:      creds.Name,
-				Email:     creds.Email,
-				ChannelID: creds.ChannelID,
-				Expired:   true,
-			}
-		}
-		// A network failure says nothing about the session, so the stored state
-		// stands rather than being reported as expired.
-		return AuthStatus{
-			SignedIn:  true,
-			Name:      creds.Name,
-			Email:     creds.Email,
-			ChannelID: creds.ChannelID,
-		}
-	}
-
-	s.authExpired.Store(false)
-	return AuthStatus{
-		SignedIn:  true,
-		Name:      creds.Name,
-		Email:     creds.Email,
-		ChannelID: creds.ChannelID,
-	}
-}
-
-// Accounts lists the channels the signed-in account owns.
-func (s *PlayerService) Accounts() ([]AccountInfo, error) {
-	client, err := s.authClient()
+	result, err := session.Wait(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), authProbeTimeout)
-	defer cancel()
-
-	accounts, err := client.GetAccounts(ctx)
-	if err != nil {
+	creds := credentialsFromLogin(result)
+	if err := checkCookieHeader(creds.CookieHeader); err != nil {
 		return nil, err
 	}
-
-	out := make([]AccountInfo, 0, len(accounts))
-	for _, a := range accounts {
-		out = append(out, AccountInfo{
-			Name:          a.Name,
-			Byline:        a.Byline,
-			ChannelHandle: a.ChannelHandle,
-			ThumbnailURL:  a.ThumbnailURL,
-			Selected:      a.IsSelected,
-			ChannelID:     a.PageID,
-		})
-	}
-	return out, nil
+	return creds, nil
 }
 
-// AccountInfo is one channel, as the UI needs it.
-type AccountInfo struct {
-	Name          string `json:"name"`
-	Byline        string `json:"byline,omitempty"`
-	ChannelHandle string `json:"channelHandle,omitempty"`
-	ThumbnailURL  string `json:"thumbnailUrl,omitempty"`
-	Selected      bool   `json:"selected"`
-	ChannelID     string `json:"channelId,omitempty"`
-}
-
-// SwitchChannel points the stored session at another channel.
-//
-// One set of cookies serves every channel of an account, so this rewrites three
-// fields and reopens nothing. It depends on the client sending the session's
-// AuthUser rather than a hardcoded "0"; without that, every brand channel would
-// behave like the first one.
-func (s *PlayerService) SwitchChannel(channelID string) error {
-	authMu <- struct{}{}
-	defer func() { <-authMu }()
-
-	creds, err := loadCredentials()
-	if err != nil {
-		return err
-	}
-
-	client, err := clientFromCredentials(creds)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), authProbeTimeout)
-	defer cancel()
-
-	accounts, err := client.GetAccounts(ctx)
-	if err != nil {
-		return err
-	}
-
-	var found bool
-	for _, a := range accounts {
-		if a.PageID != channelID {
-			continue
-		}
-		creds.ChannelID = a.PageID
-		creds.AuthUser = a.AuthUser
-		creds.DataSyncID = a.DataSyncID
-		found = true
-		break
-	}
-	if !found {
-		return fmt.Errorf("auth: no channel %q on this account", channelID)
-	}
-
-	// Confirm the new channel answers before persisting, so a bad switch leaves
-	// the previous channel in place.
-	if err := clientFromCredentialsInto(client, creds); err != nil {
-		return err
-	}
-	if _, err := client.GetAccountInfo(ctx); err != nil {
-		return fmt.Errorf("auth: switching channel failed: %w", err)
-	}
-
-	if err := saveCredentials(creds); err != nil {
-		return err
-	}
-	gen := s.authGen.Add(1)
-	s.authExpired.Store(false)
-	s.stopYTMSyncers()
-	if rotated, err := s.clientWithCookieCapture(creds, gen); err == nil && s.ytmProv != nil {
-		s.ytmProv.setClient(rotated)
-	}
-	s.startYTMLibrarySync(creds)
-	return nil
-}
-
-// clientFromCredentialsInto applies the stored channel fields onto a live client,
-// so a switch can be validated without rebuilding it.
+// clientFromCredentialsInto applies the stored channel fields onto a live client.
 func clientFromCredentialsInto(client *ytm.Client, creds *Credentials) error {
 	auth, err := ytm.NewAuthFromCookieString(creds.CookieHeader)
 	if err != nil {
@@ -439,34 +634,18 @@ func clientFromCredentialsInto(client *ytm.Client, creds *Credentials) error {
 	return nil
 }
 
-// authClient builds a client from the stored session.
-func (s *PlayerService) authClient() (*ytm.Client, error) {
-	creds, err := loadCredentials()
-	if err != nil {
-		return nil, err
-	}
-	return clientFromCredentials(creds)
-}
-
-// normalizeCookieHeader trims the wrapping a user is likely to paste along with
-// the cookies: a "Cookie:" prefix, a trailing semicolon, or newlines from a
-// multi-line copy.
+// normalizeCookieHeader trims common wrappers users copy alongside cookies.
 func normalizeCookieHeader(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if len(raw) >= 7 && strings.EqualFold(raw[:7], "cookie:") {
 		raw = strings.TrimSpace(raw[7:])
 	}
-	// A copied header can arrive folded across lines.
 	raw = strings.Join(strings.Fields(raw), " ")
 	return strings.TrimSuffix(raw, ";")
 }
 
-// checkCookieHeader rejects a header that cannot authenticate anything, before
-// any network call.
-//
-// Two failures are worth naming separately, because they need different fixes: a
-// header with no seed cannot sign a request, and a header with no primary session
-// cookie is the exact shape measured to return the signed-out page.
+// checkCookieHeader rejects headers missing either the SAPISID seed or primary
+// session identity cookie before making network requests.
 func checkCookieHeader(header string) error {
 	if header == "" {
 		return fmt.Errorf("auth: the cookie header is empty")

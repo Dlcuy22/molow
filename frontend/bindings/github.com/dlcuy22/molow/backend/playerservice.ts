@@ -32,13 +32,6 @@ import * as spectrum$0 from "../internal/spectrum/models.js";
 import * as $models from "./models.js";
 
 /**
- * Accounts lists the channels the signed-in account owns.
- */
-export function Accounts(): $CancellablePromise<$models.AccountInfo[] | null> {
-    return $Call.ByID(204075585);
-}
-
-/**
  * AddEffect appends a stage and returns its ID. The stage is live when this
  * returns, so the caller can set a parameter on it immediately.
  */
@@ -107,20 +100,9 @@ export function ArtistAvatar(artistID: string): $CancellablePromise<string> {
 }
 
 /**
- * AuthStatus reports the stored session without touching the network, so the UI
- * can render the account row on startup without waiting on a request.
- * 
- * It never claims SignedIn for credentials it has not validated; use RefreshAuth
- * for that.
- */
-export function AuthStatus(): $CancellablePromise<$models.AuthStatus> {
-    return $Call.ByID(3646971845);
-}
-
-/**
  * CheckKeyring probes whether the platform secret store (Credential Manager on
  * Windows, Secret Service daemon on Linux, Keychain on macOS) is reachable and
- * unlocked before opening the sign-in flow.
+ * unlocked before opening a sign-in flow.
  */
 export function CheckKeyring(): $CancellablePromise<void> {
     return $Call.ByID(2580835784);
@@ -167,6 +149,14 @@ export function ConfigureSpectrum(cfg: $models.SpectrumConfig): $CancellableProm
 }
 
 /**
+ * ConnectedLibraries returns status summaries for every configured remote
+ * library in creation order.
+ */
+export function ConnectedLibraries(): $CancellablePromise<$models.LibraryAuthStatus[] | null> {
+    return $Call.ByID(310281271);
+}
+
+/**
  * Cover returns the current track's artwork as an inline data URL, or an empty
  * string when the track has none. The snapshot carries only the id, so the
  * payload a UI redraws at 4 Hz stays small; the bytes cross the bridge once,
@@ -195,6 +185,24 @@ export function CreateLibrary(name: string, description: string): $CancellablePr
 
 export function CreatePlaylist(libraryID: string, name: string): $CancellablePromise<library$0.Playlist> {
     return $Call.ByID(1975157543, libraryID, name);
+}
+
+/**
+ * CreateYTMLibraryWithBrowser opens an isolated login window, validates the
+ * captured cookies, rejects duplicate Google accounts, stores encrypted
+ * credentials, and registers the new YouTube Music library.
+ */
+export function CreateYTMLibraryWithBrowser(name: string, description: string): $CancellablePromise<library$0.Library> {
+    return $Call.ByID(495720454, name, description);
+}
+
+/**
+ * CreateYTMLibraryWithCookie validates a pasted Cookie header, rejects duplicate
+ * Google accounts, stores encrypted credentials, and creates the new YouTube
+ * Music library.
+ */
+export function CreateYTMLibraryWithCookie(name: string, description: string, cookieHeader: string): $CancellablePromise<library$0.Library> {
+    return $Call.ByID(1572726288, name, description, cookieHeader);
 }
 
 /**
@@ -550,12 +558,27 @@ export function QueueRefsNext(refs: string[] | null): $CancellablePromise<void> 
 }
 
 /**
- * RefreshAuth re-validates the stored session against the server and updates the
- * status. It is the call that notices a revoked session, because a dead one
- * answers HTTP 200 rather than an error status.
+ * ReSignInLibrary refreshes credentials for an existing YouTube Music library
+ * using the isolated browser login window.
  */
-export function RefreshAuth(): $CancellablePromise<$models.AuthStatus> {
-    return $Call.ByID(3747990598);
+export function ReSignInLibrary(libraryID: string): $CancellablePromise<void> {
+    return $Call.ByID(3122628777, libraryID);
+}
+
+/**
+ * ReSignInLibraryWithCookie refreshes credentials for an existing YouTube Music
+ * library from a pasted Cookie header.
+ */
+export function ReSignInLibraryWithCookie(libraryID: string, cookieHeader: string): $CancellablePromise<void> {
+    return $Call.ByID(1905145175, libraryID, cookieHeader);
+}
+
+/**
+ * RefreshLibraryAuth probes the stored session for libraryID against YouTube
+ * Music, updates its expired state, and returns the updated LibraryAuthStatus.
+ */
+export function RefreshLibraryAuth(libraryID: string): $CancellablePromise<$models.LibraryAuthStatus> {
+    return $Call.ByID(1118943101, libraryID);
 }
 
 /**
@@ -626,6 +649,14 @@ export function SeekTo(ms: number): $CancellablePromise<void> {
  */
 export function SessionState(): $CancellablePromise<$models.SessionState> {
     return $Call.ByID(2746967836);
+}
+
+/**
+ * SetActiveLibrary records the library currently open in the UI so cross-library
+ * YTM calls (search, artist view, local imports) prefer its signed-in session.
+ */
+export function SetActiveLibrary(id: string): $CancellablePromise<void> {
+    return $Call.ByID(1963210972, id);
 }
 
 /**
@@ -755,44 +786,11 @@ export function SetVolume(v: number): $CancellablePromise<void> {
 }
 
 /**
- * SignIn opens the login window and waits for a session.
- * 
- * The window is an isolated browser view on its own cookie jar, because a Wails
- * webview exposes no cookie API and the cookies that matter are HttpOnly. It is
- * closed as soon as the session is captured, and its profile directory is
- * removed, so nothing is left behind.
+ * SignOutLibrary clears stored credentials for libraryID, preserving the cached
+ * SQLite catalogue in signedOut state unless deleteLibrary is true.
  */
-export function SignIn(): $CancellablePromise<void> {
-    return $Call.ByID(3669223431);
-}
-
-/**
- * SignInWithCookieHeader signs in from a pasted Cookie: header.
- * 
- * The whole header is required, not one field. Measured against the live
- * endpoint: a SAPISID on its own authenticates nothing, because it only seeds the
- * Authorization hash while the session identity lives in the primary cookies.
- * That single-value mistake is the one a user is most likely to make, so the
- * input is checked before any network call.
- */
-export function SignInWithCookieHeader(header: string): $CancellablePromise<void> {
-    return $Call.ByID(2147805764, header);
-}
-
-/**
- * SignOut forgets the stored session, keeping any cached YTM library rows on
- * disk in signedOut state.
- */
-export function SignOut(): $CancellablePromise<void> {
-    return $Call.ByID(1134654828);
-}
-
-/**
- * SignOutWithOptions forgets the stored session and optionally deletes all
- * cached YouTube Music libraries from library.db.
- */
-export function SignOutWithOptions(deleteLibrary: boolean): $CancellablePromise<void> {
-    return $Call.ByID(188184922, deleteLibrary);
+export function SignOutLibrary(libraryID: string, deleteLibrary: boolean): $CancellablePromise<void> {
+    return $Call.ByID(1649535991, libraryID, deleteLibrary);
 }
 
 /**
@@ -821,18 +819,6 @@ export function SpectrumSchema(): $CancellablePromise<spectrum$0.Param[] | null>
  */
 export function Stop(): $CancellablePromise<void> {
     return $Call.ByID(2922428713);
-}
-
-/**
- * SwitchChannel points the stored session at another channel.
- * 
- * One set of cookies serves every channel of an account, so this rewrites three
- * fields and reopens nothing. It depends on the client sending the session's
- * AuthUser rather than a hardcoded "0"; without that, every brand channel would
- * behave like the first one.
- */
-export function SwitchChannel(channelID: string): $CancellablePromise<void> {
-    return $Call.ByID(1175181924, channelID);
 }
 
 /**

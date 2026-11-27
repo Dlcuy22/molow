@@ -2,17 +2,30 @@ import { get, writable } from "svelte/store";
 import CheckCircle from "phosphor-svelte/lib/CheckCircle";
 import WarningCircle from "phosphor-svelte/lib/WarningCircle";
 import { PlayerService } from "../../bindings/github.com/dlcuy22/molow/backend";
-import type { AccountInfo, AuthStatus } from "../../bindings/github.com/dlcuy22/molow/backend/models";
+import type { LibraryAuthStatus } from "../../bindings/github.com/dlcuy22/molow/backend/models";
 import { libraries, refreshLibraries, selectLibrary } from "./library";
 import { showToast } from "./toast";
+import type { LibraryInfo } from "./types";
 
-export const authStatus = writable<AuthStatus>({ signedIn: false });
-export const authAccounts = writable<AccountInfo[]>([]);
+export type { LibraryAuthStatus };
+
+export interface AuthDialogTarget {
+  libraryId: string;
+  libraryName: string;
+  kind: string;
+}
+
+export interface SignOutDialogTarget {
+  libraryId: string;
+  libraryName: string;
+}
+
+export const connectedLibraries = writable<LibraryAuthStatus[]>([]);
+export const authDialog = writable<AuthDialogTarget | null>(null);
+export const signOutDialog = writable<SignOutDialogTarget | null>(null);
 export const authBusy = writable(false);
 export const authError = writable("");
 export const keyringError = writable("");
-export const authDialogOpen = writable(false);
-export const signOutDialogOpen = writable(false);
 
 function errorText(err: unknown, fallback: string): string {
   if (err instanceof Error && err.message.trim() !== "") {
@@ -24,135 +37,163 @@ function errorText(err: unknown, fallback: string): string {
   return fallback;
 }
 
-/** loadAuthStatus reads the stored session without touching the network. */
-export async function loadAuthStatus(): Promise<AuthStatus> {
-  try {
-    const status = await PlayerService.AuthStatus();
-    authStatus.set(status);
-    if (status.signedIn && !status.expired) {
-      void loadAccounts();
-    } else {
-      authAccounts.set([]);
-    }
-    return status;
-  } catch {
-    const empty: AuthStatus = { signedIn: false };
-    authStatus.set(empty);
-    authAccounts.set([]);
-    return empty;
-  }
+const KEYRING_UNAVAILABLE_FALLBACK =
+  "System keyring is unavailable. Start a Secret Service daemon (GNOME Keyring or KWallet) and try again.";
+
+export function statusForLibrary(
+  list: LibraryAuthStatus[],
+  libraryID: string,
+): LibraryAuthStatus | undefined {
+  return list.find((item) => item.libraryId === libraryID);
 }
 
-/** loadAccounts fetches channels owned by the signed-in account. */
-export async function loadAccounts(): Promise<AccountInfo[]> {
+/** loadConnectedLibraries reads remote library auth and health states without hitting the network. */
+export async function loadConnectedLibraries(): Promise<LibraryAuthStatus[]> {
   try {
-    const list = (await PlayerService.Accounts()) ?? [];
-    authAccounts.set(list);
+    const list = (await PlayerService.ConnectedLibraries()) ?? [];
+    connectedLibraries.set(list);
     return list;
   } catch {
-    authAccounts.set([]);
+    connectedLibraries.set([]);
     return [];
   }
 }
 
-/** refreshAuth validates the stored session against YouTube Music. */
-export async function refreshAuth(): Promise<AuthStatus> {
-  authBusy.set(true);
-  authError.set("");
+/** checkKeyring verifies that the platform secret store can seal credentials. */
+export async function checkKeyring(): Promise<boolean> {
+  keyringError.set("");
   try {
-    const status = await PlayerService.RefreshAuth();
-    authStatus.set(status);
-    if (status.signedIn && !status.expired) {
-      await loadAccounts();
-    } else {
-      authAccounts.set([]);
-    }
-    return status;
+    await PlayerService.CheckKeyring();
+    return true;
   } catch (err) {
-    authError.set(errorText(err, "Could not verify YouTube Music session"));
-    return get(authStatus);
-  } finally {
-    authBusy.set(false);
+    keyringError.set(errorText(err, KEYRING_UNAVAILABLE_FALLBACK));
+    return false;
   }
 }
 
-/** openAuthDialog verifies the OS keyring before presenting sign-in controls. */
-export async function openAuthDialog(): Promise<void> {
+/** openReauthDialog opens the re-sign-in dialog for an existing remote library. */
+export async function openReauthDialog(
+  libraryID: string,
+  libraryName: string,
+  kind = "ytm",
+): Promise<void> {
   authError.set("");
   keyringError.set("");
-  authDialogOpen.set(true);
-  try {
-    await PlayerService.CheckKeyring();
-  } catch (err) {
-    keyringError.set(
-      errorText(
-        err,
-        "System keyring is unavailable. Start a Secret Service daemon (GNOME Keyring or KWallet) and try again.",
-      ),
-    );
-  }
+  authDialog.set({ libraryId: libraryID, libraryName, kind });
+  await checkKeyring();
 }
 
 export function closeAuthDialog(): void {
   if (get(authBusy)) {
     return;
   }
-  authDialogOpen.set(false);
+  authDialog.set(null);
+  authError.set("");
 }
 
-export function openSignOutDialog(): void {
+export function openSignOutDialog(libraryID: string, libraryName: string): void {
   authError.set("");
-  signOutDialogOpen.set(true);
+  signOutDialog.set({ libraryId: libraryID, libraryName });
 }
 
 export function closeSignOutDialog(): void {
   if (get(authBusy)) {
     return;
   }
-  signOutDialogOpen.set(false);
+  signOutDialog.set(null);
+  authError.set("");
 }
 
-async function selectActiveYTMLibrary(channelId?: string): Promise<void> {
+async function activateCreatedLibrary(createdId: string, createdName: string): Promise<LibraryInfo | null> {
   await refreshLibraries();
-  const list = get(libraries);
-  const match =
-    (channelId ? list.find((l) => l.id === `ytm:${channelId}`) : undefined) ??
-    list.find((l) => l.kind === "ytm");
-  if (match) {
-    await selectLibrary(match.id);
+  await loadConnectedLibraries();
+  await selectLibrary(createdId);
+  const found = get(libraries).find((l) => l.id === createdId) ?? null;
+  showToast({
+    key: "ytm-auth",
+    kind: "message",
+    icon: CheckCircle,
+    label: createdName ? `Connected ${createdName}` : "Connected YouTube Music library",
+  });
+  return found;
+}
+
+/** createYTMLibraryWithBrowser authenticates via the isolated login window and creates a library. */
+export async function createYTMLibraryWithBrowser(
+  name: string,
+  description: string,
+): Promise<LibraryInfo | null> {
+  authBusy.set(true);
+  authError.set("");
+  if (!(await checkKeyring())) {
+    authBusy.set(false);
+    return null;
+  }
+
+  try {
+    const created = await PlayerService.CreateYTMLibraryWithBrowser(name, description);
+    return await activateCreatedLibrary(created.id, created.name);
+  } catch (err) {
+    authError.set(errorText(err, "YouTube Music sign-in did not complete"));
+    return null;
+  } finally {
+    authBusy.set(false);
   }
 }
 
-/** signInWithWindow opens the isolated login window after keyring pre-flight. */
-export async function signInWithWindow(): Promise<boolean> {
+/** createYTMLibraryWithCookie validates a pasted Cookie header and creates a YouTube Music library. */
+export async function createYTMLibraryWithCookie(
+  name: string,
+  description: string,
+  header: string,
+): Promise<LibraryInfo | null> {
+  const trimmed = header.trim();
+  if (trimmed === "") {
+    authError.set("Paste a full Cookie header from music.youtube.com first.");
+    return null;
+  }
+
   authBusy.set(true);
   authError.set("");
-  keyringError.set("");
+  if (!(await checkKeyring())) {
+    authBusy.set(false);
+    return null;
+  }
+
   try {
-    await PlayerService.CheckKeyring();
+    const created = await PlayerService.CreateYTMLibraryWithCookie(name, description, trimmed);
+    return await activateCreatedLibrary(created.id, created.name);
   } catch (err) {
-    const msg = errorText(
-      err,
-      "System keyring is unavailable. Sign in was aborted to keep credentials safe.",
-    );
-    keyringError.set(msg);
+    authError.set(errorText(err, "Could not verify the pasted Cookie header"));
+    return null;
+  } finally {
+    authBusy.set(false);
+  }
+}
+
+/** reSignInWithWindow refreshes credentials for the target library using the login window. */
+export async function reSignInWithWindow(): Promise<boolean> {
+  const target = get(authDialog);
+  if (!target) {
+    return false;
+  }
+
+  authBusy.set(true);
+  authError.set("");
+  if (!(await checkKeyring())) {
     authBusy.set(false);
     return false;
   }
 
   try {
-    await PlayerService.SignIn();
-    const status = await loadAuthStatus();
-    if (status.signedIn && !status.expired) {
-      await loadAccounts();
-      await selectActiveYTMLibrary(status.channelId);
-    }
-    authDialogOpen.set(false);
+    await PlayerService.ReSignInLibrary(target.libraryId);
+    await Promise.all([loadConnectedLibraries(), refreshLibraries()]);
+    authDialog.set(null);
     showToast({
       key: "ytm-auth",
       kind: "message",
       icon: CheckCircle,
-      label: status.name ? `Signed in as ${status.name}` : "Signed in to YouTube Music",
+      label: `Reconnected ${target.libraryName}`,
     });
     return true;
   } catch (err) {
@@ -163,8 +204,12 @@ export async function signInWithWindow(): Promise<boolean> {
   }
 }
 
-/** signInWithCookieHeader signs in from a pasted Cookie header after keyring pre-flight. */
-export async function signInWithCookieHeader(header: string): Promise<boolean> {
+/** reSignInWithCookieHeader refreshes credentials for the target library from a Cookie header. */
+export async function reSignInWithCookieHeader(header: string): Promise<boolean> {
+  const target = get(authDialog);
+  if (!target) {
+    return false;
+  }
   const trimmed = header.trim();
   if (trimmed === "") {
     authError.set("Paste a full Cookie header from music.youtube.com first.");
@@ -173,32 +218,20 @@ export async function signInWithCookieHeader(header: string): Promise<boolean> {
 
   authBusy.set(true);
   authError.set("");
-  keyringError.set("");
-  try {
-    await PlayerService.CheckKeyring();
-  } catch (err) {
-    const msg = errorText(
-      err,
-      "System keyring is unavailable. Sign in was aborted to keep credentials safe.",
-    );
-    keyringError.set(msg);
+  if (!(await checkKeyring())) {
     authBusy.set(false);
     return false;
   }
 
   try {
-    await PlayerService.SignInWithCookieHeader(trimmed);
-    const status = await loadAuthStatus();
-    if (status.signedIn && !status.expired) {
-      await loadAccounts();
-      await selectActiveYTMLibrary(status.channelId);
-    }
-    authDialogOpen.set(false);
+    await PlayerService.ReSignInLibraryWithCookie(target.libraryId, trimmed);
+    await Promise.all([loadConnectedLibraries(), refreshLibraries()]);
+    authDialog.set(null);
     showToast({
       key: "ytm-auth",
       kind: "message",
       icon: CheckCircle,
-      label: status.name ? `Signed in as ${status.name}` : "Signed in to YouTube Music",
+      label: `Reconnected ${target.libraryName}`,
     });
     return true;
   } catch (err) {
@@ -209,53 +242,61 @@ export async function signInWithCookieHeader(header: string): Promise<boolean> {
   }
 }
 
-export async function switchChannel(channelId: string): Promise<void> {
-  if (!channelId) {
-    return;
-  }
+/** refreshLibraryAuth probes one connected library against YouTube Music. */
+export async function refreshLibraryAuth(libraryID: string): Promise<LibraryAuthStatus | null> {
   authBusy.set(true);
   authError.set("");
   try {
-    await PlayerService.SwitchChannel(channelId);
-    const status = await loadAuthStatus();
-    await loadAccounts();
-    await selectActiveYTMLibrary(status.channelId);
+    const status = await PlayerService.RefreshLibraryAuth(libraryID);
+    await Promise.all([loadConnectedLibraries(), refreshLibraries()]);
     showToast({
       key: "ytm-auth",
       kind: "message",
-      icon: CheckCircle,
-      label: "Switched YouTube Music channel",
+      icon: status.expired || !status.signedIn ? WarningCircle : CheckCircle,
+      label: status.expired
+        ? `${status.libraryName} session expired`
+        : status.signedIn
+          ? `${status.libraryName} session is active`
+          : `${status.libraryName} is signed out`,
     });
+    return status;
   } catch (err) {
-    const msg = errorText(err, "Could not switch channel");
+    const msg = errorText(err, "Could not verify library session");
     authError.set(msg);
     showToast({ key: "ytm-auth", kind: "message", icon: WarningCircle, label: msg });
+    return null;
   } finally {
     authBusy.set(false);
   }
 }
 
-export async function signOut(deleteLibrary = false): Promise<void> {
+/** signOutLibrary signs out one remote library, optionally removing its local cache. */
+export async function signOutLibrary(deleteLibrary = false): Promise<boolean> {
+  const target = get(signOutDialog);
+  if (!target) {
+    return false;
+  }
+
   authBusy.set(true);
   authError.set("");
   try {
-    await PlayerService.SignOutWithOptions(deleteLibrary);
-    authStatus.set({ signedIn: false });
-    authAccounts.set([]);
-    signOutDialogOpen.set(false);
-    await refreshLibraries();
+    await PlayerService.SignOutLibrary(target.libraryId, deleteLibrary);
+    signOutDialog.set(null);
+    await Promise.all([loadConnectedLibraries(), refreshLibraries()]);
     showToast({
       key: "ytm-auth",
       kind: "message",
       icon: CheckCircle,
       label: deleteLibrary
-        ? "Signed out and deleted YouTube Music library"
-        : "Signed out of YouTube Music",
+        ? `Signed out and removed ${target.libraryName}`
+        : `Signed out of ${target.libraryName}`,
     });
+    return true;
   } catch (err) {
     const msg = errorText(err, "Could not sign out");
     authError.set(msg);
     showToast({ key: "ytm-auth", kind: "message", icon: WarningCircle, label: msg });
+    return false;
   } finally {
     authBusy.set(false);
   }

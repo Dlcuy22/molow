@@ -9,10 +9,9 @@
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
   import MusicNotes from "phosphor-svelte/lib/MusicNotes";
   import Plus from "phosphor-svelte/lib/Plus";
-  import UserCircle from "phosphor-svelte/lib/UserCircle";
   import type { Playlist } from "../types";
   import Cover from "./Cover.svelte";
-  import { openContextMenu } from "./context-menu.svelte";
+  import { contextMenu, openContextMenu } from "./context-menu.svelte";
 
   export interface LibraryCard {
     id: string;
@@ -32,13 +31,11 @@
     playlists = [],
     playlistsLoading = false,
     activePlaylistId = "",
-    ytmStatus = null,
     onnav = (_tab: "home" | "library" | "search") => {},
     onsearch = () => {},
     onswitch = (_id: string) => {},
     onopenplaylist = (_list: Playlist) => {},
     onnewlibrary = () => {},
-    onyoutubeaccount,
     oneffects = () => {},
     onsettings = () => {},
     onwidthcommit = (_width: number) => {},
@@ -50,13 +47,11 @@
     playlists?: Playlist[];
     playlistsLoading?: boolean;
     activePlaylistId?: string;
-    ytmStatus?: { signedIn?: boolean; expired?: boolean; name?: string } | null;
     onnav?: (tab: "home" | "library" | "search") => void;
     onsearch?: () => void;
     onswitch?: (id: string) => void;
     onopenplaylist?: (list: Playlist) => void;
     onnewlibrary?: () => void;
-    onyoutubeaccount?: () => void;
     oneffects?: () => void;
     onsettings?: () => void;
     onwidthcommit?: (width: number) => void;
@@ -237,12 +232,19 @@
     }
     const onPointerDown = (e: PointerEvent) => {
       const node = e.target as Node | null;
-      if (node && (menuEl?.contains(node) || triggerEl?.contains(node))) {
+      if (
+        contextMenu.open ||
+        (e.target as HTMLElement | null)?.closest?.("[data-context-menu]") != null ||
+        (node && (menuEl?.contains(node) || triggerEl?.contains(node)))
+      ) {
         return;
       }
       closeSwitcher(false);
     };
     const onKeyDown = (e: KeyboardEvent) => {
+      if (contextMenu.open) {
+        return;
+      }
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -315,7 +317,6 @@
           : currentLibrary.name}
         onclick={toggleSwitcher}
         oncontextmenu={(e) => {
-          closeSwitcher(false);
           openContextMenu(e, {
             kind: "library",
             id: currentLibrary.id,
@@ -559,7 +560,6 @@
             }
           }}
           oncontextmenu={(e) => {
-            closeSwitcher(false);
             openContextMenu(e, {
               kind: "library",
               id: lib.id,
@@ -596,26 +596,6 @@
       <Plus size="14" class="shrink-0" />
       <span class="truncate">New library</span>
     </button>
-    {#if onyoutubeaccount}
-      <button
-        type="button"
-        role="menuitem"
-        class="mt-0.5 flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-        onclick={() => {
-          closeSwitcher(false);
-          onyoutubeaccount();
-        }}
-      >
-        <UserCircle size="14" class="shrink-0" />
-        <span class="min-w-0 flex-1 truncate">
-          {ytmStatus?.expired
-            ? "YouTube Music (Expired)"
-            : ytmStatus?.signedIn
-              ? ytmStatus.name || "YouTube Music"
-              : "Sign in to YouTube Music"}
-        </span>
-      </button>
-    {/if}
   </div>
 {/if}
 

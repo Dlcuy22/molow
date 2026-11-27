@@ -139,27 +139,231 @@ func (s *Store) migrate() error {
 	return nil
 }
 
+// LibraryRow is a stored library registry row including persistence metadata
+// that stays on the Go side of the bridge (credential reference and source
+// configuration JSON).
+type LibraryRow struct {
+	library.Library
+	AccountID    string
+	CredentialID string
+	Config       string
+}
+
 // AddLibrary registers a library and returns its row.
 func (s *Store) AddLibrary(lib library.Library) (library.Library, error) {
-	if lib.ID == "" {
-		return library.Library{}, errors.New("library: empty id")
-	}
-	now := time.Now().Unix()
-	accountID := lib.Root
-	if lib.Kind == library.KindYTM && accountID == "" {
+	accountID := ""
+	if lib.Kind == library.KindYTM && strings.HasPrefix(lib.ID, "ytm:") {
 		accountID = strings.TrimPrefix(lib.ID, "ytm:")
 	}
-	_, err := s.db.Exec(
-		`INSERT INTO library (id, kind, name, description, root, account_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, root = excluded.root, account_id = excluded.account_id`,
-		lib.ID, string(lib.Kind), lib.Name, lib.Description, lib.Root, accountID, now,
-	)
+	row, err := s.AddLibraryRow(LibraryRow{
+		Library:   lib,
+		AccountID: accountID,
+	})
 	if err != nil {
 		return library.Library{}, err
 	}
 
-	return s.Library(lib.ID)
+	return row.Library, nil
+}
+
+// AddLibraryRow registers a library row with optional credential_id and config
+// metadata and returns the saved row.
+func (s *Store) AddLibraryRow(row LibraryRow) (LibraryRow, error) {
+	if row.ID == "" {
+		return LibraryRow{}, errors.New("library: empty id")
+	}
+	now := time.Now().Unix()
+	accountID := row.AccountID
+	if accountID == "" {
+		accountID = row.Root
+	}
+	if row.Kind == library.KindYTM && accountID == "" && strings.HasPrefix(row.ID, "ytm:") {
+		accountID = strings.TrimPrefix(row.ID, "ytm:")
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO library (id, kind, name, description, root, account_id, credential_id, config, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET
+		  name = excluded.name,
+		  description = excluded.description,
+		  root = excluded.root,
+		  account_id = excluded.account_id,
+		  credential_id = excluded.credential_id,
+		  config = excluded.config`,
+		row.ID, string(row.Kind), row.Name, row.Description, row.Root, accountID, row.CredentialID, row.Config, now,
+	)
+	if err != nil {
+		return LibraryRow{}, err
+	}
+
+	return s.LibraryRow(row.ID)
+}
+
+// UpdateLibraryCredential updates a library's credential_id pointer.
+func (s *Store) UpdateLibraryCredential(id, credentialID string) error {
+	res, err := s.db.Exec(`UPDATE library SET credential_id = ? WHERE id = ?`, credentialID, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("library: unknown id %q", id)
+	}
+
+	return nil
+}
+
+// UpdateLibraryConfig updates a library's source-specific config JSON.
+func (s *Store) UpdateLibraryConfig(id, config string) error {
+	res, err := s.db.Exec(`UPDATE library SET config = ? WHERE id = ?`, config, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("library: unknown id %q", id)
+	}
+
+	return nil
+}
+
+// NormalizeLegacyLibraryID rewrites a library's primary key from oldID to
+// colon-free newID inside a single transaction while keeping foreign_keys=1
+// satisfied across all child tables.
+func (s *Store) NormalizeLegacyLibraryID(oldID, newID string) error {
+	if oldID == "" || newID == "" || strings.Contains(newID, ":") {
+		return fmt.Errorf("library: invalid legacy migration ids (%q -> %q)", oldID, newID)
+	}
+	if oldID == newID {
+		return nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var exists int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM library WHERE id = ?`, oldID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return fmt.Errorf("library: unknown id %q", oldID)
+	}
+
+	if _, err := tx.Exec(
+		`INSERT INTO library (id, kind, name, description, root, account_id, created_at, last_scan_at, cover_id, custom_cover, credential_id, config)
+		 SELECT ?, kind, name, description, root, account_id, created_at, last_scan_at, cover_id, custom_cover, credential_id, config
+		 FROM library WHERE id = ?`,
+		newID, oldID,
+	); err != nil {
+		return err
+	}
+
+	childTables := []string{
+		"track",
+		"track_file",
+		"library_root",
+		"playlist",
+		"ytm_sync",
+		"ytm_tombstone",
+	}
+	for _, tbl := range childTables {
+		if _, err := tx.Exec(`UPDATE `+tbl+` SET library_id = ? WHERE library_id = ?`, newID, oldID); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.Exec(`DELETE FROM library WHERE id = ?`, oldID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// MigrateUnscopedRemoteLikes copies unscoped remote likes (<kind>:<nativeId>)
+// matching tracks in libraryID to scoped refs (<kind>:<libraryId>:<nativeId>).
+// The unscoped row is removed only if no local library holds the same track.
+func (s *Store) MigrateUnscopedRemoteLikes(libraryID string) error {
+	if libraryID == "" {
+		return nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.Query(
+		`SELECT DISTINCT kind, native_id FROM track WHERE library_id = ? AND kind <> 'local'`,
+		libraryID,
+	)
+	if err != nil {
+		return err
+	}
+	type pair struct {
+		kind     string
+		nativeID string
+	}
+	var pairs []pair
+	for rows.Next() {
+		var p pair
+		if err := rows.Scan(&p.kind, &p.nativeID); err != nil {
+			rows.Close()
+
+			return err
+		}
+		if p.kind != "" && p.nativeID != "" {
+			pairs = append(pairs, p)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+
+	for _, p := range pairs {
+		unscoped := library.RemoteRef(library.Kind(p.kind), p.nativeID)
+		scoped := library.ScopedRemoteRef(library.Kind(p.kind), libraryID, p.nativeID)
+		if _, err := tx.Exec(
+			`INSERT OR IGNORE INTO like (ref, created_at)
+			 SELECT ?, created_at FROM like WHERE ref = ?`,
+			scoped, unscoped,
+		); err != nil {
+			return err
+		}
+
+		var inLocal int
+		if err := tx.QueryRow(
+			`SELECT EXISTS(
+				SELECT 1 FROM track t
+				JOIN library l ON l.id = t.library_id
+				WHERE l.kind = 'local' AND t.kind = ? AND t.native_id = ?
+			)`,
+			p.kind, p.nativeID,
+		).Scan(&inLocal); err != nil {
+			return err
+		}
+		if inLocal == 0 {
+			if _, err := tx.Exec(`DELETE FROM like WHERE ref = ?`, unscoped); err != nil {
+				return err
+			}
+		}
+	}
+
+	return tx.Commit()
 }
 
 // UpdateLibrary changes a library's name and description and returns the updated row.
@@ -316,42 +520,57 @@ func (s *Store) LibraryLogoCovers(libraryID string, n int) ([]string, error) {
 	return out, rows.Err()
 }
 
-// Library reads one row with its track count.
-func (s *Store) Library(id string) (library.Library, error) {
+// LibraryRow reads one full library row including persistence metadata.
+func (s *Store) LibraryRow(id string) (LibraryRow, error) {
 	var (
-		out         library.Library
+		out         LibraryRow
 		kind        string
 		customCover int
 	)
 	err := s.db.QueryRow(
-		`SELECT l.id, l.kind, l.name, l.description, l.root, l.last_scan_at, l.cover_id, l.custom_cover,
+		`SELECT l.id, l.kind, l.name, l.description, l.root, l.account_id, l.credential_id, l.config,
+		        l.last_scan_at, l.cover_id, l.custom_cover,
 		        (SELECT COUNT(*) FROM track t WHERE t.library_id = l.id)
 		 FROM library l WHERE l.id = ?`, id,
-	).Scan(&out.ID, &kind, &out.Name, &out.Description, &out.Root, new(int64), &out.CoverID, &customCover, &out.TrackCount)
+	).Scan(
+		&out.ID, &kind, &out.Name, &out.Description, &out.Root, &out.AccountID,
+		&out.CredentialID, &out.Config, new(int64), &out.CoverID, &customCover, &out.TrackCount,
+	)
 	if err != nil {
-		return library.Library{}, err
+		return LibraryRow{}, err
 	}
 	out.Kind = library.Kind(kind)
 	out.Status = library.StatusReady
 	out.CustomCover = customCover != 0
 	roots, err := s.Roots(id)
 	if err != nil {
-		return library.Library{}, err
+		return LibraryRow{}, err
 	}
 	out.Roots = roots
 	covers, err := s.LibraryLogoCovers(id, 4)
 	if err != nil {
-		return library.Library{}, err
+		return LibraryRow{}, err
 	}
 	out.LogoCovers = covers
 
 	return out, nil
 }
 
-// Libraries lists every registered library.
-func (s *Store) Libraries() ([]library.Library, error) {
+// Library reads one row with its track count.
+func (s *Store) Library(id string) (library.Library, error) {
+	row, err := s.LibraryRow(id)
+	if err != nil {
+		return library.Library{}, err
+	}
+
+	return row.Library, nil
+}
+
+// LibraryRows lists every registered library row including persistence metadata.
+func (s *Store) LibraryRows() ([]LibraryRow, error) {
 	rows, err := s.db.Query(
-		`SELECT l.id, l.kind, l.name, l.description, l.root, l.cover_id, l.custom_cover,
+		`SELECT l.id, l.kind, l.name, l.description, l.root, l.account_id, l.credential_id, l.config,
+		        l.cover_id, l.custom_cover,
 		        (SELECT COUNT(*) FROM track t WHERE t.library_id = l.id)
 		 FROM library l ORDER BY l.created_at`,
 	)
@@ -360,14 +579,17 @@ func (s *Store) Libraries() ([]library.Library, error) {
 	}
 	defer rows.Close()
 
-	var out []library.Library
+	var out []LibraryRow
 	for rows.Next() {
 		var (
-			l           library.Library
+			l           LibraryRow
 			kind        string
 			customCover int
 		)
-		if err := rows.Scan(&l.ID, &kind, &l.Name, &l.Description, &l.Root, &l.CoverID, &customCover, &l.TrackCount); err != nil {
+		if err := rows.Scan(
+			&l.ID, &kind, &l.Name, &l.Description, &l.Root, &l.AccountID,
+			&l.CredentialID, &l.Config, &l.CoverID, &customCover, &l.TrackCount,
+		); err != nil {
 			return nil, err
 		}
 		l.Kind = library.Kind(kind)
@@ -393,6 +615,20 @@ func (s *Store) Libraries() ([]library.Library, error) {
 			return nil, err
 		}
 		out[i].LogoCovers = covers
+	}
+
+	return out, nil
+}
+
+// Libraries lists every registered library.
+func (s *Store) Libraries() ([]library.Library, error) {
+	rows, err := s.LibraryRows()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]library.Library, len(rows))
+	for i, r := range rows {
+		out[i] = r.Library
 	}
 
 	return out, nil
@@ -719,16 +955,27 @@ func (s *Store) UpsertRemoteTrack(libraryID string, kind library.Kind, t TrackRo
 // TrackRemoteMeta reads the persisted remote artwork URL and artist ID for a
 // remote ref, returning false when ref is not a catalogued remote track.
 func (s *Store) TrackRemoteMeta(ref string) (RemoteMeta, bool, error) {
-	kind, native, ok := remoteID(ref)
+	kind, libID, native, ok := library.ParseRemoteRef(ref)
 	if !ok {
 		return RemoteMeta{}, false, nil
 	}
-	var out RemoteMeta
-	err := s.db.QueryRow(
-		`SELECT thumbnail_url, artist_id FROM track
-		 WHERE kind = ? AND native_id = ? ORDER BY id LIMIT 1`,
-		string(kind), native,
-	).Scan(&out.ThumbnailURL, &out.ArtistID)
+	var (
+		out RemoteMeta
+		err error
+	)
+	if libID != "" {
+		err = s.db.QueryRow(
+			`SELECT thumbnail_url, artist_id FROM track
+			 WHERE library_id = ? AND kind = ? AND native_id = ? LIMIT 1`,
+			libID, string(kind), native,
+		).Scan(&out.ThumbnailURL, &out.ArtistID)
+	} else {
+		err = s.db.QueryRow(
+			`SELECT thumbnail_url, artist_id FROM track
+			 WHERE kind = ? AND native_id = ? ORDER BY id LIMIT 1`,
+			string(kind), native,
+		).Scan(&out.ThumbnailURL, &out.ArtistID)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return RemoteMeta{}, false, nil
 	}
@@ -742,7 +989,7 @@ func (s *Store) TrackRemoteMeta(ref string) (RemoteMeta, bool, error) {
 // BackfillTrackRemoteMeta fills empty thumbnail_url, artist_id, and album
 // fields on catalogued rows matching ref without overwriting values already stored.
 func (s *Store) BackfillTrackRemoteMeta(ref, thumbnailURL, artistID, album string) error {
-	kind, native, ok := remoteID(ref)
+	kind, _, native, ok := library.ParseRemoteRef(ref)
 	if !ok || (thumbnailURL == "" && artistID == "" && album == "") {
 		return nil
 	}

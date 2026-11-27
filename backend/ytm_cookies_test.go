@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dlcuy22/molow/internal/library"
+	"github.com/dlcuy22/molow/internal/library/sqlite"
 	ytm "github.com/dlcuy22/ytm-go"
 )
 
@@ -55,32 +57,42 @@ func TestMergeSetCookies(t *testing.T) {
 	}
 }
 
-func TestCookieCapturingTransportPersistsRotatedCookies(t *testing.T) {
+func TestCookieCapturingTransportPersistsRotatedCookiesPerLibrary(t *testing.T) {
 	isolateConfig(t)
 
-	creds := &Credentials{
-		CookieHeader: "SAPISID=seed1; SID=sid1; SIDCC=old-sidcc",
-		Name:         "Test",
+	svc := &PlayerService{ytmProv: newYTMProvider(newYTMIndex(), nil, false, nil)}
+	cs, err := svc.credentials()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := saveCredentials(creds); err != nil {
-		t.Fatalf("saveCredentials: %v", err)
+	mgr := svc.ytmManager()
+
+	credsA := &Credentials{CookieHeader: "SAPISID=seedA; SID=sidA; SIDCC=oldA", Name: "Account A"}
+	credsB := &Credentials{CookieHeader: "SAPISID=seedB; SID=sidB; SIDCC=oldB", Name: "Account B"}
+	if err := cs.Save("cred_a", library.KindYTM, credsA); err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.Save("cred_b", library.KindYTM, credsB); err != nil {
+		t.Fatal(err)
 	}
 
-	svc := &PlayerService{ytmProv: newYTMProvider(newYTMIndex(), nil, false, nil)}
-	gen := svc.authGen.Add(1)
+	sessA := mgr.ensureSession("ytm_a", "cred_a", ytmLibraryConfig{AccountName: "Account A"})
+	_ = mgr.ensureSession("ytm_b", "cred_b", ytmLibraryConfig{AccountName: "Account B"})
+	genA := sessA.authGen.Add(1)
 
 	rt := &cookieCapturingTransport{
-		gen: gen,
+		libraryID: "ytm_a",
+		gen:       genA,
 		base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Header: http.Header{
-					"Set-Cookie": {"SIDCC=rotated-sidcc; Path=/; Domain=.youtube.com"},
+					"Set-Cookie": {"SIDCC=rotatedA; Path=/; Domain=.youtube.com"},
 				},
 				Body: io.NopCloser(bytes.NewBufferString("{}")),
 			}, nil
 		}),
-		onSetCookies: svc.applyRotatedCookies,
+		onSetCookies: mgr.applyRotatedCookies,
 	}
 
 	req, err := http.NewRequest(http.MethodPost, "https://music.youtube.com/youtubei/v1/browse", nil)
@@ -93,51 +105,85 @@ func TestCookieCapturingTransportPersistsRotatedCookies(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	got, err := loadCredentials()
-	if err != nil {
-		t.Fatalf("loadCredentials: %v", err)
+	var gotA, gotB Credentials
+	if err := cs.Load("cred_a", library.KindYTM, &gotA); err != nil {
+		t.Fatalf("Load cred_a: %v", err)
 	}
-	if !strings.Contains(got.CookieHeader, "SIDCC=rotated-sidcc") {
-		t.Fatalf("persisted CookieHeader = %q, want rotated SIDCC", got.CookieHeader)
+	if err := cs.Load("cred_b", library.KindYTM, &gotB); err != nil {
+		t.Fatalf("Load cred_b: %v", err)
+	}
+	if !strings.Contains(gotA.CookieHeader, "SIDCC=rotatedA") {
+		t.Fatalf("cred_a CookieHeader = %q, want rotated SIDCC", gotA.CookieHeader)
+	}
+	if !strings.Contains(gotB.CookieHeader, "SIDCC=oldB") {
+		t.Fatalf("cred_b CookieHeader = %q was mutated unexpectedly", gotB.CookieHeader)
 	}
 }
 
 func TestApplyRotatedCookiesGenerationGuardAfterSignOut(t *testing.T) {
 	isolateConfig(t)
-
-	if err := saveCredentials(&Credentials{CookieHeader: "SAPISID=seed1; SID=sid1"}); err != nil {
-		t.Fatalf("saveCredentials: %v", err)
+	store, err := sqlite.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 
-	svc := &PlayerService{ytmProv: newYTMProvider(newYTMIndex(), nil, false, nil)}
-	staleGen := svc.authGen.Add(1)
+	svc := &PlayerService{
+		libStore: store,
+		libs:     map[string]library.Source{},
+		ytmProv:  newYTMProvider(newYTMIndex(), nil, false, nil),
+	}
+	cs, err := svc.credentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr := svc.ytmManager()
 
-	if err := svc.SignOut(); err != nil {
-		t.Fatalf("SignOut: %v", err)
+	if err := cs.Save("cred_1", library.KindYTM, &Credentials{CookieHeader: "SAPISID=seed1; SID=sid1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddLibraryRow(sqlite.LibraryRow{
+		Library:      library.Library{ID: "ytm_1", Kind: library.KindYTM, Name: "YTM 1"},
+		CredentialID: "cred_1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sess := mgr.ensureSession("ytm_1", "cred_1", ytmLibraryConfig{})
+	staleGen := sess.authGen.Add(1)
+
+	if err := svc.SignOutLibrary("ytm_1", false); err != nil {
+		t.Fatalf("SignOutLibrary: %v", err)
 	}
 
 	// A late Set-Cookie callback carrying the pre-sign-out generation must be ignored
-	// and must not recreate credentials.enc.
-	svc.applyRotatedCookies(staleGen, []string{"SIDCC=zombie; Path=/; Domain=.youtube.com"})
+	// and must not recreate cred_1.enc.
+	mgr.applyRotatedCookies("ytm_1", staleGen, []string{"SIDCC=zombie; Path=/; Domain=.youtube.com"})
 
-	if _, err := loadCredentials(); !errors.Is(err, ErrNoCredentials) {
-		t.Fatalf("loadCredentials after stale callback = %v, want ErrNoCredentials", err)
+	var check Credentials
+	if err := cs.Load("cred_1", library.KindYTM, &check); !errors.Is(err, ErrNoCredentials) {
+		t.Fatalf("Load after stale callback = %v, want ErrNoCredentials", err)
 	}
 }
 
 func TestMaybeRefreshSessionThrottleAndExpiry(t *testing.T) {
 	isolateConfig(t)
 
-	if err := saveCredentials(&Credentials{CookieHeader: "SAPISID=seed1; SID=sid1"}); err != nil {
-		t.Fatalf("saveCredentials: %v", err)
-	}
-
 	svc := &PlayerService{ytmProv: newYTMProvider(newYTMIndex(), nil, false, nil)}
-	svc.authGen.Store(1)
+	cs, err := svc.credentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr := svc.ytmManager()
+
+	if err := cs.Save("cred_1", library.KindYTM, &Credentials{CookieHeader: "SAPISID=seed1; SID=sid1"}); err != nil {
+		t.Fatal(err)
+	}
+	sess := mgr.ensureSession("ytm_1", "cred_1", ytmLibraryConfig{})
+	sess.authGen.Store(1)
 
 	calls := 0
 	returnExpired := false
-	svc.refreshSessionFn = func(ctx context.Context, client *ytm.Client) error {
+	mgr.refreshSessionFn = func(ctx context.Context, client *ytm.Client) error {
 		calls++
 		if returnExpired {
 			return ytm.ErrSessionExpired
@@ -145,7 +191,7 @@ func TestMaybeRefreshSessionThrottleAndExpiry(t *testing.T) {
 		return nil
 	}
 
-	if err := svc.maybeRefreshSession(context.Background()); err != nil {
+	if err := mgr.maybeRefreshSession(context.Background(), "ytm_1"); err != nil {
 		t.Fatalf("first maybeRefreshSession: %v", err)
 	}
 	if calls != 1 {
@@ -153,32 +199,32 @@ func TestMaybeRefreshSessionThrottleAndExpiry(t *testing.T) {
 	}
 
 	// Second call within 60 s must be throttled.
-	if err := svc.maybeRefreshSession(context.Background()); err != nil {
+	if err := mgr.maybeRefreshSession(context.Background(), "ytm_1"); err != nil {
 		t.Fatalf("throttled maybeRefreshSession: %v", err)
 	}
 	if calls != 1 {
 		t.Fatalf("calls after throttle = %d, want 1", calls)
 	}
 
-	// Expire cooldown, simulate revoked session -> sets authExpired = true and stops retrying.
-	svc.cookieRefreshMu.Lock()
-	svc.lastCookieRefresh = time.Now().Add(-2 * time.Minute)
-	svc.cookieRefreshMu.Unlock()
+	// Expire cooldown, simulate revoked session -> sets sess.authExpired = true and stops retrying.
+	sess.cookieRefreshMu.Lock()
+	sess.lastCookieRefresh = time.Now().Add(-2 * time.Minute)
+	sess.cookieRefreshMu.Unlock()
 	returnExpired = true
 
-	err := svc.maybeRefreshSession(context.Background())
+	err = mgr.maybeRefreshSession(context.Background(), "ytm_1")
 	if !errors.Is(err, ytm.ErrSessionExpired) {
 		t.Fatalf("expired maybeRefreshSession = %v, want ErrSessionExpired", err)
 	}
-	if !svc.authExpired.Load() {
-		t.Fatal("authExpired = false, want true")
+	if !sess.authExpired.Load() {
+		t.Fatal("sess.authExpired = false, want true")
 	}
 
 	// Subsequent call returns ErrSessionExpired immediately without touching probe.
-	svc.cookieRefreshMu.Lock()
-	svc.lastCookieRefresh = time.Now().Add(-2 * time.Minute)
-	svc.cookieRefreshMu.Unlock()
-	if err := svc.maybeRefreshSession(context.Background()); !errors.Is(err, ytm.ErrSessionExpired) {
+	sess.cookieRefreshMu.Lock()
+	sess.lastCookieRefresh = time.Now().Add(-2 * time.Minute)
+	sess.cookieRefreshMu.Unlock()
+	if err := mgr.maybeRefreshSession(context.Background(), "ytm_1"); !errors.Is(err, ytm.ErrSessionExpired) {
 		t.Fatalf("post-expiry maybeRefreshSession = %v, want ErrSessionExpired", err)
 	}
 	if calls != 2 {

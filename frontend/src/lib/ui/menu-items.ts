@@ -2,6 +2,7 @@
 // modifying or removing audio files on disk.
 
 import { FLAG_LIKEABLE, FLAG_PLAYABLE, type Album, type Playlist, type Track } from "../types";
+import type { LibraryAuthStatus } from "../auth";
 import type { MenuItem, MenuTarget } from "./context-menu.svelte";
 
 /** Injected app callbacks to keep this module free of store import cycles. */
@@ -24,6 +25,9 @@ export interface MenuDeps {
   rescanLibrary: (libraryID: string) => void;
   removeLibrary: (libraryID: string) => void;
   libraryKindFor?: (libraryID: string) => string;
+  libraryStatusFor?: (libraryID: string) => LibraryAuthStatus | undefined;
+  reSignInLibrary?: (libraryID: string) => void;
+  signOutLibrary?: (libraryID: string) => void;
   togglePlaylistWatch?: (playlist: Playlist, watched: boolean) => void;
 }
 
@@ -145,15 +149,39 @@ function playlistItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
 
 function libraryItems(target: MenuTarget, deps: MenuDeps): MenuItem[] {
   const id = target.libraryId;
-  const refreshLabel = deps.libraryKindFor?.(id) === "ytm" ? "Refresh library" : "Rescan files";
+  const kind = deps.libraryKindFor?.(id) ?? "local";
+  const isRemote = kind !== "" && kind !== "local";
+  const refreshLabel = kind === "ytm" ? "Refresh library" : "Rescan files";
+  const auth = isRemote ? deps.libraryStatusFor?.(id) : undefined;
 
-  return [
+  const items: MenuItem[] = [
     { kind: "item", label: "Open", run: () => deps.openLibrary(id) },
     { kind: "item", label: "Edit", run: () => deps.editLibrary(id) },
     { kind: "item", label: refreshLabel, run: () => deps.rescanLibrary(id) },
+  ];
+
+  if (isRemote && auth) {
+    if ((auth.expired || !auth.signedIn) && deps.reSignInLibrary) {
+      items.push({
+        kind: "item",
+        label: auth.expired ? "Re-sign in" : "Sign in",
+        run: () => deps.reSignInLibrary?.(id),
+      });
+    }
+    if ((auth.signedIn || auth.expired) && deps.signOutLibrary) {
+      items.push({
+        kind: "item",
+        label: "Sign out",
+        run: () => deps.signOutLibrary?.(id),
+      });
+    }
+  }
+
+  items.push(
     { kind: "separator" },
     { kind: "item", label: "Remove from Molow", danger: true, run: () => deps.removeLibrary(id) },
-  ];
+  );
+  return items;
 }
 
 export function menuItemsFor(target: MenuTarget, deps: MenuDeps): MenuItem[] {

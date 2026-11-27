@@ -1,17 +1,21 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { fade, scale } from "svelte/transition";
   import { flip } from "svelte/animate";
   import { cubicIn, cubicOut } from "svelte/easing";
   import ArrowsClockwise from "phosphor-svelte/lib/ArrowsClockwise";
   import CaretDown from "phosphor-svelte/lib/CaretDown";
   import Plus from "phosphor-svelte/lib/Plus";
+  import WarningCircle from "phosphor-svelte/lib/WarningCircle";
   import { activityStore } from "../lib/activity";
+  import { showToast } from "../lib/toast";
   import type { Album, Artist, LibraryInfo, Playlist, Shelf, Track } from "../lib/types";
   import AlbumCard from "../lib/ui/AlbumCard.svelte";
   import BigArtistCard from "../lib/ui/BigArtistCard.svelte";
   import Chip from "../lib/ui/Chip.svelte";
   import LibraryActivity from "../lib/ui/LibraryActivity.svelte";
   import LoadingSpinner from "../lib/ui/LoadingSpinner.svelte";
+  import type { LibraryAuthStatus } from "../lib/auth";
   import PlaylistCard from "../lib/ui/PlaylistCard.svelte";
   import PlaylistView from "../lib/ui/PlaylistView.svelte";
   import TrackTile from "../lib/ui/TrackTile.svelte";
@@ -28,6 +32,8 @@
     currentPath = "",
     playlistActive = false,
     playlistPlaying = false,
+    authStatus = null,
+    onresignin,
     onfilter = (_f: string) => {},
     onadd = () => {},
     onrefresh = () => {},
@@ -60,9 +66,11 @@
     currentPath?: string;
     playlistActive?: boolean;
     playlistPlaying?: boolean;
+    authStatus?: LibraryAuthStatus | null;
+    onresignin?: () => void;
     onfilter?: (f: string) => void;
     onadd?: () => void;
-    onrefresh?: () => void;
+    onrefresh?: () => boolean | Promise<boolean> | void;
     oncreateLibrary?: () => void;
     onimportFolder?: () => void;
     onimportYTM?: () => void;
@@ -103,6 +111,56 @@
   const refreshDesc = $derived(
     library?.kind === "local" ? "Refresh watched library" : "Refresh from remote library",
   );
+  const refreshBlockedReason = $derived.by(() => {
+    if (!library || library.kind === "local") {
+      return "";
+    }
+    if (authStatus?.expired) {
+      return "Session expired. Re-sign in to refresh this library.";
+    }
+    if (library.status === "signedOut" || (authStatus && !authStatus.signedIn)) {
+      return "Signed out of YouTube Music. Sign in to refresh this library.";
+    }
+    if (authStatus?.error) {
+      return authStatus.error;
+    }
+    return "";
+  });
+
+  let refreshTipHidden = $state(false);
+  let refreshShaking = $state(false);
+  let refreshShakeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  async function triggerRefreshShake() {
+    clearTimeout(refreshShakeTimer);
+    refreshShaking = false;
+    await tick();
+    refreshShaking = true;
+    refreshShakeTimer = setTimeout(() => {
+      refreshShaking = false;
+    }, 380);
+  }
+
+  async function handleRefreshClick(e: MouseEvent) {
+    refreshTipHidden = true;
+    if (e.detail !== 0) {
+      (e.currentTarget as HTMLButtonElement).blur();
+    }
+    if (refreshBlockedReason !== "") {
+      void triggerRefreshShake();
+      showToast({
+        key: "library-refresh",
+        kind: "message",
+        label: refreshBlockedReason,
+        icon: WarningCircle,
+      });
+      return;
+    }
+    const ok = await onrefresh();
+    if (ok === false) {
+      void triggerRefreshShake();
+    }
+  }
   const albums = $derived(shelves.find((s) => s.kind === "albums")?.albums ?? []);
   const artists = $derived(shelves.find((s) => s.kind === "artists")?.artists ?? []);
   const playlists = $derived(shelves.find((s) => s.kind === "playlists")?.playlists ?? []);
@@ -238,13 +296,20 @@
     {#if library}
       <div class="mt-1.5 flex shrink-0 items-center">
         {#if canRefresh}
-          <div class="group relative mr-2">
+          <div class="relative mr-2">
             <button
               type="button"
-              class="grid size-8 shrink-0 place-items-center rounded-md border border-line/60 bg-surface text-muted transition-colors hover:bg-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+              class="peer grid size-8 shrink-0 place-items-center rounded-md border border-line/60 bg-surface text-muted transition-colors hover:bg-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+              class:opacity-60={refreshBlockedReason !== ""}
+              class:animate-refresh-shake={refreshShaking}
+              class:motion-reduce:animate-none={refreshShaking}
               aria-label={refreshDesc}
+              aria-disabled={refreshBlockedReason !== "" ? "true" : undefined}
               data-refresh
-              onclick={onrefresh}
+              onclick={(e) => void handleRefreshClick(e)}
+              onpointerleave={() => (refreshTipHidden = false)}
+              onblur={() => (refreshTipHidden = false)}
+              onanimationend={() => (refreshShaking = false)}
             >
               <ArrowsClockwise
                 size="15"
@@ -254,7 +319,9 @@
             </button>
             <div
               role="tooltip"
-              class="pointer-events-none absolute right-0 top-10 z-40 whitespace-nowrap rounded-md border border-line/60 bg-surface px-2.5 py-1 text-[11px] font-medium text-fg opacity-0 shadow-menu transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none"
+              class="pointer-events-none absolute right-0 top-10 z-40 whitespace-nowrap rounded-md border border-line/60 bg-surface px-2.5 py-1 text-[11px] font-medium text-fg opacity-0 shadow-menu transition-opacity duration-150 motion-reduce:transition-none {refreshTipHidden
+                ? ''
+                : 'peer-hover:opacity-100 peer-focus-visible:opacity-100'}"
             >
               {refreshDesc}
             </div>
@@ -287,6 +354,27 @@
       </button>
     </div>
   {:else}
+  {#if library.kind !== "local" && (authStatus?.expired || library.status === "signedOut" || (authStatus && !authStatus.signedIn))}
+    <div
+      class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-surface px-3.5 py-2.5 text-[12px]"
+      role="status"
+    >
+      <span class="text-fg">
+        {authStatus?.expired
+          ? "Session expired. Re-sign in to play uncached tracks and refresh playlists."
+          : "Signed out of YouTube Music. Cached items stay available offline."}
+      </span>
+      {#if onresignin}
+        <button
+          type="button"
+          class="h-7 shrink-0 rounded-[6px] bg-fg px-2.5 text-[12px] font-medium text-bg-dark transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          onclick={onresignin}
+        >
+          {authStatus?.expired ? "Re-sign in" : "Sign in"}
+        </button>
+      {/if}
+    </div>
+  {/if}
   <div class="mt-4 flex items-center justify-between">
     <div class="flex gap-2">
       {#each filters as f (f.id)}
@@ -443,3 +531,28 @@
   {/if}
 </div>
 {/if}
+
+<style>
+  @keyframes refresh-shake {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    20% {
+      transform: translateX(-4px);
+    }
+    40% {
+      transform: translateX(4px);
+    }
+    60% {
+      transform: translateX(-3px);
+    }
+    80% {
+      transform: translateX(3px);
+    }
+  }
+
+  .animate-refresh-shake {
+    animation: refresh-shake 340ms cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+  }
+</style>

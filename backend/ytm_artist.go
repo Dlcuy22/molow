@@ -161,7 +161,7 @@ func (s *PlayerService) resolveYTMArtistID(ctx context.Context, ref, artistName 
 	}
 
 	calls := s.ytmProv.calls()
-	videoID := strings.TrimPrefix(ref, ytmRefPrefix)
+	videoID := ytmID(ref)
 	if videoID != "" && calls.loadSong != nil {
 		if song, err := calls.loadSong(ctx, videoID); err == nil && song != nil {
 			for _, a := range song.Artists {

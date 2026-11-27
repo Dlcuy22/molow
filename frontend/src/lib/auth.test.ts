@@ -2,35 +2,34 @@ import { get } from "svelte/store";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const checkKeyringCall = vi.fn();
-const authStatusCall = vi.fn();
-const accountsCall = vi.fn();
-const signInCall = vi.fn();
-const signInWithCookieCall = vi.fn();
-const signOutCall = vi.fn();
-const signOutWithOptionsCall = vi.fn();
-const switchChannelCall = vi.fn();
-const refreshAuthCall = vi.fn();
+const connectedLibrariesCall = vi.fn();
+const createBrowserCall = vi.fn();
+const createCookieCall = vi.fn();
+const reSignInCall = vi.fn();
+const reSignInCookieCall = vi.fn();
+const refreshLibraryAuthCall = vi.fn();
+const signOutLibraryCall = vi.fn();
 const refreshLibrariesCall = vi.fn();
 const selectLibraryCall = vi.fn();
 
 vi.mock("../../bindings/github.com/dlcuy22/molow/backend", () => ({
   PlayerService: {
     CheckKeyring: () => checkKeyringCall(),
-    AuthStatus: () => authStatusCall(),
-    Accounts: () => accountsCall(),
-    SignIn: () => signInCall(),
-    SignInWithCookieHeader: (header: string) => signInWithCookieCall(header),
-    SignOut: () => signOutCall(),
-    SignOutWithOptions: (del: boolean) => signOutWithOptionsCall(del),
-    SwitchChannel: (id: string) => switchChannelCall(id),
-    RefreshAuth: () => refreshAuthCall(),
+    ConnectedLibraries: () => connectedLibrariesCall(),
+    CreateYTMLibraryWithBrowser: (name: string, desc: string) => createBrowserCall(name, desc),
+    CreateYTMLibraryWithCookie: (name: string, desc: string, header: string) =>
+      createCookieCall(name, desc, header),
+    ReSignInLibrary: (id: string) => reSignInCall(id),
+    ReSignInLibraryWithCookie: (id: string, header: string) => reSignInCookieCall(id, header),
+    RefreshLibraryAuth: (id: string) => refreshLibraryAuthCall(id),
+    SignOutLibrary: (id: string, del: boolean) => signOutLibraryCall(id, del),
   },
 }));
 
 vi.mock("./library", async () => {
   const { writable } = await import("svelte/store");
   return {
-    libraries: writable<{ id: string; kind: string }[]>([]),
+    libraries: writable<{ id: string; kind: string; name: string }[]>([]),
     refreshLibraries: () => refreshLibrariesCall(),
     selectLibrary: (id: string) => selectLibraryCall(id),
   };
@@ -39,105 +38,154 @@ vi.mock("./library", async () => {
 import { libraries as mockLibraries } from "./library";
 
 import {
-  authAccounts,
   authBusy,
-  authDialogOpen,
+  authDialog,
   authError,
-  authStatus,
+  connectedLibraries,
+  createYTMLibraryWithBrowser,
+  createYTMLibraryWithCookie,
   keyringError,
-  openAuthDialog,
+  openReauthDialog,
   openSignOutDialog,
-  signInWithCookieHeader,
-  signInWithWindow,
-  signOut,
-  signOutDialogOpen,
+  refreshLibraryAuth,
+  reSignInWithCookieHeader,
+  reSignInWithWindow,
+  signOutDialog,
+  signOutLibrary,
 } from "./auth";
 
-describe("ytm auth store", () => {
+describe("per-library ytm auth store", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    authStatus.set({ signedIn: false });
-    authAccounts.set([]);
+    connectedLibraries.set([]);
+    authDialog.set(null);
+    signOutDialog.set(null);
     authBusy.set(false);
     authError.set("");
     keyringError.set("");
-    authDialogOpen.set(false);
-    signOutDialogOpen.set(false);
-    (mockLibraries as unknown as { set: (v: { id: string; kind: string }[]) => void }).set([]);
+    (mockLibraries as unknown as { set: (v: { id: string; kind: string; name: string }[]) => void }).set(
+      [],
+    );
   });
 
-  it("blocks sign-in and surfaces warning when keyring pre-flight fails", async () => {
+  it("blocks re-sign-in and surfaces warning when keyring pre-flight fails", async () => {
     checkKeyringCall.mockRejectedValue(
       new Error("keyring: system keyring is unavailable: org.freedesktop.secrets missing"),
     );
 
-    await openAuthDialog();
+    await openReauthDialog("ytm_1", "Personal YTM");
 
-    expect(get(authDialogOpen)).toBe(true);
+    expect(get(authDialog)).toEqual({ libraryId: "ytm_1", libraryName: "Personal YTM", kind: "ytm" });
     expect(get(keyringError)).toContain("org.freedesktop.secrets");
 
-    const ok = await signInWithWindow();
+    const ok = await reSignInWithWindow();
     expect(ok).toBe(false);
-    expect(signInCall).not.toHaveBeenCalled();
+    expect(reSignInCall).not.toHaveBeenCalled();
     expect(get(keyringError)).toContain("org.freedesktop.secrets");
   });
 
-  it("completes browser sign-in, populates status, and selects the YTM library", async () => {
+  it("creates a YouTube Music library via browser and activates it", async () => {
     checkKeyringCall.mockResolvedValue(undefined);
-    signInCall.mockResolvedValue(undefined);
-    authStatusCall.mockResolvedValue({
-      signedIn: true,
-      name: "Kasaki Nomaraba",
-      email: "kasakinomaraba@gmail.com",
-      channelId: "UC123",
-    });
-    accountsCall.mockResolvedValue([
-      { name: "Kasaki Nomaraba", channelId: "UC123", selected: true },
+    createBrowserCall.mockResolvedValue({ id: "ytm_a1b2", kind: "ytm", name: "Personal YTM" });
+    connectedLibrariesCall.mockResolvedValue([
+      { libraryId: "ytm_a1b2", libraryName: "Personal YTM", kind: "ytm", signedIn: true },
     ]);
     refreshLibrariesCall.mockImplementation(async () => {
-      (mockLibraries as unknown as { set: (v: { id: string; kind: string }[]) => void }).set([
-        { id: "ytm:UC123", kind: "ytm" },
-      ]);
+      (mockLibraries as unknown as { set: (v: { id: string; kind: string; name: string }[]) => void }).set(
+        [{ id: "ytm_a1b2", kind: "ytm", name: "Personal YTM" }],
+      );
     });
 
-    await openAuthDialog();
-    const ok = await signInWithWindow();
+    const created = await createYTMLibraryWithBrowser("Personal YTM", "Likes");
 
-    expect(ok).toBe(true);
-    expect(get(authDialogOpen)).toBe(false);
-    expect(get(authStatus)).toMatchObject({ signedIn: true, name: "Kasaki Nomaraba" });
-    expect(get(authAccounts)).toHaveLength(1);
-    expect(refreshLibrariesCall).toHaveBeenCalledTimes(1);
-    expect(selectLibraryCall).toHaveBeenCalledWith("ytm:UC123");
+    expect(createBrowserCall).toHaveBeenCalledWith("Personal YTM", "Likes");
+    expect(created).toMatchObject({ id: "ytm_a1b2", name: "Personal YTM" });
+    expect(get(connectedLibraries)).toHaveLength(1);
+    expect(selectLibraryCall).toHaveBeenCalledWith("ytm_a1b2");
     expect(get(authError)).toBe("");
   });
 
   it("rejects empty pasted cookie header without calling backend", async () => {
-    const ok = await signInWithCookieHeader("   ");
+    const created = await createYTMLibraryWithCookie("Personal", "", "   ");
 
-    expect(ok).toBe(false);
+    expect(created).toBeNull();
     expect(checkKeyringCall).not.toHaveBeenCalled();
-    expect(signInWithCookieCall).not.toHaveBeenCalled();
+    expect(createCookieCall).not.toHaveBeenCalled();
     expect(get(authError)).toContain("Cookie header");
   });
 
-  it("passes deleteLibrary option on signOut and closes confirmation dialog", async () => {
-    authStatus.set({ signedIn: true, name: "Kasaki Nomaraba" });
-    authAccounts.set([{ name: "Kasaki Nomaraba", channelId: "UC123", selected: true }]);
-    signOutWithOptionsCall.mockResolvedValue(undefined);
+  it("creates a YouTube Music library from cookie header", async () => {
+    checkKeyringCall.mockResolvedValue(undefined);
+    createCookieCall.mockResolvedValue({ id: "ytm_c3d4", kind: "ytm", name: "Cookie YTM" });
+    connectedLibrariesCall.mockResolvedValue([
+      { libraryId: "ytm_c3d4", libraryName: "Cookie YTM", kind: "ytm", signedIn: true },
+    ]);
+    refreshLibrariesCall.mockImplementation(async () => {
+      (mockLibraries as unknown as { set: (v: { id: string; kind: string; name: string }[]) => void }).set(
+        [{ id: "ytm_c3d4", kind: "ytm", name: "Cookie YTM" }],
+      );
+    });
+
+    const created = await createYTMLibraryWithCookie("Cookie YTM", "", "SAPISID=a; SID=b");
+
+    expect(createCookieCall).toHaveBeenCalledWith("Cookie YTM", "", "SAPISID=a; SID=b");
+    expect(created).toMatchObject({ id: "ytm_c3d4" });
+  });
+
+  it("re-signs in for an existing library via browser or cookie and closes authDialog", async () => {
+    checkKeyringCall.mockResolvedValue(undefined);
+    reSignInCall.mockResolvedValue(undefined);
+    reSignInCookieCall.mockResolvedValue(undefined);
+    connectedLibrariesCall.mockResolvedValue([
+      { libraryId: "ytm_1", libraryName: "Personal YTM", kind: "ytm", signedIn: true, expired: false },
+    ]);
     refreshLibrariesCall.mockResolvedValue(undefined);
 
-    openSignOutDialog();
-    expect(get(signOutDialogOpen)).toBe(true);
-    await signOut(false);
+    await openReauthDialog("ytm_1", "Personal YTM");
+    expect(await reSignInWithWindow()).toBe(true);
+    expect(reSignInCall).toHaveBeenCalledWith("ytm_1");
+    expect(get(authDialog)).toBeNull();
 
-    expect(signOutWithOptionsCall).toHaveBeenCalledWith(false);
-    expect(get(signOutDialogOpen)).toBe(false);
-    expect(get(authStatus)).toEqual({ signedIn: false });
-    expect(get(authAccounts)).toEqual([]);
-    expect(refreshLibrariesCall).toHaveBeenCalledTimes(1);
+    await openReauthDialog("ytm_1", "Personal YTM");
+    expect(await reSignInWithCookieHeader("SAPISID=new; SID=new")).toBe(true);
+    expect(reSignInCookieCall).toHaveBeenCalledWith("ytm_1", "SAPISID=new; SID=new");
+    expect(get(authDialog)).toBeNull();
+  });
 
-    await signOut(true);
-    expect(signOutWithOptionsCall).toHaveBeenLastCalledWith(true);
+  it("refreshes auth status for one connected library", async () => {
+    refreshLibraryAuthCall.mockResolvedValue({
+      libraryId: "ytm_1",
+      libraryName: "Personal YTM",
+      kind: "ytm",
+      signedIn: true,
+      expired: false,
+    });
+    connectedLibrariesCall.mockResolvedValue([
+      { libraryId: "ytm_1", libraryName: "Personal YTM", kind: "ytm", signedIn: true, expired: false },
+    ]);
+    refreshLibrariesCall.mockResolvedValue(undefined);
+
+    const status = await refreshLibraryAuth("ytm_1");
+
+    expect(refreshLibraryAuthCall).toHaveBeenCalledWith("ytm_1");
+    expect(status?.signedIn).toBe(true);
+    expect(get(connectedLibraries)).toHaveLength(1);
+  });
+
+  it("passes libraryId and deleteLibrary on signOutLibrary and closes confirmation dialog", async () => {
+    signOutLibraryCall.mockResolvedValue(undefined);
+    connectedLibrariesCall.mockResolvedValue([]);
+    refreshLibrariesCall.mockResolvedValue(undefined);
+
+    openSignOutDialog("ytm_1", "Personal YTM");
+    expect(get(signOutDialog)).toEqual({ libraryId: "ytm_1", libraryName: "Personal YTM" });
+    await signOutLibrary(false);
+
+    expect(signOutLibraryCall).toHaveBeenCalledWith("ytm_1", false);
+    expect(get(signOutDialog)).toBeNull();
+
+    openSignOutDialog("ytm_1", "Personal YTM");
+    await signOutLibrary(true);
+    expect(signOutLibraryCall).toHaveBeenLastCalledWith("ytm_1", true);
   });
 });

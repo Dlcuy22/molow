@@ -4,13 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
-	"time"
 	"unicode/utf8"
 
 	"github.com/dlcuy22/molo"
@@ -78,8 +78,8 @@ func libraryDBPath() (string, error) {
 	return filepath.Join(base, "molow", "library.db"), nil
 }
 
-// initLibraries opens the catalogue and registers the stored roots. A failure
-// is logged and browsing stays empty; playback does not depend on it.
+// initLibraries opens the catalogue, migrates any legacy single-account YTM
+// session, and opens every registered library through its SourceAdapter.
 func (s *PlayerService) initLibraries() {
 	p, err := libraryDBPath()
 	if err != nil {
@@ -100,45 +100,31 @@ func (s *PlayerService) initLibraries() {
 	s.scanning = map[string]bool{}
 	s.libMu.Unlock()
 
-	rows, err := store.Libraries()
+	if cs, cerr := s.credentials(); cerr == nil {
+		legacyPath, _ := credentialsPath()
+		if merr := migrateLegacyCredentials(store, cs, legacyPath, s.log); merr != nil {
+			s.log.Warn("auth: legacy credential migration deferred", "error", merr)
+		}
+	}
+
+	router := s.ensureSourceRouter()
+	rows, err := store.LibraryRows()
 	if err != nil {
 		s.log.Warn("library: list", "error", err)
 
 		return
 	}
 	for _, row := range rows {
-		if row.Kind == library.KindYTM {
-			s.registerYTM(row)
-
-			continue
-		}
-		s.registerLocal(row)
-		roots, err := store.Roots(row.ID)
-		if err != nil {
-			s.log.Warn("library: roots", "id", row.ID, "error", err)
-
-			continue
-		}
-		for _, root := range roots {
-			_ = store.LinkLegacyFolderPlaylist(row.ID, root, filepath.Base(root))
-		}
-		s.syncWatchedFolderRoots(row.ID)
-		s.registerLocalSyncer(row.ID)
-
-		// Scan on startup, on a worker: the window must open before a large
-		// folder has been walked. Only watched folders are scanned.
-		if watchedRoots, err := store.WatchedRoots(row.ID); err == nil && len(watchedRoots) > 0 {
-			_ = s.scanLibrary(row.ID, "")
-		}
-		if hasRemote, err := store.HasWatchedRemotePlaylists(row.ID); err == nil && hasRemote {
-			at, syncErr := store.SyncTime(row.ID, "local_remote_playlists")
-			if syncErr != nil || at == 0 || time.Since(time.Unix(at, 0)) > ytmOpenStaleAge {
-				s.triggerLocalRemoteSync(row.ID, syncTriggerOpen)
+		if adapter, ok := router.Adapter(row.Kind); ok {
+			if _, err := adapter.Open(s.ctx, row); err != nil {
+				s.log.Warn("library: open adapter", "id", row.ID, "kind", row.Kind, "error", err)
 			}
+			continue
+		}
+		if row.Kind == library.KindLocal {
+			s.registerLocal(row.Library)
 		}
 	}
-
-	s.syncStartupYTMLibrary()
 
 	go func() {
 		s.backfillCompositeCovers()
@@ -301,7 +287,7 @@ func (s *PlayerService) pruneOrphanArtwork() {
 	}
 }
 
-func (s *PlayerService) registerLocal(row library.Library) {
+func (s *PlayerService) registerLocal(row library.Library) *local.Local {
 	src := local.New(s.libStore, row, s.art, func(p local.ScanProgress) {
 		s.emit(eventLibrary, LibraryProgress{
 			LibraryID: p.LibraryID, Done: p.Done, Total: p.Total, State: "scanning",
@@ -318,8 +304,13 @@ func (s *PlayerService) registerLocal(row library.Library) {
 		})
 	})
 	s.libMu.Lock()
+	if s.libs == nil {
+		s.libs = map[string]library.Source{}
+	}
 	s.libs[row.ID] = src
 	s.libMu.Unlock()
+
+	return src
 }
 
 func (s *PlayerService) librarySource(id string) (library.Source, bool) {
@@ -538,11 +529,38 @@ func samePath(a, b string) bool {
 func (s *PlayerService) RemoveLibrary(id string) error {
 	s.libMu.Lock()
 	store := s.libStore
+	active := s.activeLibraryID
+	s.libMu.Unlock()
+	if store == nil {
+		return fmt.Errorf("library: store is not available")
+	}
+
+	row, rowErr := store.LibraryRow(id)
+	if rowErr == nil && row.CredentialID != "" {
+		cs, err := s.credentials()
+		if err != nil {
+			return err
+		}
+		if err := cs.Delete(row.CredentialID); err != nil {
+			return err
+		}
+	}
+
+	if s.sources != nil && rowErr == nil {
+		if adapter, ok := s.sources.Adapter(row.Kind); ok {
+			adapter.CloseLibrary(id)
+		}
+	}
+
+	s.libMu.Lock()
 	old, _ := s.libs[id].(*ytmSource)
 	localSyn := s.localSyncers[id]
 	delete(s.localSyncers, id)
 	watcher := s.localWatcher
 	delete(s.libs, id)
+	if active == id {
+		s.activeLibraryID = ""
+	}
 	s.libMu.Unlock()
 	if old != nil {
 		old.syncer.stop()
@@ -552,9 +570,6 @@ func (s *PlayerService) RemoveLibrary(id string) error {
 	}
 	if watcher != nil {
 		watcher.RemoveLibrary(id)
-	}
-	if store == nil {
-		return fmt.Errorf("library: store is not available")
 	}
 
 	return store.RemoveLibrary(id)
@@ -568,6 +583,16 @@ func (s *PlayerService) RescanLibrary(id string) error {
 		return fmt.Errorf("library: unknown id %q", id)
 	}
 	if _, isYTM := src.(*ytmSource); isYTM {
+		if _, err := s.ytmManager().sessionClient(id); err != nil {
+			switch {
+			case errors.Is(err, ytm.ErrSessionExpired):
+				return fmt.Errorf("session expired, sign in again to refresh this library")
+			case errors.Is(err, ErrNoCredentials):
+				return fmt.Errorf("signed out, sign in to refresh this library")
+			default:
+				return err
+			}
+		}
 		s.triggerYTMSync(id, syncTriggerManual)
 		return nil
 	}
@@ -582,13 +607,19 @@ func (s *PlayerService) RescanLibrary(id string) error {
 		return fmt.Errorf("library: store is not available")
 	}
 
+	triggered := false
 	if watchedRoots, err := store.WatchedRoots(id); err == nil && len(watchedRoots) > 0 {
 		if err := s.scanLibrary(id, ""); err != nil {
 			return err
 		}
+		triggered = true
 	}
 	if hasRemote, err := store.HasWatchedRemotePlaylists(id); err == nil && hasRemote {
 		s.triggerLocalRemoteSync(id, syncTriggerManual)
+		triggered = true
+	}
+	if !triggered {
+		return fmt.Errorf("no watched folders or playlists to refresh")
 	}
 	return nil
 }

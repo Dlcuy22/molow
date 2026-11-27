@@ -31,6 +31,14 @@ export const libraryPlaylists = writable<Playlist[]>([]);
 export const libraryProgress = writable<{ done: number; total: number; state: string } | null>(
   null,
 );
+
+function setActiveLibraryId(id: string): void {
+  libraryId.set(id);
+  const fn = (PlayerService as { SetActiveLibrary?: (id: string) => Promise<void> }).SetActiveLibrary;
+  if (typeof fn === "function") {
+    void fn(id).catch(() => {});
+  }
+}
 export const activePlaylist = writable<Playlist | null>(null);
 export const activePlaylistTracks = writable<Track[]>([]);
 export const activePlaylistLoading = writable(false);
@@ -166,7 +174,9 @@ function toInfo(l: GenLibrary): LibraryInfo {
     libraries.set(mapped);
     const current = get(libraryId);
     if (current === "" || !mapped.some((l) => l.id === current)) {
-      libraryId.set(mapped[0]?.id ?? "");
+      setActiveLibraryId(mapped[0]?.id ?? "");
+    } else {
+      setActiveLibraryId(current);
     }
   } catch {
     libraries.set([]);
@@ -179,7 +189,7 @@ export async function selectLibrary(id: string): Promise<void> {
     return;
   }
   closePlaylist();
-  libraryId.set(id);
+  setActiveLibraryId(id);
   await Promise.all([loadHome(), loadLibrary(currentLibraryTab)]);
 }
 
@@ -522,7 +532,7 @@ export async function addLibrary(): Promise<LibraryInfo | null> {
     const info = toInfo(await PlayerService.ImportFolder(target, path));
     invalidateLibraryCache(info.id);
     await refreshLibraries();
-    libraryId.set(info.id);
+    setActiveLibraryId(info.id);
     await Promise.all([loadHome(), loadLibrary(currentLibraryTab, { force: true })]);
 
     return info;
@@ -548,7 +558,7 @@ export async function createLibrary(
     invalidateLibraryCache(info.id);
     await refreshLibraries();
     closePlaylist();
-    libraryId.set(info.id);
+    setActiveLibraryId(info.id);
     await Promise.all([loadHome(), loadLibrary("all", { force: true })]);
 
     return { info, error: "" };
@@ -697,15 +707,21 @@ export async function removeLibrary(id: string): Promise<void> {
   }
 }
 
-export async function rescanLibrary(id = get(libraryId)): Promise<void> {
+export async function rescanLibrary(id = get(libraryId)): Promise<boolean> {
   if (id === "") {
-    return;
+    return false;
   }
   try {
     await PlayerService.RescanLibrary(id);
-  } catch {
-    // The progress event reports the outcome; a rejection here only means the
-    // scan could not be started.
+    return true;
+  } catch (err) {
+    showToast({
+      key: "library-refresh",
+      kind: "message",
+      label: libraryErrorText(err, "Could not refresh library"),
+      icon: WarningCircle,
+    });
+    return false;
   }
 }
 

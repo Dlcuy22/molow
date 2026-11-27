@@ -8,6 +8,7 @@ import (
 
 	"github.com/dlcuy22/molo/meta"
 	"github.com/dlcuy22/molow/internal/artwork"
+	"github.com/dlcuy22/molow/internal/library"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -133,7 +134,13 @@ func (s *PlayerService) serveArtwork(w http.ResponseWriter, r *http.Request) {
 	// Fallback 2: a queued row passed its track path so its embedded or remote
 	// cover can be materialized on first view.
 	if trackPath := r.URL.Query().Get("path"); trackPath != "" {
-		if path, ok := s.materializeQueueCover(r.Context(), id, trackPath, edge); ok {
+		if _, _, _, isRemote := library.ParseRemoteRef(trackPath); isRemote {
+			if data, mime, ok := s.coverBytesForRemoteRef(r.Context(), trackPath, edge); ok {
+				writeImageBytes(w, r, data, mime, artImmutableCacheHdr)
+
+				return
+			}
+		} else if path, ok := s.materializeQueueCover(r.Context(), id, trackPath, edge); ok {
 			w.Header().Set("Cache-Control", artImmutableCacheHdr)
 			http.ServeFile(w, r, path)
 
@@ -210,35 +217,20 @@ func (s *PlayerService) thumbPath(id string, edge int) (string, bool) {
 	return path, true
 }
 
-func (s *PlayerService) materializeQueueCover(ctx context.Context, id, trackPath string, edge int) (string, bool) {
-	if isYTMRef(trackPath) {
-		t, ok := s.ytm.lookup(trackPath)
-		if !ok {
-			if cat, found := s.catalogYTMTrack(trackPath); found {
-				s.ytm.put(cat)
-				t, ok = cat, true
-			}
+func (s *PlayerService) coverBytesForRemoteRef(ctx context.Context, trackPath string, edge int) ([]byte, string, bool) {
+	if s.sources != nil {
+		if data, mime, ok := s.sources.CoverBytes(ctx, trackPath, edge); ok {
+			return data, mime, true
 		}
-		if !ok {
-			return "", false
-		}
-		if cid := t.coverID(); cid != "" {
-			if p, ok := s.thumbPath(cid, edge); ok {
-				return p, true
-			}
-		}
-		data := s.ytmProv.fetchThumb(trackPath)
-		if len(data) == 0 {
-			return "", false
-		}
-		cid, err := s.art.Put(data)
-		if err != nil {
-			return "", false
-		}
-
-		return s.thumbPath(cid, edge)
+	}
+	if isYTMRef(trackPath) && s.ytmMgr == nil && s.ytmProv != nil {
+		return newYTMManager(s, s.ytmProv).CoverBytes(ctx, trackPath, edge)
 	}
 
+	return nil, "", false
+}
+
+func (s *PlayerService) materializeQueueCover(ctx context.Context, id, trackPath string, edge int) (string, bool) {
 	tags := s.index.lookup(trackPath)
 	if tags.CoverID != id {
 		return "", false

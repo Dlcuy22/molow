@@ -15,7 +15,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/dlcuy22/molo"
@@ -26,7 +25,6 @@ import (
 	"github.com/dlcuy22/molow/internal/library/sqlite"
 	"github.com/dlcuy22/molow/internal/spectrum"
 	"github.com/dlcuy22/molow/internal/trackcache"
-	ytm "github.com/dlcuy22/ytm-go"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -180,25 +178,22 @@ type PlayerService struct {
 	// romanizer owns the lyric dictionary and its load/unload lifecycle.
 	romanizer *romanizer
 
-	// libMu guards the catalogue handle and the source registry. A scan runs on
-	// its own goroutine, so the map is read while a scan writes progress.
-	libMu        sync.Mutex
-	libStore     *sqlite.Store
-	libs         map[string]library.Source
-	scanning     map[string]bool
-	localWatcher *localFolderWatcher
-	localSyncers map[string]*ytmSyncer
+	// libMu guards the catalogue handle, source registry, active selection, and syncers.
+	libMu           sync.Mutex
+	libStore        *sqlite.Store
+	libs            map[string]library.Source
+	activeLibraryID string
+	scanning        map[string]bool
+	localWatcher    *localFolderWatcher
+	localSyncers    map[string]*ytmSyncer
 
-	// Auth lifecycle guards: authGen invalidates in-flight Set-Cookie writes from
-	// a previous sign-in/sign-out generation, authExpired reports a revoked session,
-	// and cookieRefreshMu throttles active cookie-rotation probes.
-	authGen           atomic.Uint64
-	authExpired       atomic.Bool
-	cookiePersistMu   sync.Mutex
-	cookieRefreshMu   sync.Mutex
-	lastCookieRefresh time.Time
-	refreshSessionFn  func(context.Context, *ytm.Client) error
-	ytmOpsOverride    func(*ytmAccountOps)
+	credMu         sync.Mutex
+	credStore      *CredentialStore
+	ytmMgrMu       sync.Mutex
+	ytmMgr         *ytmManager
+	sources        *audioRouter
+	playbackObs    playbackTracker
+	ytmOpsOverride func(*ytmAccountOps)
 
 	// The lyric prefetch runs one chain per track change, writes the result
 	// to disk as a sidecar, and lets the lyric pane join it. The loader stays
@@ -266,8 +261,55 @@ func newPlayerService() *PlayerService {
 	s.ytmProv.tracks = tracks
 	s.ytmProv.catalogTrack = s.catalogYTMTrack
 	s.ytmProv.saveRemoteMeta = s.backfillYTMTrackMeta
+	s.ensureSourceRouter()
 
 	return s
+}
+
+func (s *PlayerService) credentials() (*CredentialStore, error) {
+	s.credMu.Lock()
+	defer s.credMu.Unlock()
+	if s.credStore != nil {
+		return s.credStore, nil
+	}
+	cs, err := defaultCredentialStore()
+	if err != nil {
+		return nil, err
+	}
+	s.credStore = cs
+	return cs, nil
+}
+
+func (s *PlayerService) ytmManager() *ytmManager {
+	s.ytmMgrMu.Lock()
+	defer s.ytmMgrMu.Unlock()
+	if s.ytmMgr == nil {
+		s.ytmMgr = newYTMManager(s, s.ytmProv)
+	}
+	return s.ytmMgr
+}
+
+func (s *PlayerService) ensureSourceRouter() *audioRouter {
+	if s.sources == nil {
+		s.sources = newAudioRouter()
+	}
+	s.sources.Register(newLocalAdapter(s))
+	s.sources.Register(s.ytmManager())
+	return s.sources
+}
+
+// SetActiveLibrary records the library currently open in the UI so cross-library
+// YTM calls (search, artist view, local imports) prefer its signed-in session.
+func (s *PlayerService) SetActiveLibrary(id string) {
+	s.libMu.Lock()
+	s.activeLibraryID = strings.TrimSpace(id)
+	s.libMu.Unlock()
+}
+
+func (s *PlayerService) activeLibrary() string {
+	s.libMu.Lock()
+	defer s.libMu.Unlock()
+	return s.activeLibraryID
 }
 
 // ServiceStartup builds the engine and starts the two background pumps. It is
@@ -287,7 +329,7 @@ func (s *PlayerService) ServiceStartup(_ context.Context, _ application.ServiceO
 	loadScripts()
 
 	p, err := molo.New(
-		molo.WithProviders(s.ytmProv, provider.NewNetworkProvider(nil), provider.LocalAudio{}),
+		molo.WithProviders(s.ensureSourceRouter(), provider.NewNetworkProvider(nil), provider.LocalAudio{}),
 		// The same switch the provider was built with: the engine consumes the
 		// Upgrade only when this is set, and the provider offers it only when
 		// it is, so the two cannot drift.
@@ -338,18 +380,12 @@ func (s *PlayerService) ServiceStartup(_ context.Context, _ application.ServiceO
 	// the catalogue are up and a track can be described.
 	s.initDiscord()
 
-	// Load a stored YouTube Music session before the first request, so a restart
-	// keeps the account without reopening the login window. Validation is a
-	// separate, later step: a startup that waits on the network delays the main
-	// window, and a dead session answers HTTP 200 rather than failing fast.
-	s.restoreYTM()
-
 	// Publish to the OS media controls. It is unconditional: a host with no
 	// transport logs once and stays inert.
 	s.initSystemMedia()
 
-	// Open the catalogue and start a background scan of each stored root. A
-	// failure leaves browsing empty and playback untouched.
+	// Open the catalogue, migrate any legacy single-account YTM session, and
+	// open every registered library adapter.
 	s.initLibraries()
 
 	// Mirror the engine's debug stream into the app's sinks, so state and
@@ -383,8 +419,12 @@ func (s *PlayerService) ServiceShutdown() error {
 	}
 	s.stopDiscord()
 	s.stopSystemMedia()
-	s.stopYTMSyncers()
-	s.stopLocalSyncers()
+	if s.sources != nil {
+		s.sources.Close()
+	} else {
+		s.stopYTMSyncers()
+		s.stopLocalSyncers()
+	}
 	s.wg.Wait()
 	if s.preview != nil {
 		s.preview.close()
@@ -431,6 +471,7 @@ func (s *PlayerService) pumpEvents() {
 			snap := s.Snapshot()
 			// Start lyric prefetch before emitting so Lyrics() joins an active job instead of racing it.
 			s.syncLyrics(snap)
+			s.syncPlaybackObserver(snap)
 			s.emit(eventSnapshot, snap)
 			s.syncPresence(snap)
 			s.syncSystemMedia(snap)
@@ -439,6 +480,7 @@ func (s *PlayerService) pumpEvents() {
 			// UI show a first "Ready" and recover if a push was ever missed.
 			snap := s.Snapshot()
 			s.syncLyrics(snap)
+			s.syncPlaybackObserver(snap)
 			s.emit(eventSnapshot, snap)
 			s.syncPresence(snap)
 			s.syncSystemMedia(snap)

@@ -37,10 +37,12 @@ import {
   importYTMSong as runImportYTMSong,
   libraryId,
 } from "./library";
+import { activityStore, resetActivities } from "./activity";
 
 describe("YTM song import flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetActivities();
     libraryId.set("ytm:UC1");
     closeImportSongModal();
   });
@@ -90,5 +92,37 @@ describe("YTM song import flow", () => {
     expect(showToast).toHaveBeenCalledWith(
       expect.objectContaining({ label: "Saved to Liked Music" }),
     );
+  });
+
+  it("records retryable LibraryActivity error when playlist import fails and retries via onRetry", async () => {
+    importYTM.mockRejectedValueOnce(
+      new Error('Post "https://music.youtube.com/youtubei/v1/browse": context deadline exceeded'),
+    );
+    const playlistHit = {
+      videoId: "PLRVoS5aPlCux4WnrldDgS2Z0LyYhBChth",
+      title: "Add YouTube Music playlist",
+      artist: "",
+      album: "",
+      duration: "",
+      durationMs: 0,
+      thumbnail: "",
+      kind: "Playlist",
+      playable: false,
+    };
+
+    const ok = await runImportYTM(playlistHit as never);
+    expect(ok).toBe(false);
+
+    const item = get(activityStore)["ytm:UC1"]?.items[0];
+    expect(item?.state).toBe("error");
+    expect(item?.detail).toBe("Uh oh, failed to import the ytm playlist. wanna try again?");
+    expect(item?.retryLabel).toBe("again");
+    expect(item?.rawError).toContain("context deadline exceeded");
+    expect(typeof item?.onRetry).toBe("function");
+
+    importYTM.mockResolvedValueOnce({ playlistId: "pl-1", name: "capek :(", tracks: 12 });
+    item?.onRetry?.();
+    await vi.waitFor(() => expect(importYTM).toHaveBeenCalledTimes(2));
+    expect(importYTM).toHaveBeenLastCalledWith("ytm:UC1", playlistHit);
   });
 });

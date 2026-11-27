@@ -1,11 +1,14 @@
 <script lang="ts">
-  import { fade } from "svelte/transition";
+  import { fade, scale } from "svelte/transition";
+  import { flip } from "svelte/animate";
+  import { cubicIn, cubicOut } from "svelte/easing";
   import CaretDown from "phosphor-svelte/lib/CaretDown";
   import Plus from "phosphor-svelte/lib/Plus";
   import type { Album, Artist, LibraryInfo, Playlist, Shelf, Track } from "../lib/types";
   import AlbumCard from "../lib/ui/AlbumCard.svelte";
   import BigArtistCard from "../lib/ui/BigArtistCard.svelte";
   import Chip from "../lib/ui/Chip.svelte";
+  import LibraryActivity from "../lib/ui/LibraryActivity.svelte";
   import LoadingSpinner from "../lib/ui/LoadingSpinner.svelte";
   import PlaylistCard from "../lib/ui/PlaylistCard.svelte";
   import PlaylistView from "../lib/ui/PlaylistView.svelte";
@@ -141,6 +144,42 @@
       return 0;
     }),
   );
+
+  type AllGridItem =
+    | { key: string; kind: "playlist"; list: Playlist }
+    | { key: string; kind: "album"; album: Album }
+    | { key: string; kind: "track"; track: Track };
+
+  const allGridItems = $derived<AllGridItem[]>([
+    ...playlists.map((list) => ({ key: `pl:${list.id}`, kind: "playlist" as const, list })),
+    ...sortedAlbums.map((album) => ({ key: `al:${album.id}`, kind: "album" as const, album })),
+    ...tracks.slice(0, 5).map((track) => ({ key: `tr:${track.ref}`, kind: "track" as const, track })),
+  ]);
+
+  const prefersReducedMotion =
+    typeof window !== "undefined" && Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+  const EXIT_GAP_MS = 50;
+  const flipDuration = prefersReducedMotion ? 0 : 250;
+  const exitDuration = prefersReducedMotion ? 0 : 200;
+  let pendingExitDelay = 0;
+
+  function cardExit(node: Element) {
+    if (exitDuration > 0) {
+      pendingExitDelay = exitDuration + EXIT_GAP_MS;
+      queueMicrotask(() => {
+        pendingExitDelay = 0;
+      });
+    }
+    return scale(node, { start: 0.9, opacity: 0, duration: exitDuration, easing: cubicIn });
+  }
+
+  function cardFlip(node: Element, animation: { from: DOMRect; to: DOMRect }) {
+    return flip(node, animation, {
+      delay: pendingExitDelay,
+      duration: flipDuration,
+      easing: cubicOut,
+    });
+  }
 </script>
 
 {#snippet playlistCard(list: Playlist)}
@@ -179,15 +218,18 @@
       {/if}
     </div>
     {#if library}
-      <button
-        class="mt-1.5 flex h-8 shrink-0 items-center gap-2 rounded-md bg-fg px-3 text-bg-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-        aria-haspopup="menu"
-        data-add
-        onclick={onadd}
-      >
-        <Plus size="14" weight="bold" />
-        <span class="text-[12px] font-medium leading-none">Add</span>
-      </button>
+      <div class="mt-1.5 flex shrink-0 items-center gap-2">
+        <LibraryActivity libraryId={library.id} />
+        <button
+          class="flex h-8 shrink-0 items-center gap-2 rounded-md bg-fg px-3 text-bg-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          aria-haspopup="menu"
+          data-add
+          onclick={onadd}
+        >
+          <Plus size="14" weight="bold" />
+          <span class="text-[12px] font-medium leading-none">Add</span>
+        </button>
+      </div>
     {/if}
   </div>
 
@@ -265,13 +307,18 @@
             {#if artists.length === 0}
               <p class="text-[12px] text-muted">No artists in this library yet.</p>
             {:else}
-              <div class="flex flex-wrap gap-x-4 gap-y-5">
+              <div class="relative flex flex-wrap gap-x-4 gap-y-5">
                 {#each artists as artist (artist.id)}
-                  <BigArtistCard
-                    {artist}
-                    subtitle="{artist.songCount} {artist.songCount === 1 ? 'song' : 'songs'}"
-                    onopen={onopenArtist}
-                  />
+                  <div
+                    animate:cardFlip
+                    out:cardExit
+                  >
+                    <BigArtistCard
+                      {artist}
+                      subtitle="{artist.songCount} {artist.songCount === 1 ? 'song' : 'songs'}"
+                      onopen={onopenArtist}
+                    />
+                  </div>
                 {/each}
               </div>
             {/if}
@@ -279,9 +326,14 @@
             {#if playlists.length === 0}
               <p class="text-[12px] text-muted">No playlists yet.</p>
             {:else}
-              <div class="flex flex-wrap gap-x-4 gap-y-5">
+              <div class="relative flex flex-wrap gap-x-4 gap-y-5">
                 {#each playlists as list (list.id)}
-                  {@render playlistCard(list)}
+                  <div
+                    animate:cardFlip
+                    out:cardExit
+                  >
+                    {@render playlistCard(list)}
+                  </div>
                 {/each}
               </div>
             {/if}
@@ -307,29 +359,39 @@
                 </div>
               </div>
             {:else}
-              <div class="flex flex-wrap gap-x-4 gap-y-5">
-                {#each playlists as list (list.id)}
-                  {@render playlistCard(list)}
-                {/each}
-                {#each sortedAlbums as album (album.id)}
-                  <AlbumCard
-                    {album}
-                    variant="library"
-                    onopen={onopenAlbum}
-                    onplay={onplayAlbum}
-                  />
-                {/each}
-                {#each tracks.slice(0, 5) as track (track.ref)}
-                  <TrackTile {track} onplay={onplay} onopenArtist={onopenTrackArtist} />
+              <div class="relative flex flex-wrap gap-x-4 gap-y-5">
+                {#each allGridItems as item (item.key)}
+                  <div
+                    animate:cardFlip
+                    out:cardExit
+                  >
+                    {#if item.kind === "playlist"}
+                      {@render playlistCard(item.list)}
+                    {:else if item.kind === "album"}
+                      <AlbumCard
+                        album={item.album}
+                        variant="library"
+                        onopen={onopenAlbum}
+                        onplay={onplayAlbum}
+                      />
+                    {:else}
+                      <TrackTile track={item.track} onplay={onplay} onopenArtist={onopenTrackArtist} />
+                    {/if}
+                  </div>
                 {/each}
               </div>
             {/if}
           {:else if albums.length === 0}
             <p class="text-[12px] text-muted">No albums in this library yet.</p>
           {:else}
-            <div class="flex flex-wrap gap-x-4 gap-y-5">
+            <div class="relative flex flex-wrap gap-x-4 gap-y-5">
               {#each sortedAlbums as album (album.id)}
-                <AlbumCard {album} variant="library" onopen={onopenAlbum} onplay={onplayAlbum} />
+                <div
+                  animate:cardFlip
+                  out:cardExit
+                >
+                  <AlbumCard {album} variant="library" onopen={onopenAlbum} onplay={onplayAlbum} />
+                </div>
               {/each}
             </div>
           {/if}

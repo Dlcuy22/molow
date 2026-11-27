@@ -463,6 +463,12 @@
       if (!row.ytm || importing || !isSelectable(row)) {
         return;
       }
+      // Playlist imports hand off straight to LibraryActivity without blocking the search overlay.
+      if (isPlaylistKind(row.ytm)) {
+        void importYTM(row.ytm);
+        onclose();
+        return;
+      }
       importing = true;
       importYTM(row.ytm)
         .then((ok) => {

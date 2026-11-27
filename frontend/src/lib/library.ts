@@ -18,6 +18,7 @@ import type {
   Track as GenTrack,
 } from "../../bindings/github.com/dlcuy22/molow/internal/library/models";
 import type { Album, Artist, LibraryInfo, Page, Playlist, Shelf, Track } from "./types";
+import { connectActivity, upsertActivity } from "./activity";
 import { showToast } from "./toast";
 
 export const libraries = writable<LibraryInfo[]>([]);
@@ -541,8 +542,8 @@ export async function updateLibrary(
  *  playlist. The feeds reload before the palette closes, so the rows are on
  *  screen by the time it is gone. A failure keeps the palette open and says
  *  why; the hit is still there to try again. */
-export async function importYTM(hit: YTMResult): Promise<boolean> {
-  const id = get(libraryId);
+export async function importYTM(hit: YTMResult, targetLibraryId?: string): Promise<boolean> {
+  const id = targetLibraryId || get(libraryId);
   if (id === "") {
     showToast({
       key: "library-import",
@@ -552,6 +553,20 @@ export async function importYTM(hit: YTMResult): Promise<boolean> {
     });
 
     return false;
+  }
+  const isPlaylistImport = hit.kind === "Playlist";
+  const actID = isPlaylistImport ? "ytm-import:" + hit.videoId.replace(/^VL/, "") : "";
+  const actTitle =
+    hit.title === "Add YouTube Music playlist" ? "Playlist" : hit.title.trim() || "Playlist";
+  if (isPlaylistImport && actID !== "") {
+    upsertActivity({
+      id: actID,
+      libraryId: id,
+      kind: "import",
+      title: actTitle,
+      detail: "Starting import",
+      state: "running",
+    });
   }
   try {
     const res = await PlayerService.ImportYTM(id, hit);
@@ -568,10 +583,30 @@ export async function importYTM(hit: YTMResult): Promise<boolean> {
       icon: CheckCircle,
     });
     invalidateLibraryCache(id);
-    await Promise.all([refreshLibraries(), loadHome(), loadLibrary(currentLibraryTab, { force: true })]);
+    const refreshes: Promise<unknown>[] = [refreshLibraries(), loadHome()];
+    if (get(libraryId) === id) {
+      refreshes.push(loadLibrary(currentLibraryTab, { force: true, silent: true }));
+    }
+    await Promise.all(refreshes);
 
     return true;
   } catch (err) {
+    if (isPlaylistImport && actID !== "") {
+      upsertActivity({
+        id: actID,
+        libraryId: id,
+        kind: "import",
+        title: actTitle,
+        detail: "Uh oh, failed to import the ytm playlist. wanna try again?",
+        rawError: libraryErrorText(err, "Could not import playlist"),
+        state: "error",
+        retryLabel: "again",
+        onRetry: () => {
+          void importYTM(hit, id);
+        },
+      });
+      return false;
+    }
     showToast({
       key: "library-import",
       kind: "message",
@@ -828,14 +863,34 @@ export async function deletePlaylist(playlistID: string): Promise<void> {
   if (id === "") {
     return;
   }
+  const prevPage = get(libraryPage);
+  const prevPlaylists = get(libraryPlaylists);
+  const wasOpen = get(activePlaylist)?.id === playlistID;
+  const prevActive = wasOpen ? get(activePlaylist) : null;
+
+  libraryPage.update((page) => ({
+    ...page,
+    shelves: page.shelves.map((shelf) =>
+      shelf.playlists
+        ? { ...shelf, playlists: shelf.playlists.filter((p) => p.id !== playlistID) }
+        : shelf,
+    ),
+  }));
+  libraryPlaylists.update((lists) => lists.filter((p) => p.id !== playlistID));
+  if (wasOpen) {
+    closePlaylist();
+  }
+
   try {
     await PlayerService.DeletePlaylist(id, playlistID);
-    if (get(activePlaylist)?.id === playlistID) {
-      closePlaylist();
-    }
     invalidateLibraryCache(id);
     await Promise.all([loadHome(), loadLibrary(currentLibraryTab, { force: true, silent: true })]);
   } catch (err) {
+    libraryPage.set(prevPage);
+    libraryPlaylists.set(prevPlaylists);
+    if (prevActive) {
+      activePlaylist.set(prevActive);
+    }
     showToast({
       key: "playlist-delete",
       kind: "message",
@@ -876,6 +931,7 @@ export async function isLiked(path: string): Promise<boolean> {
 
 /** connectLibrary loads the registry, the first feed and the scan event. */
 export function connectLibrary(): () => void {
+  const offActivity = connectActivity();
   const off = Events.On("molo:library", (ev) => {
     const p = ev.data as { libraryId: string; done: number; total: number; state: string };
     if (p.libraryId === "" && p.state === "ready") {
@@ -903,7 +959,10 @@ export function connectLibrary(): () => void {
 
   void refreshLibraries().then(() => Promise.all([loadHome(), loadLibrary()]));
 
-  return off;
+  return () => {
+    off();
+    offActivity();
+  };
 }
 
 const ACCENT_CACHE_MAX = 128;

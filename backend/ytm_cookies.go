@@ -117,7 +117,7 @@ func (t *cookieCapturingTransport) RoundTrip(req *http.Request) (*http.Response,
 }
 
 func (m *ytmManager) clientWithCookieCapture(libraryID string, creds *Credentials, gen uint64) (*ytm.Client, error) {
-	return m.clientWithCookieCaptureBase(libraryID, creds, gen, newYTMHTTPClient().Transport)
+	return m.clientWithCookieCaptureBase(libraryID, creds, gen, m.sharedBaseTransport())
 }
 
 func (m *ytmManager) clientWithCookieCaptureBase(libraryID string, creds *Credentials, gen uint64, base http.RoundTripper) (*ytm.Client, error) {

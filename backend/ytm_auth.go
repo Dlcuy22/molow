@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -52,6 +53,9 @@ type ytmManager struct {
 
 	mu       sync.RWMutex
 	sessions map[string]*ytmSession
+
+	baseTransportOnce sync.Once
+	baseTransport     http.RoundTripper
 
 	// refreshSessionFn lets unit tests stub active cookie refresh probes.
 	refreshSessionFn func(context.Context, *ytm.Client) error
@@ -241,9 +245,55 @@ func (m *ytmManager) resolveDefaultClient() *ytm.Client {
 	return ytmClient(m.log())
 }
 
+func (m *ytmManager) sharedBaseTransport() http.RoundTripper {
+	if m == nil {
+		return newYTMHTTPClient().Transport
+	}
+	m.baseTransportOnce.Do(func() {
+		m.baseTransport = newYTMHTTPClient().Transport
+	})
+	return m.baseTransport
+}
+
+func (m *ytmManager) buildClientForSession(sess *ytmSession) (*ytm.Client, error) {
+	if sess == nil || m.svc == nil {
+		return nil, ErrNoCredentials
+	}
+	sess.mu.RLock()
+	credID := sess.credentialID
+	sess.mu.RUnlock()
+	if credID == "" && m.svc.libStore != nil {
+		if row, err := m.svc.libStore.LibraryRow(sess.libraryID); err == nil {
+			credID = row.CredentialID
+		}
+	}
+	if credID == "" {
+		return nil, ErrNoCredentials
+	}
+	cs, err := m.svc.credentials()
+	if err != nil {
+		return nil, err
+	}
+	var creds Credentials
+	if err := cs.Load(credID, library.KindYTM, &creds); err != nil {
+		return nil, err
+	}
+	if creds.CookieHeader == "" {
+		return nil, ErrNoCredentials
+	}
+	gen := sess.authGen.Load()
+	if gen == 0 {
+		gen = 1
+		sess.authGen.CompareAndSwap(0, gen)
+	}
+	return m.clientWithCookieCapture(sess.libraryID, &creds, gen)
+}
+
 // sessionClient returns the *ytm.Client belonging exclusively to libraryID.
 // A signed-out, expired, or unreadable session returns its explicit error rather
-// than falling back to another account's credentials.
+// than falling back to another account's credentials. If the cached client was
+// tainted by an unauthenticated response while the session is still valid, it
+// rebuilds from stored credentials.
 func (m *ytmManager) sessionClient(libraryID string) (*ytm.Client, error) {
 	sess := m.session(libraryID)
 	if sess == nil {
@@ -263,7 +313,36 @@ func (m *ytmManager) sessionClient(libraryID string) (*ytm.Client, error) {
 	if !signedIn || client == nil {
 		return nil, ErrNoCredentials
 	}
+	if !client.SignedIn() {
+		if fresh, err := m.buildClientForSession(sess); err == nil {
+			sess.mu.Lock()
+			if sess.signedIn && !sess.authExpired.Load() {
+				sess.client = fresh
+				client = fresh
+			}
+			sess.mu.Unlock()
+		}
+	}
 	return client, nil
+}
+
+// accountClient builds a fresh credential-backed client for account sync and
+// write operations so unauthenticated response markers on shared clients never
+// trigger false ErrSessionExpired failures.
+func (m *ytmManager) accountClient(libraryID string) (*ytm.Client, error) {
+	fallback, err := m.sessionClient(libraryID)
+	if err != nil {
+		return nil, err
+	}
+	sess := m.session(libraryID)
+	fresh, buildErr := m.buildClientForSession(sess)
+	if buildErr == nil {
+		return fresh, nil
+	}
+	if errors.Is(buildErr, ErrNoCredentials) && fallback != nil {
+		return fallback, nil
+	}
+	return nil, buildErr
 }
 
 // clientForRef resolves scoped YTM refs to the exact owning library session and

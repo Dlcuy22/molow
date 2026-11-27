@@ -47,7 +47,7 @@ type ytmAccountOps struct {
 }
 
 func (s *PlayerService) ytmAccountClient(libraryID string) (*ytm.Client, error) {
-	return s.ytmManager().sessionClient(libraryID)
+	return s.ytmManager().accountClient(libraryID)
 }
 
 func (s *PlayerService) accountOps(client *ytm.Client) ytmAccountOps {

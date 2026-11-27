@@ -530,6 +530,30 @@ func (p *ytmProvider) overridesLocked() ytmCalls {
 	}
 }
 
+// callsWithPublicSurface keeps authenticated catalogue/playlist calls on
+// authedClient while routing unauthenticated endpoints (GetStream, LoadArtist,
+// LoadSong, GetSongLyricsTimed) through publicClient so "logged_in":"0"
+// markers in unauthenticated responses cannot taint authedClient.SignedIn().
+func callsWithPublicSurface(authedClient, publicClient *ytm.Client, log *slog.Logger) ytmCalls {
+	base := callsFromClient(authedClient, log)
+	if publicClient != nil && publicClient != authedClient {
+		pub := callsFromClient(publicClient, log)
+		if pub.resolve != nil {
+			base.resolve = pub.resolve
+		}
+		if pub.loadArtist != nil {
+			base.loadArtist = pub.loadArtist
+		}
+		if pub.loadSong != nil {
+			base.loadSong = pub.loadSong
+		}
+		if pub.lyrics != nil {
+			base.lyrics = pub.lyrics
+		}
+	}
+	return base
+}
+
 // calls reads the default network surface under the lock, preferring the active
 // or primary YTM library session when managed by ytmManager, while allowing any
 // non-nil test override field to win.
@@ -544,7 +568,7 @@ func (p *ytmProvider) calls() ytmCalls {
 	var base ytmCalls
 	if dc != nil {
 		if c := dc(); c != nil {
-			base = callsFromClient(c, log)
+			base = callsWithPublicSurface(c, client, log)
 		}
 	}
 	if base.resolve == nil && client != nil {
@@ -558,17 +582,18 @@ func (p *ytmProvider) calls() ytmCalls {
 func (p *ytmProvider) callsFor(ref string) (ytmCalls, error) {
 	p.apiMu.RLock()
 	resolver := p.clientResolver
+	client := p.client
 	over := p.overridesLocked()
 	log := p.log
 	p.apiMu.RUnlock()
 
 	if resolver != nil {
-		client, err := resolver(ref)
+		resolved, err := resolver(ref)
 		if err != nil {
 			return ytmCalls{}, err
 		}
-		if client != nil {
-			return overlayCalls(callsFromClient(client, log), over), nil
+		if resolved != nil {
+			return overlayCalls(callsWithPublicSurface(resolved, client, log), over), nil
 		}
 	}
 	return p.calls(), nil

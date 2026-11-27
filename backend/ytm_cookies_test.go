@@ -231,3 +231,84 @@ func TestMaybeRefreshSessionThrottleAndExpiry(t *testing.T) {
 		t.Fatalf("probe called %d times after authExpired, want 2", calls)
 	}
 }
+
+func TestUnauthenticatedCallsDoNotPoisonSessionClient(t *testing.T) {
+	isolateConfig(t)
+
+	const playerWithLoggedOutMarker = `{
+		"playabilityStatus":{"status":"OK"},
+		"videoDetails":{"videoId":"vid1","title":"Song","lengthSeconds":"120"},
+		"streamingData":{"adaptiveFormats":[{"itag":251,"mimeType":"audio/webm; codecs=\"opus\"","bitrate":128000,"url":"https://audio.example.invalid/s"}]},
+		"responseContext":{"serviceTrackingParams":[{"service":"GFEEDBACK","params":[{"key":"logged_in","value":"0"}]}]}
+	}`
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(playerWithLoggedOutMarker)),
+		}, nil
+	})
+
+	prov := newYTMProvider(newYTMIndex(), nil, false, nil)
+	pubClient := ytm.NewClientWithHTTP(&http.Client{Transport: rt})
+	prov.installClient(pubClient)
+
+	svc := &PlayerService{ytmProv: prov}
+	cs, err := svc.credentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := &Credentials{CookieHeader: "SAPISID=seed1; SID=sid1"}
+	if err := cs.Save("cred_1", library.KindYTM, creds); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := svc.ytmManager()
+	sessClient, err := mgr.clientWithCookieCaptureBase("ytm_1", creds, 1, rt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := mgr.ensureSession("ytm_1", "cred_1", ytmLibraryConfig{})
+	sess.authGen.Store(1)
+	sess.mu.Lock()
+	sess.client = sessClient
+	sess.signedIn = true
+	sess.mu.Unlock()
+
+	// callsFor(scopedRef).resolve must use the public client so sessClient stays SignedIn().
+	c, err := prov.callsFor("ytm:ytm_1:vid1")
+	if err != nil {
+		t.Fatalf("callsFor: %v", err)
+	}
+	if _, err := c.resolve(context.Background(), "vid1"); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if !sessClient.SignedIn() {
+		t.Fatal("resolve tainted authenticated session client with logged_in=0")
+	}
+
+	// Even if sess.client is directly tainted by an unauthenticated response,
+	// ytmAccountClient and sessionClient recover cleanly from stored credentials.
+	if _, err := sessClient.GetStream(context.Background(), "vid1"); err != nil {
+		t.Fatalf("direct GetStream: %v", err)
+	}
+	if sessClient.SignedIn() {
+		t.Fatal("expected direct unauthenticated GetStream to flip sessClient.SignedIn() to false")
+	}
+
+	acctClient, err := svc.ytmAccountClient("ytm_1")
+	if err != nil {
+		t.Fatalf("ytmAccountClient: %v", err)
+	}
+	if !acctClient.SignedIn() {
+		t.Fatal("ytmAccountClient returned signed-out client despite valid credentials")
+	}
+
+	recovered, err := mgr.sessionClient("ytm_1")
+	if err != nil {
+		t.Fatalf("sessionClient: %v", err)
+	}
+	if !recovered.SignedIn() {
+		t.Fatal("sessionClient failed to recover from tainted client")
+	}
+}

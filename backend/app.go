@@ -22,6 +22,17 @@ const (
 	appID = "com.dlcuy22.molow"
 )
 
+// configureWaylandEnvironment works around WebKitGTK 2.42+ DMA-BUF renderer
+// failures on modern Wayland compositors (Hyprland, Sway, GNOME) which cause
+// black or blank window rendering on cold launch.
+func configureWaylandEnvironment() {
+	if os.Getenv("WAYLAND_DISPLAY") != "" || os.Getenv("XDG_SESSION_TYPE") == "wayland" {
+		if os.Getenv("WEBKIT_DISABLE_DMABUF_RENDERER") == "" {
+			_ = os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+		}
+	}
+}
+
 // Window names, so the service can find a window it did not create and the
 // frontend can tell the main window from the effect window.
 const (
@@ -34,6 +45,8 @@ const (
 // reach a parent directory, so the directive has to sit in the root package
 // next to frontend/.
 func Run(assets embed.FS) {
+	configureWaylandEnvironment()
+
 	// Attach to the launching terminal, if there is one, before the logger is
 	// built so slog captures the console's handles. A GUI launch with no parent
 	// console leaves stderr pointing nowhere and allocates nothing, so a
@@ -139,6 +152,9 @@ func Run(assets embed.FS) {
 		MinWidth:         820,
 		MinHeight:        560,
 		BackgroundColour: application.NewRGB(0x13, 0x13, 0x15),
+		Linux: application.LinuxWindow{
+			WebviewGpuPolicy: application.WebviewGpuPolicyOnDemand,
+		},
 		// Files dropped on the window are the other half of "add tracks": a
 		// listener folds them into the queue through the same service call the
 		// picker uses.
@@ -205,6 +221,9 @@ func (s *PlayerService) openEffectWindow() {
 		MinWidth:         640,
 		MinHeight:        420,
 		BackgroundColour: application.NewRGB(0x13, 0x13, 0x15),
+		Linux: application.LinuxWindow{
+			WebviewGpuPolicy: application.WebviewGpuPolicyOnDemand,
+		},
 		URL:              "/?window=effects",
 	})
 	w.OnWindowEvent(events.Common.WindowClosing, func(*application.WindowEvent) {

@@ -840,9 +840,12 @@ func (s *PlayerService) AddNavidromeLibrary(name, description, serverURL, userna
 	if err != nil {
 		return library.Library{}, err
 	}
-	serverURL = strings.TrimRight(strings.TrimSpace(serverURL), "/")
+	serverURL, err = nd.NormalizeServerURL(serverURL)
+	if err != nil {
+		return library.Library{}, err
+	}
 	username = strings.TrimSpace(username)
-	if serverURL == "" || username == "" || password == "" {
+	if username == "" || password == "" {
 		return library.Library{}, fmt.Errorf("navidrome: server URL, username, and password are required")
 	}
 
@@ -942,9 +945,12 @@ func (s *PlayerService) UpdateNavidromeLibrary(id, name, description, serverURL,
 	if err != nil {
 		return library.Library{}, err
 	}
-	serverURL = strings.TrimRight(strings.TrimSpace(serverURL), "/")
+	serverURL, err = nd.NormalizeServerURL(serverURL)
+	if err != nil {
+		return library.Library{}, err
+	}
 	username = strings.TrimSpace(username)
-	if serverURL == "" || username == "" {
+	if username == "" {
 		return library.Library{}, fmt.Errorf("navidrome: server URL and username are required")
 	}
 

@@ -103,12 +103,14 @@ type navidromeManager struct {
 	prov *navidromeProvider
 
 	mu         sync.RWMutex
+	configMu   sync.Mutex
 	clients    map[string]*nd.Client
 	configs    map[string]navidromeLibraryConfig
 	syncCancel map[string]context.CancelFunc
 
 	obsMu        sync.Mutex
-	durations    map[string]int64
+	activeRef    string
+	activeDurMs  int64
 	submittedRef string
 }
 
@@ -126,7 +128,6 @@ func newNavidromeManager(svc *PlayerService) *navidromeManager {
 		clients:    make(map[string]*nd.Client),
 		configs:    make(map[string]navidromeLibraryConfig),
 		syncCancel: make(map[string]context.CancelFunc),
-		durations:  make(map[string]int64),
 	}
 	m.prov = newNavidromeProvider(art, tracks, log, m)
 	return m
@@ -410,12 +411,16 @@ func (m *navidromeManager) OnTrackStart(ctx context.Context, ref string, duratio
 
 	m.obsMu.Lock()
 	m.submittedRef = ""
-	if durationMs > 0 {
-		m.durations[ref] = durationMs
-	}
+	m.activeRef = ref
+	m.activeDurMs = durationMs
 	m.obsMu.Unlock()
 
-	_ = client.Scrobble(ctx, songID, false)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	scrobbleCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	_ = client.Scrobble(scrobbleCtx, songID, false)
 }
 
 // OnTrackEnd submits a scrobble when playback crosses Navidrome's 50% / 4-minute
@@ -434,8 +439,12 @@ func (m *navidromeManager) OnTrackEnd(ctx context.Context, ref string, playedMs 
 		m.obsMu.Unlock()
 		return
 	}
-	durMs := m.durations[ref]
-	delete(m.durations, ref)
+	var durMs int64
+	if m.activeRef == ref {
+		durMs = m.activeDurMs
+		m.activeRef = ""
+		m.activeDurMs = 0
+	}
 	if durMs <= 0 && m.svc != nil && m.svc.libStore != nil {
 		if tr, found, err := m.svc.libStore.TrackByRef(ref); err == nil && found {
 			durMs = tr.DurationMs
@@ -456,7 +465,12 @@ func (m *navidromeManager) OnTrackEnd(ctx context.Context, ref string, playedMs 
 	m.submittedRef = ref
 	m.obsMu.Unlock()
 
-	_ = client.Scrobble(ctx, songID, true)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	scrobbleCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	_ = client.Scrobble(scrobbleCtx, songID, true)
 }
 
 // navidromeProvider resolves Navidrome track refs into progressive audio streams.
@@ -851,6 +865,10 @@ func (s *PlayerService) AddNavidromeLibrary(name, description, serverURL, userna
 		return library.Library{}, err
 	}
 
+	mgr := s.navidromeManager()
+	mgr.configMu.Lock()
+	defer mgr.configMu.Unlock()
+
 	libID, err := newRemoteLibraryID(library.KindNavidrome)
 	if err != nil {
 		return library.Library{}, err
@@ -965,31 +983,9 @@ func (s *PlayerService) UpdateNavidromeLibrary(id, name, description, serverURL,
 		return library.Library{}, err
 	}
 
-	credID := row.CredentialID
-	if password != "" {
-		if err := cs.ks.Probe(); err != nil {
-			return library.Library{}, err
-		}
-		if credID == "" {
-			credID, err = newCredentialID()
-			if err != nil {
-				return library.Library{}, err
-			}
-			if err := store.UpdateLibraryCredential(id, credID); err != nil {
-				return library.Library{}, err
-			}
-		}
-		if err := cs.Save(credID, library.KindNavidrome, navidromeCredentials{Password: password}); err != nil {
-			return library.Library{}, err
-		}
-	}
-
-	if _, err := store.UpdateLibrary(id, name, description); err != nil {
-		return library.Library{}, err
-	}
-	if err := store.UpdateLibraryConfig(id, encodeNavidromeConfig(serverURL, username)); err != nil {
-		return library.Library{}, err
-	}
+	mgr := s.navidromeManager()
+	mgr.configMu.Lock()
+	defer mgr.configMu.Unlock()
 
 	client, err := nd.NewClient(nd.Config{
 		ServerURL: serverURL,
@@ -1000,7 +996,49 @@ func (s *PlayerService) UpdateNavidromeLibrary(id, name, description, serverURL,
 		return library.Library{}, err
 	}
 
-	s.navidromeManager().setClient(id, navidromeLibraryConfig{ServerURL: serverURL, Username: username}, client)
+	oldCredID := row.CredentialID
+	newCredID := oldCredID
+	if password != "" {
+		if err := cs.ks.Probe(); err != nil {
+			return library.Library{}, err
+		}
+		newCredID, err = newCredentialID()
+		if err != nil {
+			return library.Library{}, err
+		}
+		if err := cs.Save(newCredID, library.KindNavidrome, navidromeCredentials{Password: password}); err != nil {
+			return library.Library{}, err
+		}
+	}
+
+	rollbackCred := func() {
+		if password != "" && newCredID != "" && newCredID != oldCredID {
+			_ = cs.Delete(newCredID)
+		}
+	}
+
+	if _, err := store.UpdateLibrary(id, name, description); err != nil {
+		rollbackCred()
+		return library.Library{}, err
+	}
+	if err := store.UpdateLibraryConfig(id, encodeNavidromeConfig(serverURL, username)); err != nil {
+		_, _ = store.UpdateLibrary(id, row.Name, row.Description)
+		rollbackCred()
+		return library.Library{}, err
+	}
+	if password != "" {
+		if err := store.UpdateLibraryCredential(id, newCredID); err != nil {
+			_ = store.UpdateLibraryConfig(id, row.Config)
+			_, _ = store.UpdateLibrary(id, row.Name, row.Description)
+			rollbackCred()
+			return library.Library{}, err
+		}
+		if oldCredID != "" && oldCredID != newCredID {
+			_ = cs.Delete(oldCredID)
+		}
+	}
+
+	mgr.setClient(id, navidromeLibraryConfig{ServerURL: serverURL, Username: username}, client)
 	if src, ok := s.librarySource(id); ok {
 		if ndSrc, isND := src.(*ndlib.Source); isND {
 			ndSrc.SetClient(client)

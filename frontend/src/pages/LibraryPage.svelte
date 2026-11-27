@@ -125,6 +125,8 @@
       if (authStatus?.error) {
         return authStatus.error;
       }
+    } else if (library.status === "signedOut" || library.status === "error") {
+      return library.message || "Reconnect this library in Edit to refresh.";
     }
     return "";
   });

@@ -1,49 +1,130 @@
 <script lang="ts">
+  import { untrack } from "svelte";
+  import { SPINNER_MAX_STEP_MS, SPINNER_MIN_STEP_MS } from "../activity";
+
+  const BASE_STEP_MS = 200;
+  const CYCLE_MS = BASE_STEP_MS * 8;
+  const PHASE_OFFSET_MS = BASE_STEP_MS * 5;
+
+  function buildKeyframes(travel: number): Keyframe[] {
+    return [
+      { offset: 0, transform: "translate(0px, 0px)" },
+      { offset: 0.125, transform: `translate(${travel}px, 0px)` },
+      { offset: 0.25, transform: `translate(${travel}px, 0px)` },
+      { offset: 0.375, transform: `translate(${travel}px, ${travel}px)` },
+      { offset: 0.5, transform: `translate(${travel}px, ${travel}px)` },
+      { offset: 0.625, transform: `translate(0px, ${travel}px)` },
+      { offset: 0.75, transform: `translate(0px, ${travel}px)` },
+      { offset: 0.875, transform: "translate(0px, 0px)" },
+      { offset: 1, transform: "translate(0px, 0px)" },
+    ];
+  }
+
   let {
     label = "",
     size = 24,
+    inline = false,
+    stepMs = 200,
     class: cls = "",
   }: {
     label?: string;
     size?: number;
+    inline?: boolean;
+    stepMs?: number;
     class?: string;
   } = $props();
 
-  // Prefix SMIL animation IDs with alphanumeric chars only (hyphens break SMIL begin= syntax).
-  const rawId = $props.id();
-  const uid = `sp${rawId.replace(/[^a-zA-Z0-9]/g, "")}`;
-  const a1 = `${uid}_a1`;
-  const a2 = `${uid}_a2`;
-  const a3 = `${uid}_a3`;
-  const a4 = `${uid}_a4`;
-  const b1 = `${uid}_b1`;
-  const b2 = `${uid}_b2`;
-  const b3 = `${uid}_b3`;
-  const b4 = `${uid}_b4`;
+  const prefersReducedMotion =
+    typeof window !== "undefined" &&
+    Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+  const clampedMs = $derived(
+    Math.max(SPINNER_MIN_STEP_MS, Math.min(SPINNER_MAX_STEP_MS, Math.round(stepMs))),
+  );
+
+  const inset = $derived(size >= 20 ? 1 : 0);
+  const gap = $derived(Math.max(2, Math.round(size / 12)));
+  const block = $derived(Math.max(2, Math.floor((size - inset * 2 - gap) / 2)));
+  const travel = $derived(block + gap);
+  const keyframes = $derived(buildKeyframes(travel));
+
+  let boxA = $state<HTMLSpanElement | null>(null);
+  let boxB = $state<HTMLSpanElement | null>(null);
+  let animA: Animation | null = null;
+  let animB: Animation | null = null;
+
+  function applySpeed(ms: number) {
+    if (!animA || !animB) {
+      return;
+    }
+    const rate = BASE_STEP_MS / ms;
+    const t = Number(animA.currentTime ?? 0);
+    animA.playbackRate = rate;
+    animB.playbackRate = rate;
+    animB.currentTime = t + PHASE_OFFSET_MS;
+  }
+
+  $effect(() => {
+    const frames = keyframes;
+    if (prefersReducedMotion || !boxA || !boxB) {
+      return;
+    }
+    if (typeof boxA.animate !== "function" || typeof boxB.animate !== "function") {
+      return;
+    }
+    const opts: KeyframeAnimationOptions = {
+      duration: CYCLE_MS,
+      iterations: Infinity,
+      easing: "linear",
+    };
+    animA = boxA.animate(frames, opts);
+    animB = boxB.animate(frames, opts);
+    animB.currentTime = PHASE_OFFSET_MS;
+    applySpeed(untrack(() => clampedMs));
+
+    return () => {
+      animA?.cancel();
+      animB?.cancel();
+      animA = null;
+      animB = null;
+    };
+  });
+
+  $effect(() => {
+    applySpeed(clampedMs);
+  });
 </script>
 
-<div class="flex flex-col items-center gap-3 text-fg/75 {cls}" role="status" aria-live="polite">
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width={size}
-    height={size}
-    viewBox="0 0 24 24"
+{#snippet spinnerBoxes()}
+  <span
+    class="relative inline-block shrink-0"
+    style="width:{size}px; height:{size}px"
     aria-hidden="true"
   >
-    <rect width="10" height="10" x="1" y="1" fill="currentColor" rx="1">
-      <animate id={a1} fill="freeze" attributeName="x" begin="0;{b4}.end" dur="0.2s" values="1;13" />
-      <animate id={a2} fill="freeze" attributeName="y" begin="{b1}.end" dur="0.2s" values="1;13" />
-      <animate id={a3} fill="freeze" attributeName="x" begin="{b2}.end" dur="0.2s" values="13;1" />
-      <animate id={a4} fill="freeze" attributeName="y" begin="{b3}.end" dur="0.2s" values="13;1" />
-    </rect>
-    <rect width="10" height="10" x="1" y="13" fill="currentColor" rx="1">
-      <animate id={b1} fill="freeze" attributeName="y" begin="{a1}.end" dur="0.2s" values="13;1" />
-      <animate id={b2} fill="freeze" attributeName="x" begin="{a2}.end" dur="0.2s" values="1;13" />
-      <animate id={b3} fill="freeze" attributeName="y" begin="{a3}.end" dur="0.2s" values="1;13" />
-      <animate id={b4} fill="freeze" attributeName="x" begin="{a4}.end" dur="0.2s" values="13;1" />
-    </rect>
-  </svg>
-  {#if label}
-    <span class="text-[12px] text-fg/70">{label}</span>
-  {/if}
-</div>
+    <span
+      bind:this={boxA}
+      class="absolute rounded-[1px] bg-current"
+      style="top:{inset}px; left:{inset}px; width:{block}px; height:{block}px"
+    ></span>
+    <span
+      bind:this={boxB}
+      class="absolute rounded-[1px] bg-current"
+      style="top:{inset}px; left:{inset}px; width:{block}px; height:{block}px; transform:translate(0px, {travel}px)"
+    ></span>
+  </span>
+{/snippet}
+
+{#if inline}
+  <span class="inline-flex shrink-0 items-center gap-2 {cls}">
+    {@render spinnerBoxes()}
+    {#if label}
+      <span class="text-[12px]">{label}</span>
+    {/if}
+  </span>
+{:else}
+  <div class="flex flex-col items-center gap-3 text-fg/75 {cls}" role="status" aria-live="polite">
+    {@render spinnerBoxes()}
+    {#if label}
+      <span class="text-[12px] text-fg/70">{label}</span>
+    {/if}
+  </div>
+{/if}

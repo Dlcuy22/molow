@@ -22,6 +22,7 @@
     type PlaylistSort,
   } from "../playlist-view";
   import Cover from "./Cover.svelte";
+  import LoadingSpinner from "./LoadingSpinner.svelte";
   import { openContextMenu } from "./context-menu.svelte";
 
   let {
@@ -290,9 +291,9 @@
 
       <div class="scroll-thin min-h-0 flex-1 overflow-y-auto pb-6 pr-1 @max-[680px]:overflow-visible">
         {#if loading && tracks.length === 0}
-          <p class="px-2 py-4 text-[12px] text-muted" role="status">
-            Loading {kindNoun} tracks...
-          </p>
+          <div class="flex h-full min-h-[200px] items-center justify-center">
+            <LoadingSpinner label="Sit back while it loads..." />
+          </div>
         {:else if error !== ""}
           <div class="rounded-lg bg-surface p-4" role="alert">
             <p class="text-[13px] font-medium text-fg">Could not load this {kindNoun}</p>

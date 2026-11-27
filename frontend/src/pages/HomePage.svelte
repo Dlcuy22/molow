@@ -2,7 +2,7 @@
   import type { Album, Shelf, Track } from "../lib/types";
   import AlbumCard from "../lib/ui/AlbumCard.svelte";
   import TrackTile from "../lib/ui/TrackTile.svelte";
-  import { cachedAccents, loadAccents } from "../lib/library";
+  import PlayerBackdrop from "../lib/components/PlayerBackdrop.svelte";
 
   let {
     hasLibraries = true,
@@ -29,38 +29,6 @@
   const recent = $derived(shelves.find((s) => s.id === "recent")?.items.slice(0, 9) ?? []);
   const albums = $derived(shelves.find((s) => s.id === "albums")?.albums.slice(0, 5) ?? []);
   const featured = $derived(albums[0]);
-
-  let stops = $state<string[]>([]);
-  let stopId = "";
-  $effect(() => {
-    const coverId = featured?.coverId ?? "";
-    if (coverId === stopId) {
-      return;
-    }
-    stopId = coverId;
-    if (coverId === "") {
-      stops = [];
-      return;
-    }
-    const hit = cachedAccents(coverId);
-    if (hit) {
-      stops = hit;
-      return;
-    }
-    void loadAccents(coverId).then((hex) => {
-      if (stopId === coverId) {
-        stops = hex;
-      }
-    });
-  });
-
-  const gradient = $derived(
-    stops.length >= 2
-      ? `linear-gradient(180deg, ${stops[0]} 11.66%, ${stops[1]} 75.95%)`
-      : stops.length === 1
-        ? `linear-gradient(180deg, ${stops[0]}, ${stops[0]})`
-        : "linear-gradient(135deg, #3a3a3e, #2f2f32)",
-  );
 </script>
 
 <div class="scroll-thin flex h-full flex-col overflow-y-auto pl-[50px] pr-9 pt-[41px]">
@@ -94,19 +62,30 @@
     <div class="mt-4 flex flex-wrap gap-5">
       {#if featured}
         <button
-          class="relative h-[175px] w-[340px] shrink-0 cursor-pointer overflow-hidden rounded-lg text-left"
-          style="background:{gradient}"
+          class="relative h-[175px] w-[340px] shrink-0 cursor-pointer overflow-hidden rounded-lg bg-surface text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
           aria-label="Open {featured.name}"
           onclick={() => onopenAlbum(featured)}
         >
-          <div class="absolute bottom-[14px] left-5">
-            <p class="font-display text-[20px] font-bold leading-tight text-white">
+          {#if featured.coverId}
+            <PlayerBackdrop
+              src={`/art/bg/${encodeURIComponent(featured.coverId)}`}
+              active={false}
+              useShader={false}
+            />
+            <div
+              class="pointer-events-none absolute inset-0"
+              style="background: linear-gradient(180deg, rgba(0, 0, 0, 0.14) 0%, rgba(0, 0, 0, 0.62) 100%);"
+              aria-hidden="true"
+            ></div>
+          {/if}
+          <div class="absolute bottom-[14px] left-5 right-[64px] z-10 min-w-0">
+            <p class="truncate font-display text-[20px] font-bold leading-tight text-white">
               {featured.name}
             </p>
-            <p class="text-[12px] leading-none text-white/80">{featured.artist}</p>
+            <p class="truncate text-[12px] leading-none text-white/80">{featured.artist}</p>
           </div>
           <span
-            class="absolute bottom-[14px] right-[14px] grid size-[38px] place-items-center rounded-full bg-fg text-bg-dark"
+            class="absolute bottom-[14px] right-[14px] z-10 grid size-[38px] place-items-center rounded-full bg-fg text-bg-dark"
             role="presentation"
             onclick={(e) => {
               e.stopPropagation();

@@ -380,18 +380,21 @@
   });
 
   let likedPath = "";
+  let likeSeq = 0;
   $effect(() => {
     const path = snap.path;
-    if (path === likedPath) {
+    const key = `${$libraryId}|${path}`;
+    if (key === likedPath) {
       return;
     }
-    likedPath = path;
+    likedPath = key;
     liked = false;
+    const seq = ++likeSeq;
     if (path === "") {
       return;
     }
     void isLiked(path).then((on) => {
-      if (snap.path === path) {
+      if (seq === likeSeq && snap.path === path && `${$libraryId}|${snap.path}` === key) {
         liked = on;
       }
     });
@@ -399,10 +402,18 @@
 
   function toggleLike() {
     const path = snap.path;
-    void likeRef(path).then((on) => {
-      if (snap.path === path) {
-        liked = on;
+    if (path === "") {
+      return;
+    }
+    const key = `${$libraryId}|${path}`;
+    const seq = ++likeSeq;
+    const previous = liked;
+    liked = !previous;
+    void likeRef(path).then((res) => {
+      if (seq !== likeSeq || `${$libraryId}|${snap.path}` !== key) {
+        return;
       }
+      liked = res.ok ? res.liked : previous;
     });
   }
 
@@ -527,9 +538,16 @@
   }
 
   function handleLikeTrack(track: Track, nextLiked: boolean) {
+    const matchesPlaying = track.ref === snap.path;
+    const key = `${$libraryId}|${snap.path}`;
+    const seq = matchesPlaying ? ++likeSeq : 0;
+    const previous = liked;
+    if (matchesPlaying) {
+      liked = nextLiked;
+    }
     void setLiked(track, nextLiked).then((ok) => {
-      if (ok && track.ref === snap.path) {
-        liked = nextLiked;
+      if (matchesPlaying && seq === likeSeq && `${$libraryId}|${snap.path}` === key && !ok) {
+        liked = previous;
       }
     });
   }

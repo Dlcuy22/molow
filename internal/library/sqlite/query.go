@@ -1094,6 +1094,104 @@ func (s *Store) AddToPlaylist(playlistID string, refs []string) error {
 	return tx.Commit()
 }
 
+// PrependToPlaylist inserts refs at position 0 in order, moving any matching
+// existing entries to the front while preserving relative order of remaining tracks.
+func (s *Store) PrependToPlaylist(playlistID string, refs []string) error {
+	if len(refs) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var libraryID string
+	if err := tx.QueryRow(`SELECT library_id FROM playlist WHERE id = ?`, playlistID).Scan(&libraryID); err != nil {
+		return err
+	}
+
+	seen := make(map[int64]bool, len(refs))
+	headIDs := make([]int64, 0, len(refs))
+	for _, ref := range refs {
+		id, err := refTrackIDInLibrary(tx, libraryID, ref)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		headIDs = append(headIDs, id)
+	}
+	if len(headIDs) == 0 {
+		return nil
+	}
+
+	rows, err := tx.Query(
+		`SELECT track_id, added_at FROM playlist_entry WHERE playlist_id = ? ORDER BY position ASC`,
+		playlistID,
+	)
+	if err != nil {
+		return err
+	}
+	type existingEntry struct {
+		trackID int64
+		addedAt int64
+	}
+	var tail []existingEntry
+	for rows.Next() {
+		var e existingEntry
+		if err := rows.Scan(&e.trackID, &e.addedAt); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if !seen[e.trackID] {
+			tail = append(tail, e)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	_ = rows.Close()
+
+	if _, err := tx.Exec(`DELETE FROM playlist_entry WHERE playlist_id = ?`, playlistID); err != nil {
+		return err
+	}
+
+	now := time.Now().Unix()
+	pos := 0
+	for _, id := range headIDs {
+		if _, err := tx.Exec(
+			`INSERT INTO playlist_entry (playlist_id, position, track_id, added_at)
+			 VALUES (?, ?, ?, ?)`, playlistID, pos, id, now,
+		); err != nil {
+			return err
+		}
+		pos++
+	}
+	for _, e := range tail {
+		if _, err := tx.Exec(
+			`INSERT INTO playlist_entry (playlist_id, position, track_id, added_at)
+			 VALUES (?, ?, ?, ?)`, playlistID, pos, e.trackID, e.addedAt,
+		); err != nil {
+			return err
+		}
+		pos++
+	}
+
+	if _, err := tx.Exec(`UPDATE playlist SET updated_at = ? WHERE id = ?`, now, playlistID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
 // RemoveFromPlaylist deletes refs belonging to the playlist's owning library
 // and closes the position gaps.
 func (s *Store) RemoveFromPlaylist(playlistID string, refs []string) error {

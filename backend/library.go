@@ -1186,6 +1186,33 @@ func (s *PlayerService) backfillYTMTrackMeta(ref, thumbnailURL, artistID, album 
 	}
 }
 
+func (s *PlayerService) resolveRemoteLikeTarget(path string) (library.Likable, string, bool) {
+	kind, libID, nativeID, ok := library.ParseRemoteRef(path)
+	if !ok || kind != library.KindYTM || nativeID == "" {
+		return nil, "", false
+	}
+	if libID == "" {
+		activeID := s.activeLibrary()
+		src, exists := s.librarySource(activeID)
+		if !exists {
+			return nil, "", false
+		}
+		if _, isYTM := src.(*ytmSource); !isYTM {
+			return nil, "", false
+		}
+		libID = activeID
+	}
+	src, exists := s.librarySource(libID)
+	if !exists {
+		return nil, "", false
+	}
+	likable, ok := src.(library.Likable)
+	if !ok {
+		return nil, "", false
+	}
+	return likable, library.ScopedRemoteRef(kind, libID, nativeID), true
+}
+
 // Liked reports whether a catalogued ref carries a like. An uncatalogued path
 // (a file dropped on the window) is simply not liked.
 func (s *PlayerService) Liked(path string) (bool, error) {
@@ -1195,7 +1222,11 @@ func (s *PlayerService) Liked(path string) (bool, error) {
 	if store == nil || path == "" {
 		return false, nil
 	}
-	liked, err := store.Liked(path)
+	target := path
+	if _, scopedRef, ok := s.resolveRemoteLikeTarget(path); ok {
+		target = scopedRef
+	}
+	liked, err := store.Liked(target)
 	if err != nil {
 		return false, nil
 	}
@@ -1210,6 +1241,17 @@ func (s *PlayerService) ToggleLike(path string) (bool, error) {
 	s.libMu.Unlock()
 	if store == nil || path == "" {
 		return false, fmt.Errorf("library: no catalogue")
+	}
+	if likable, scopedRef, ok := s.resolveRemoteLikeTarget(path); ok {
+		cur, err := store.Liked(scopedRef)
+		if err != nil {
+			return false, err
+		}
+		next := !cur
+		if err := likable.SetLiked(s.ctx, scopedRef, next); err != nil {
+			return cur, err
+		}
+		return next, nil
 	}
 	liked, err := store.ToggleLiked(path)
 	if err != nil {

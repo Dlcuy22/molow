@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/dlcuy22/molow/internal/artwork"
@@ -606,5 +607,123 @@ func TestReSignInNormalizesBogusYTMAccountIDAndAllowsEmptyRecordedChannel(t *tes
 	}
 	if err := svc.ReSignInLibraryWithCookie("ytm_deadbeef", "SAPISID=other; SID=s2"); err != nil {
 		t.Fatalf("ReSignInLibraryWithCookie(ytm_deadbeef): %v", err)
+	}
+}
+
+func TestToggleLikeRoutesToActiveYTMLibraryAndUpsertsTrack(t *testing.T) {
+	svc, store := newYTMTestService(t)
+	svc.ytmMgr.probeCredsFn = func(context.Context, *ytm.Client) error { return nil }
+	svc.ytmMgr.validateCredsFn = func(_ context.Context, creds *Credentials) error {
+		creds.ChannelID = "UClike"
+		creds.Name = "Liker"
+		creds.Email = "liker@example.invalid"
+		return nil
+	}
+
+	var (
+		initSyncOnce sync.Once
+		initSyncDone = make(chan struct{})
+	)
+	var remoteCalls []struct {
+		id     string
+		status ytm.SongLikedStatus
+	}
+	svc.ytmOpsOverride = func(ops *ytmAccountOps) {
+		ops.getAccounts = func(context.Context) ([]ytm.Account, error) { return nil, nil }
+		ops.getLikedSongs = func(context.Context) ([]ytm.Song, *ytm.BuiltInContinuation, error) { return nil, nil, nil }
+		ops.getLibraryPlaylists = func(context.Context) ([]ytm.Playlist, *ytm.BuiltInContinuation, error) {
+			initSyncOnce.Do(func() { close(initSyncDone) })
+			return nil, nil, nil
+		}
+		ops.setSongLiked = func(_ context.Context, id string, st ytm.SongLikedStatus) error {
+			remoteCalls = append(remoteCalls, struct {
+				id     string
+				status ytm.SongLikedStatus
+			}{id: id, status: st})
+			return nil
+		}
+	}
+
+	ytmLib, err := svc.CreateYTMLibraryWithCookie("Liker YTM", "", "SAPISID=lk; SID=s1")
+	if err != nil {
+		t.Fatalf("CreateYTMLibraryWithCookie: %v", err)
+	}
+	<-initSyncDone
+	lm, err := store.UpsertRemotePlaylist(ytmLib.ID, "Liked Music", "LM", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertRemoteTrack(ytmLib.ID, library.KindYTM, sqlite.TrackRow{NativeID: "vidOld", Title: "Older Song"}); err != nil {
+		t.Fatal(err)
+	}
+	oldRef := library.ScopedRemoteRef(library.KindYTM, ytmLib.ID, "vidOld")
+	if err := store.AddToPlaylist(lm.ID, []string{oldRef}); err != nil {
+		t.Fatal(err)
+	}
+
+	localLib, err := store.AddLibrary(library.Library{ID: "local:main", Kind: library.KindLocal, Name: "Local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.libs[localLib.ID] = local.New(store, localLib, svc.art, nil)
+
+	// Populate ytmIndex as a Ctrl+F search result would, without touching SQLite yet.
+	svc.ytm.put(ytmTrack{
+		ID:         "vidCtrlF",
+		Title:      "Ctrl+F Song",
+		Artist:     "Search Artist",
+		Album:      "Search Album",
+		DurationMs: 185000,
+	})
+
+	// With the YTM library active, toggling an unscoped Ctrl+F ref sends the remote
+	// write, upserts the track, prepends it to the head of Liked Music, and reports
+	// Liked("ytm:vidCtrlF") == true.
+	svc.SetActiveLibrary(ytmLib.ID)
+	liked, err := svc.ToggleLike("ytm:vidCtrlF")
+	if err != nil || !liked {
+		t.Fatalf("ToggleLike(+) = (%v, %v), want (true, nil)", liked, err)
+	}
+	if len(remoteCalls) != 1 || remoteCalls[0].id != "vidCtrlF" || remoteCalls[0].status != ytm.SongLikedStatusLiked {
+		t.Fatalf("remoteCalls = %+v, want [{vidCtrlF Liked}]", remoteCalls)
+	}
+	if got, err := svc.Liked("ytm:vidCtrlF"); err != nil || !got {
+		t.Fatalf("Liked(unscoped) = (%v, %v), want (true, nil)", got, err)
+	}
+	scopedRef := library.ScopedRemoteRef(library.KindYTM, ytmLib.ID, "vidCtrlF")
+	if tr, ok, err := store.TrackByRef(scopedRef); err != nil || !ok || tr.Title != "Ctrl+F Song" {
+		t.Fatalf("upserted TrackByRef = (%+v, %v, %v)", tr, ok, err)
+	}
+	lmTracks, err := store.PlaylistTracks(lm.ID, 10, 0)
+	if err != nil || len(lmTracks) != 2 || lmTracks[0].Ref != scopedRef || lmTracks[1].Ref != oldRef {
+		t.Fatalf("Liked Music order = (%+v, %v), want [%s, %s]", lmTracks, err, scopedRef, oldRef)
+	}
+
+	// Toggling again unlikes remotely and removes it.
+	liked, err = svc.ToggleLike("ytm:vidCtrlF")
+	if err != nil || liked {
+		t.Fatalf("ToggleLike(-) = (%v, %v), want (false, nil)", liked, err)
+	}
+	if len(remoteCalls) != 2 || remoteCalls[1].status != ytm.SongLikedStatusNeutral {
+		t.Fatalf("remoteCalls after unlike = %+v", remoteCalls)
+	}
+
+	// Switching active library to Local keeps unscoped Ctrl+F likes local-only.
+	svc.SetActiveLibrary(localLib.ID)
+	liked, err = svc.ToggleLike("ytm:vidCtrlF")
+	if err != nil || !liked {
+		t.Fatalf("local ToggleLike = (%v, %v)", liked, err)
+	}
+	if len(remoteCalls) != 2 {
+		t.Fatalf("local active library triggered unexpected remote like call: %+v", remoteCalls)
+	}
+
+	// Scoped YTM ref still routes to its owning YTM library even while Local is active.
+	liked, err = svc.ToggleLike(scopedRef)
+	if err != nil || !liked {
+		t.Fatalf("scoped ToggleLike = (%v, %v)", liked, err)
+	}
+	if len(remoteCalls) != 3 || remoteCalls[2].status != ytm.SongLikedStatusLiked {
+		t.Fatalf("remoteCalls after scoped like = %+v", remoteCalls)
 	}
 }

@@ -983,19 +983,32 @@ export async function deletePlaylist(playlistID: string): Promise<void> {
 }
 
 /** likeRef toggles the like on the playing track. */
-export async function likeRef(path: string): Promise<boolean> {
+export async function likeRef(path: string): Promise<{ ok: boolean; liked: boolean }> {
   if (path === "") {
-    return false;
+    return { ok: false, liked: false };
   }
   try {
     const next = await PlayerService.ToggleLike(path);
     invalidateLibraryCache();
+    const open = get(activePlaylist);
+    const refreshes: Promise<unknown>[] = [
+      loadHome(),
+      loadLibrary(currentLibraryTab, { force: true, silent: true }),
+    ];
+    if (open && (open.remoteId === "LM" || open.remoteId === "VLLM")) {
+      refreshes.push(openPlaylist(open));
+    }
+    void Promise.all(refreshes);
 
-    return next;
-  } catch {
-    // A remote ref or a file outside the catalogue has no like; the button
-    // stays as it was.
-    return false;
+    return { ok: true, liked: next };
+  } catch (err) {
+    showToast({
+      key: "track-like",
+      kind: "message",
+      label: libraryErrorText(err, "Could not update like"),
+      icon: WarningCircle,
+    });
+    return { ok: false, liked: false };
   }
 }
 

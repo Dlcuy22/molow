@@ -558,12 +558,37 @@ func (y *ytmSource) SetLiked(ctx context.Context, ref string, liked bool) error 
 		return err
 	}
 	scopedRef := library.ScopedRemoteRef(library.KindYTM, y.id, videoID)
+	if liked && y.store != nil {
+		if _, exists, err := y.store.TrackByRef(scopedRef); err == nil && !exists {
+			var meta ytmTrack
+			if y.svc != nil && y.svc.ytm != nil {
+				meta, _ = y.svc.ytm.lookup(scopedRef)
+			}
+			coverID := meta.CoverID
+			if coverID == "" && y.svc != nil {
+				if len(meta.Thumb) > 0 && y.svc.art != nil {
+					coverID, _ = y.svc.art.Put(meta.Thumb)
+				} else if meta.ThumbnailURL != "" {
+					coverID = y.svc.storeYTMCover(meta.ThumbnailURL)
+				}
+			}
+			_, _ = y.upsertYTMTrack(YTMResult{
+				VideoID:    videoID,
+				Title:      firstNonEmpty(meta.Title, videoID),
+				Artist:     meta.Artist,
+				Album:      meta.Album,
+				DurationMs: meta.DurationMs,
+				Thumbnail:  meta.ThumbnailURL,
+				ArtistID:   meta.ArtistID,
+			}, coverID)
+		}
+	}
 	if err := y.store.SetLiked(scopedRef, liked); err != nil {
 		return err
 	}
 	if lm, ok, err := y.store.PlaylistByRemoteID(y.id, ytmLikedPlaylistRemoteID); err == nil && ok {
 		if liked {
-			_ = y.store.AddToPlaylist(lm.ID, []string{scopedRef})
+			_ = y.store.PrependToPlaylist(lm.ID, []string{scopedRef})
 		} else {
 			_ = y.store.RemoveFromPlaylist(lm.ID, []string{scopedRef})
 		}
@@ -1568,7 +1593,7 @@ func (s *PlayerService) ImportYTMSong(libraryID string, hit YTMResult, to YTMSon
 			return YTMImport{}, err
 		}
 		if lm, ok, err := s.libStore.PlaylistByRemoteID(libraryID, ytmLikedPlaylistRemoteID); err == nil && ok {
-			_ = s.libStore.AddToPlaylist(lm.ID, []string{ref})
+			_ = s.libStore.PrependToPlaylist(lm.ID, []string{ref})
 			s.refreshPlaylistCover(lm.ID)
 		}
 		s.refreshLibraryCover(libraryID)

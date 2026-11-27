@@ -358,7 +358,7 @@
       </button>
     </div>
   {:else}
-  {#if library.kind !== "local" && (authStatus?.expired || library.status === "signedOut" || (authStatus && !authStatus.signedIn))}
+  {#if library.kind === "ytm" && (authStatus?.expired || library.status === "signedOut" || (authStatus && !authStatus.signedIn))}
     <div
       class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-surface px-3.5 py-2.5 text-[12px]"
       role="status"
@@ -377,6 +377,15 @@
           {authStatus?.expired ? "Re-sign in" : "Sign in"}
         </button>
       {/if}
+    </div>
+  {:else if library.kind === "navidrome" && (library.status === "signedOut" || library.status === "error")}
+    <div
+      class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-surface px-3.5 py-2.5 text-[12px]"
+      role="status"
+    >
+      <span class="text-fg">
+        {library.message || "Navidrome credentials unavailable. Reconnect this library in Edit."}
+      </span>
     </div>
   {/if}
   <div class="mt-4 flex items-center justify-between">

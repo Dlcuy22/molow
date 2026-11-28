@@ -225,7 +225,9 @@ func (s *PlayerService) ConnectedLibraries() []LibraryAuthStatus {
 	}
 	out := make([]LibraryAuthStatus, 0, len(rows))
 	for _, row := range rows {
-		if row.Kind == library.KindLocal {
+		if row.Kind != library.KindYTM {
+			// ConnectedLibraries is only used for YTM OAuth status.
+			// Navidrome uses CredentialStore and has no session auth flow.
 			continue
 		}
 		out = append(out, s.statusForRow(row, ""))

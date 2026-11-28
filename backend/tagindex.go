@@ -108,7 +108,7 @@ func (s *PlayerService) indexQueue(paths []string) {
 	s.index.keep(current)
 
 	for _, p := range paths {
-		if isYTMRef(p) {
+		if isYTMRef(p) || isNavidromeRef(p) {
 			continue
 		}
 		if !s.index.resolved(p) {

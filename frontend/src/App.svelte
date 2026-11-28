@@ -48,8 +48,12 @@
     loadAccents,
     loadLyrics,
     addLibrary,
+    addNavidromeLibrary,
     createLibrary,
+    getNavidromeConfig,
+    testNavidromeConnection,
     updateLibrary,
+    updateNavidromeLibrary,
     removeLibrary,
     rescanLibrary,
     setPlaylistWatched,
@@ -475,7 +479,9 @@
   let renaming = $state<Playlist | null>(null);
   let confirming = $state<{ title: string; body: string; confirmLabel?: string; run: () => void } | null>(null);
   let libraryDialog = $state<
-    { mode: "create"; initialKind: "local" | "ytm" } | { mode: "edit"; library: LibraryInfo } | null
+    | { mode: "create"; initialKind: "local" | "ytm" | "navidrome" }
+    | { mode: "edit"; library: LibraryInfo; serverUrl: string; username: string }
+    | null
   >(null);
   let libraryDialogBusy = $state(false);
   let libraryDialogError = $state("");
@@ -485,21 +491,32 @@
     activeLibraryInfo ? (statusForLibrary($connectedLibraries, activeLibraryInfo.id) ?? null) : null,
   );
 
-  function openCreateLibrary(initialKind: "local" | "ytm" = "local") {
+  function openCreateLibrary(initialKind: "local" | "ytm" | "navidrome" = "local") {
     addOpen = false;
     libraryDialogError = "";
     libraryDialogBusy = false;
     libraryDialog = { mode: "create", initialKind };
   }
 
-  function openEditLibrary(id: string) {
+  async function openEditLibrary(id: string) {
     const lib = $libraries.find((l) => l.id === id);
     if (!lib) {
       return;
     }
     libraryDialogError = "";
     libraryDialogBusy = false;
-    libraryDialog = { mode: "edit", library: lib };
+    let serverUrl = "";
+    let username = "";
+    if (lib.kind === "navidrome") {
+      try {
+        const cfg = await getNavidromeConfig(id);
+        serverUrl = cfg.serverUrl;
+        username = cfg.username;
+      } catch (err) {
+        libraryDialogError = err instanceof Error ? err.message : "Could not load Navidrome configuration";
+      }
+    }
+    libraryDialog = { mode: "edit", library: lib, serverUrl, username };
   }
 
   function closeLibraryDialog() {
@@ -522,6 +539,52 @@
         dialog.mode === "create"
           ? await createLibrary(name, description)
           : await updateLibrary(dialog.library.id, name, description);
+      if (res.error !== "") {
+        libraryDialogError = res.error;
+
+        return;
+      }
+      libraryDialog = null;
+      if (dialog.mode === "create") {
+        filter = "all";
+        tab = "library";
+      }
+    } finally {
+      libraryDialogBusy = false;
+    }
+  }
+
+  async function submitNavidromeDialog(payload: {
+    name: string;
+    description: string;
+    serverUrl: string;
+    username: string;
+    password: string;
+  }) {
+    const dialog = libraryDialog;
+    if (!dialog || libraryDialogBusy) {
+      return;
+    }
+    libraryDialogBusy = true;
+    libraryDialogError = "";
+    try {
+      const res =
+        dialog.mode === "create"
+          ? await addNavidromeLibrary(
+              payload.name,
+              payload.description,
+              payload.serverUrl,
+              payload.username,
+              payload.password,
+            )
+          : await updateNavidromeLibrary(
+              dialog.library.id,
+              payload.name,
+              payload.description,
+              payload.serverUrl,
+              payload.username,
+              payload.password,
+            );
       if (res.error !== "") {
         libraryDialogError = res.error;
 
@@ -1188,11 +1251,17 @@
 {#if libraryDialog}
   <LibraryDialog
     mode={libraryDialog.mode}
-    initialKind={libraryDialog.mode === "create" ? libraryDialog.initialKind : "local"}
+    initialKind={libraryDialog.mode === "create"
+      ? libraryDialog.initialKind
+      : (libraryDialog.library.kind as "local" | "ytm" | "navidrome")}
     initialName={libraryDialog.mode === "edit" ? libraryDialog.library.name : ""}
     initialDescription={libraryDialog.mode === "edit" ? libraryDialog.library.description : ""}
+    initialServerUrl={libraryDialog.mode === "edit" ? libraryDialog.serverUrl : ""}
+    initialUsername={libraryDialog.mode === "edit" ? libraryDialog.username : ""}
     busy={libraryDialogBusy}
     error={libraryDialogError}
+    ontest={testNavidromeConnection}
+    onsubmitnavidrome={(payload) => void submitNavidromeDialog(payload)}
     onsubmit={(name, description) => void submitLibraryDialog(name, description)}
     oncreated={() => {
       libraryDialog = null;

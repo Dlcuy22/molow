@@ -75,6 +75,7 @@ export enum Kind {
 
     KindLocal = "local",
     KindYTM = "ytm",
+    KindNavidrome = "navidrome",
 };
 
 /**

@@ -26,6 +26,31 @@ const (
 	mtimeThrottle = time.Minute
 )
 
+var allowedExts = map[string]bool{
+	".webm": true,
+	".flac": true,
+	".mp3":  true,
+	".m4a":  true,
+	".mp4":  true,
+	".opus": true,
+	".ogg":  true,
+	".oga":  true,
+	".wav":  true,
+	".aac":  true,
+}
+
+func normalizeExt(ext string) string {
+	ext = strings.ToLower(strings.TrimSpace(ext))
+	if ext != "" && !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	if allowedExts[ext] {
+		return ext
+	}
+
+	return trackExt
+}
+
 // Stats reports the current size and capacity of a [Store].
 type Stats struct {
 	Count      int
@@ -36,6 +61,7 @@ type Stats struct {
 
 type entry struct {
 	key       string
+	ext       string
 	size      int64
 	mtime     time.Time
 	lastTouch time.Time
@@ -114,10 +140,11 @@ func Open(dir string, maxBytes int64) (*Store, error) {
 			_ = os.Remove(full)
 			continue
 		}
-		if !strings.HasSuffix(name, trackExt) {
+		ext := strings.ToLower(filepath.Ext(name))
+		if !allowedExts[ext] {
 			continue
 		}
-		key := strings.TrimSuffix(name, trackExt)
+		key := strings.TrimSuffix(name, ext)
 		if !safeKey(key) {
 			continue
 		}
@@ -131,6 +158,7 @@ func Open(dir string, maxBytes int64) (*Store, error) {
 		}
 		found = append(found, entry{
 			key:   key,
+			ext:   ext,
 			size:  info.Size(),
 			mtime: info.ModTime(),
 		})
@@ -163,8 +191,12 @@ func safeKey(key string) bool {
 		!strings.ContainsAny(key, `/\.:*?"<>|`)
 }
 
-func (s *Store) path(key string) string {
-	return filepath.Join(s.dir, key+trackExt)
+func (s *Store) path(key, ext string) string {
+	return filepath.Join(s.dir, key+normalizeExt(ext))
+}
+
+func (s *Store) entryPath(ent *entry) string {
+	return s.path(ent.key, ent.ext)
 }
 
 // Dir returns the directory backing s, or "" when s is nil.
@@ -216,7 +248,7 @@ func (s *Store) Get(key string) (io.ReadSeekCloser, int64, bool) {
 	// file before os.Open runs.
 	s.inUse[key]++
 	size := ent.size
-	p := s.path(key)
+	p := s.entryPath(ent)
 	s.mu.Unlock()
 
 	f, err := os.Open(p)
@@ -285,7 +317,7 @@ func (s *Store) Put(key string, data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, err := s.commitLocked(key, tmpName, size); err != nil {
+	if _, err := s.commitLocked(key, trackExt, tmpName, size); err != nil {
 		return err
 	}
 	cleanup = false
@@ -298,6 +330,12 @@ func (s *Store) Put(key string, data []byte) error {
 // disabled caches (maxBytes <= 0), oversized files (> maxBytes), and keys
 // currently held open by a reader return (false, nil) without removing tmpPath.
 func (s *Store) CommitFile(key, tmpPath string) (bool, error) {
+	return s.CommitFileExt(key, trackExt, tmpPath)
+}
+
+// CommitFileExt is like CommitFile, preserving ext (e.g. ".flac", ".mp3") for
+// codecs whose decoders dispatch by extension.
+func (s *Store) CommitFileExt(key, ext, tmpPath string) (bool, error) {
 	if s == nil || !safeKey(key) || tmpPath == "" {
 		return false, nil
 	}
@@ -313,23 +351,28 @@ func (s *Store) CommitFile(key, tmpPath string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.commitLocked(key, tmpPath, size)
+	return s.commitLocked(key, ext, tmpPath, size)
 }
 
-func (s *Store) commitLocked(key, tmpPath string, size int64) (bool, error) {
+func (s *Store) commitLocked(key, ext, tmpPath string, size int64) (bool, error) {
+	ext = normalizeExt(ext)
 	// Re-check budget and pin under the lock in case SetMaxBytes or Get raced
 	// with the write; on Windows os.Rename fails over an open file.
 	if s.maxBytes <= 0 || size > s.maxBytes || s.inUse[key] > 0 {
 		return false, nil
 	}
-	if err := os.Rename(tmpPath, s.path(key)); err != nil {
+	if err := os.Rename(tmpPath, s.path(key, ext)); err != nil {
 		return false, fmt.Errorf("trackcache: commit: %w", err)
 	}
 
 	now := s.now()
 	if elem, ok := s.items[key]; ok {
 		ent := elem.Value.(*entry)
+		if ent.ext != "" && ent.ext != ext {
+			_ = os.Remove(s.entryPath(ent))
+		}
 		s.totalBytes -= ent.size
+		ent.ext = ext
 		ent.size = size
 		ent.mtime = now
 		ent.lastTouch = now
@@ -338,6 +381,7 @@ func (s *Store) commitLocked(key, tmpPath string, size int64) (bool, error) {
 	} else {
 		elem := s.order.PushFront(&entry{
 			key:       key,
+			ext:       ext,
 			size:      size,
 			mtime:     now,
 			lastTouch: now,
@@ -384,7 +428,7 @@ func (s *Store) Clear() error {
 			elem = prev
 			continue
 		}
-		err := os.Remove(s.path(ent.key))
+		err := os.Remove(s.entryPath(ent))
 		if err == nil || errors.Is(err, os.ErrNotExist) {
 			s.removeElemLocked(elem)
 		} else if firstErr == nil {
@@ -420,7 +464,7 @@ func (s *Store) evictLocked() {
 			elem = prev
 			continue
 		}
-		err := os.Remove(s.path(ent.key))
+		err := os.Remove(s.entryPath(ent))
 		if err == nil || errors.Is(err, os.ErrNotExist) {
 			s.removeElemLocked(elem)
 			slog.Debug("trackcache: evicted", "id", ent.key, "bytes", ent.size, "totalBytes", s.totalBytes)

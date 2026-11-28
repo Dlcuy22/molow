@@ -277,6 +277,16 @@ export interface LyricsSettings {
 }
 
 /**
+ * NavidromeConfigInfo is the non-secret server view exposed to the Edit dialog.
+ */
+export interface NavidromeConfigInfo {
+    "libraryId": string;
+    "serverUrl": string;
+    "username": string;
+    "hasPassword": boolean;
+}
+
+/**
  * Options is the static chooser data.
  */
 export interface Options {

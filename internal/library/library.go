@@ -16,8 +16,9 @@ import (
 type Kind string
 
 const (
-	KindLocal Kind = "local"
-	KindYTM   Kind = "ytm"
+	KindLocal     Kind = "local"
+	KindYTM       Kind = "ytm"
+	KindNavidrome Kind = "navidrome"
 )
 
 // Capability is one optional thing a library can do. The set travels as data,
